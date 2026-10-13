@@ -7,30 +7,34 @@ import java.util.List;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 
-/** Quiet, right-aligned names for the modules currently active in the world. */
+/** Active module names at the top right, longest first, each on a dark strip with an accent edge. */
 public final class ModuleArrayList {
     private ModuleArrayList() { }
 
     public static void render(GuiGraphics graphics, Font font, int screenWidth,
                               ClientConfig config, boolean freecamActive) {
         if (!config.showHud) return;
-        List<String> names = new ArrayList<>(6);
+        List<String> names = new ArrayList<>(11);
         if (config.storage.enabled) names.add("StorageFinder");
         if (config.spawner.enabled) names.add("SpawnerFinder");
         if (config.debris.enabled) names.add("DebrisFinder");
         if (config.activity.enabled) names.add("ActivityFinder");
+        if (config.tunnels.enabled) names.add("TunnelFinder");
+        if (config.entities.enabled) names.add("EntityFinder");
+        if (config.xray.enabled) names.add("Xray");
+        if (config.fullbright.enabled) names.add("Fullbright");
         if (config.rtp.enabled) names.add("AutoRTP");
+        if (config.sniper.enabled) names.add(config.sniper.live ? "AHSniper LIVE" : "AHSniper");
         if (freecamActive) names.add("Freecam");
         names.sort(Comparator.comparingInt((String name) -> UiPaint.width(font, name)).reversed());
 
-        int right = screenWidth - 11;
-        // Draw every shadow first so a later row cannot dim an earlier row's text.
-        for (int i = 0; i < names.size(); i++) {
-            int width = UiPaint.width(font, names.get(i));
-            UiPaint.shadow(graphics, right - width - 4, 8 + i * 16, width + 8, 15, 5, 0x90000000);
-        }
-        for (int i = 0; i < names.size(); i++) {
-            UiPaint.right(graphics, font, names.get(i), right, 11 + i * 16, 0xFFF0F2F6);
+        int right = screenWidth - 2, y = 2, accent = UiPaint.alpha(config.accentColor, 1);
+        for (String name : names) {
+            int left = right - UiPaint.width(font, name) - 8;
+            graphics.fill(left, y, right, y + 13, 0xC4081213);
+            graphics.fill(left - 1, y, left, y + 13, accent);
+            UiPaint.text(graphics, font, name, left + 4, y + 3, 0xFFF0F6F5);
+            y += 13;
         }
     }
 }

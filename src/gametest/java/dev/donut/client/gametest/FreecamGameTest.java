@@ -11,12 +11,9 @@ import net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptio
 import net.minecraft.client.CameraType;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Options;
-import net.minecraft.client.input.MouseButtonEvent;
-import net.minecraft.client.input.MouseButtonInfo;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.phys.Vec3;
-import org.lwjgl.glfw.GLFW;
 
 /** Verifies the production singleton moves only its camera, retaining the actual client/server player. */
 public final class FreecamGameTest implements FabricClientGameTest {
@@ -60,17 +57,21 @@ public final class FreecamGameTest implements FabricClientGameTest {
             screenConfig.freecam = controller.settings();
             context.setScreen(() -> new DonutScreen(screenConfig, () -> { }));
             context.waitTicks(2);
-            clickPanel(context, 592, 306); // Third module card's toggle.
+            GuiClicks.expand(context, "Freecam");
+            GuiClicks.click(context, "module.Freecam");
             context.waitFor(client -> controller.isActive());
-            screenshot(context, "donut-freecam-01-modules");
-            clickPanel(context, 290, 299); // Freecam settings.
-            clickPanel(context, 384, 241); // Camera-speed slider midpoint.
-            context.runOnClient(client -> require(Math.abs(controller.settings().speed - 2.6) < 0.001,
+            GuiClicks.settle(context);
+            screenshot(context, "donut-freecam-01-settings-enabled");
+            // 30% along each track: 0.1 + 0.3 * 4.9 rounds to 1.6, and 1 + 0.3 * 9 to 3.7.
+            GuiClicks.slide(context, "Freecam.speed", .3);
+            context.runOnClient(client -> require(Math.abs(controller.settings().speed - 1.6) < 0.001,
                     "The Freecam speed slider did not update the controller settings"));
-            clickPanel(context, 384, 288); // Sprint-boost slider midpoint.
-            context.runOnClient(client -> require(Math.abs(controller.settings().boostMultiplier - 5.5) < 0.001,
+            GuiClicks.slide(context, "Freecam.boost", .3);
+            context.runOnClient(client -> require(Math.abs(controller.settings().boostMultiplier - 3.7) < 0.001,
                     "The Freecam boost slider did not update the controller settings"));
+            GuiClicks.settle(context);
             screenshot(context, "donut-freecam-02-settings");
+            GuiClicks.collapse(context, "Freecam");
             context.runOnClient(client -> {
                 controller.settings().speed = 1;
                 controller.settings().boostMultiplier = 3;
@@ -225,19 +226,6 @@ public final class FreecamGameTest implements FabricClientGameTest {
                 "Server player"));
     }
 
-    private static void clickPanel(ClientGameTestContext context, double x, double y) {
-        context.runOnClient(client -> {
-            require(client.screen instanceof DonutScreen, "Donut screen is not open");
-            var screen = client.screen;
-            float scale = Math.max(0.1f, Math.min(1, Math.min((screen.width - 16f) / 650, (screen.height - 16f) / 408)));
-            double actualX = (screen.width - 650 * scale) / 2 + x * scale;
-            double actualY = (screen.height - 408 * scale) / 2 + y * scale;
-            var event = new MouseButtonEvent(actualX, actualY, new MouseButtonInfo(GLFW.GLFW_MOUSE_BUTTON_LEFT, 0));
-            require(screen.mouseClicked(event, false), "Donut screen did not consume mouse input");
-            screen.mouseReleased(event);
-        });
-        context.waitTick();
-    }
 
     private static float wrappedDegrees(float degrees) {
         float wrapped = degrees % 360;

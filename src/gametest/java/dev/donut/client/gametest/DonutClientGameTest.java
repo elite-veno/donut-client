@@ -6,6 +6,10 @@ import dev.donut.client.finder.ActivityArea;
 import dev.donut.client.finder.FinderScanner;
 import dev.donut.client.finder.FoundBlock;
 import dev.donut.client.finder.TargetKind;
+import dev.donut.client.finder.TunnelDetector;
+import dev.donut.client.fullbright.FullbrightController;
+import dev.donut.client.gui.FinderHud;
+import dev.donut.client.xray.XrayController;
 import dev.donut.client.gui.DonutScreen;
 import dev.donut.client.render.HighlightRenderer;
 import java.util.EnumSet;
@@ -17,12 +21,13 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestServerContext;
+import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
 import net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions;
-import net.minecraft.client.input.MouseButtonEvent;
-import net.minecraft.client.input.MouseButtonInfo;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.ChunkPos;
-import org.lwjgl.glfw.GLFW;
 
 /** Exercises real GUI input, loaded block entities, and every overlay pipeline in a disposable flat world. */
 public final class DonutClientGameTest implements FabricClientGameTest {
@@ -35,7 +40,11 @@ public final class DonutClientGameTest implements FabricClientGameTest {
         config.spawner.distanceFade = false;
         config.debris.distanceFade = false;
         config.activity.distanceFade = false;
+        config.tunnels.distanceFade = false;
+        config.entities.distanceFade = false;
         FinderScanner scanner = new FinderScanner(config);
+        XrayController xray = new XrayController(config);
+        FullbrightController fullbright = new FullbrightController(config);
         AtomicBoolean active = new AtomicBoolean(true);
         AtomicInteger saves = new AtomicInteger();
         HighlightRenderer renderer = context.computeOnClient(client -> {
@@ -43,7 +52,14 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             HighlightRenderer created = new HighlightRenderer(config, scanner);
             created.register();
             ClientTickEvents.END_CLIENT_TICK.register(mc -> {
-                if (active.get()) scanner.tick(mc);
+                if (!active.get()) return;
+                scanner.tick(mc);
+                xray.tick(mc);
+                fullbright.tick();
+            });
+            // The info panel and labels for this test's own finders.
+            HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("donut-gametest", "finder_info"), (graphics, delta) -> {
+                if (active.get() && mc().player != null && mc().screen == null) FinderHud.render(graphics, mc(), config, scanner);
             });
             return created;
         });
@@ -61,38 +77,45 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             context.setScreen(() -> new DonutScreen(config, saves::incrementAndGet, scanner::activityStats));
             context.waitForScreen(DonutScreen.class);
             context.waitTicks(2);
-            clickPanel(context, 592, 152); // StorageFinder toggle.
-            clickPanel(context, 592, 229); // SpawnerFinder toggle.
+            GuiClicks.click(context, "module.StorageFinder");
+            GuiClicks.click(context, "module.SpawnerFinder");
             context.runOnClient(client -> require(config.storage.enabled && config.spawner.enabled,
                     "Module toggles did not update the supplied config"));
             require(saves.get() >= 2, "Changing module toggles must invoke the save callback");
-            // The DebrisFinder card sits below the fold, so enable it from its own settings page.
-            clickPanel(context, 70, 241); // Debris sidebar entry.
-            context.waitTick();
-            clickPanel(context, 610, 86); // Header toggle.
+            GuiClicks.expand(context, "DebrisFinder");
+            GuiClicks.click(context, "module.DebrisFinder");
             context.runOnClient(client -> require(config.debris.enabled, "Debris toggle did not update the supplied config"));
+            GuiClicks.settle(context);
             screenshot(context, "donut-01-clickgui-debris-settings");
-            clickPanel(context, 70, 273); // Activity sidebar entry.
-            clickPanel(context, 610, 86); // Header toggle.
+            GuiClicks.collapse(context, "DebrisFinder");
+            GuiClicks.expand(context, "ActivityFinder");
+            GuiClicks.click(context, "module.ActivityFinder");
             context.runOnClient(client -> require(config.activity.enabled, "Activity toggle did not update the supplied config"));
+            GuiClicks.settle(context);
             screenshot(context, "donut-01-clickgui-activity-settings");
-            context.getInput().pressKey(GLFW.GLFW_KEY_END);
-            context.waitTicks(10);
+            GuiClicks.reveal(context, "ActivityFinder.section.Live scan");
             screenshot(context, "donut-01-clickgui-activity-detection");
-            clickPanel(context, 70, 113); // Back to the overview.
-            context.waitTick();
+            GuiClicks.collapse(context, "ActivityFinder");
             awaitKinds(context, scanner, ALL_KINDS);
             screenshot(context, "donut-01-clickgui-modules");
 
-            clickPanel(context, 290, 143); // Open StorageFinder settings.
-            context.waitTick();
-            clickPanel(context, 372, 229); // Outline mode.
+            GuiClicks.expand(context, "StorageFinder");
+            GuiClicks.click(context, "StorageFinder.mode.Outline");
             context.runOnClient(client -> require(config.storage.mode == RenderMode.OUTLINE,
                     "Render mode button did not select Outline"));
-            clickPanel(context, 384, 281); // Outline opacity slider at 50%.
+            GuiClicks.showMore(context, "StorageFinder");
+            GuiClicks.slide(context, "StorageFinder.outlineOpacity", .5);
             context.runOnClient(client -> require(Math.abs(config.storage.outlineOpacity - 0.5) < 0.02,
                     "Opacity slider did not update the setting"));
+            GuiClicks.settle(context);
             screenshot(context, "donut-02-clickgui-storage-settings");
+            GuiClicks.collapse(context, "StorageFinder");
+            GuiClicks.click(context, "nav.keybinds");
+            GuiClicks.settle(context);
+            screenshot(context, "donut-02-clickgui-keybinds");
+            GuiClicks.click(context, "nav.theme");
+            GuiClicks.settle(context);
+            screenshot(context, "donut-02-clickgui-theme");
             context.runOnClient(client -> client.screen.onClose());
             context.waitForScreen(null);
 
@@ -192,11 +215,10 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             context.setScreen(() -> new DonutScreen(config, saves::incrementAndGet, scanner::activityStats));
             context.waitForScreen(DonutScreen.class);
             context.waitTicks(2);
-            clickPanel(context, 70, 273); // Activity sidebar entry.
-            context.runOnClient(client -> require(client.screen instanceof DonutScreen, "Donut screen closed"));
-            context.getInput().pressKey(GLFW.GLFW_KEY_END);
-            context.waitTicks(10);
+            GuiClicks.expand(context, "ActivityFinder");
+            GuiClicks.reveal(context, "ActivityFinder.section.Live scan");
             screenshot(context, "donut-07-activity-live-scan");
+            GuiClicks.collapse(context, "ActivityFinder");
             context.setScreen(() -> null);
             screenshot(context, "donut-07-activity-all-loaded");
             context.runOnClient(client -> config.activity.allLoadedChunks = false);
@@ -206,14 +228,23 @@ public final class DonutClientGameTest implements FabricClientGameTest {
                 config.activity.range = 96;
             });
 
+            visionChecks(context, world, config, scanner);
+
             context.runOnClient(client -> {
                 config.storage.enabled = false;
                 config.spawner.enabled = false;
                 config.debris.enabled = false;
                 config.activity.enabled = false;
+                config.tunnels.enabled = false;
+                config.entities.enabled = false;
             });
-            context.waitFor(client -> scanner.snapshot().isEmpty() && scanner.activity().isEmpty());
+            context.waitFor(client -> scanner.snapshot().isEmpty() && scanner.activity().isEmpty() && scanner.tunnels().isEmpty());
         } finally {
+            context.runOnClient(client -> {
+                config.xray.enabled = false;
+                config.fullbright.enabled = false;
+            });
+            context.waitTicks(2);
             active.set(false);
             context.runOnClient(client -> {
                 scanner.clear();
@@ -221,6 +252,145 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             });
         }
     }
+
+    private static net.minecraft.client.Minecraft mc() { return net.minecraft.client.Minecraft.getInstance(); }
+
+    /** Activated spawners, anti-xray fake debris, dug passages, entities, X-ray, Fullbright and labels. */
+    private static void visionChecks(ClientGameTestContext context, TestSingleplayerContext world, ClientConfig config, FinderScanner scanner) {
+        TestServerContext server = world.getServer();
+        context.runOnClient(client -> {
+            config.storage.enabled = true;
+            config.spawner.enabled = true;
+            config.debris.enabled = true;
+        });
+        // A spawner whose timer ran while someone was near, and an untouched one too far away for ours to run.
+        server.runCommand("setblock 40 65 30 minecraft:spawner{Delay:300s}");
+        server.runCommand("setblock -40 65 -40 minecraft:spawner");
+        BlockPos visited = new BlockPos(40, 65, 30), fresh = new BlockPos(-40, 65, -40);
+        context.waitFor(client -> scanner.snapshot().stream().anyMatch(target -> target.pos().equals(visited))
+                && scanner.snapshot().stream().anyMatch(target -> target.pos().equals(fresh)));
+        context.runOnClient(client -> {
+            require(scanner.snapshot().stream().anyMatch(target -> target.pos().equals(visited) && target.flagged()),
+                    "A spawner with a used timer was not marked as activated");
+            require(scanner.snapshot().stream().anyMatch(target -> target.pos().equals(fresh) && !target.flagged()),
+                    "An untouched spawner was marked as activated");
+        });
+
+        // Anti-xray engine mode 2 fills buried stone with fake ores, sent inside chunk data. Build such a chunk
+        // out of view, so it arrives the same way, and stand next to it.
+        server.runCommand("forceload add 992 992 1007 1023");
+        server.runCommand("fill 992 50 992 1007 58 1007 minecraft:netherrack");
+        server.runCommand("fill 993 51 993 1006 57 1006 minecraft:ancient_debris");
+        server.runCommand("fill 998 69 1012 1002 69 1018 minecraft:smooth_stone");
+        server.runCommand("tp @a 1000.5 70 1015.5 180 35");
+        context.waitFor(client -> scanner.debrisStats().fakedChunks() == 1 && scanner.debrisStats().hiddenFakes() > 1000, 400);
+        context.runOnClient(client -> require(scanner.debrisCount() == 0, "Fake debris was drawn: " + scanner.debrisCount()));
+        // Mining one exposes its six neighbors, which anti-xray would have to send as they are.
+        server.runCommand("setblock 1000 54 999 minecraft:air");
+        context.waitFor(client -> scanner.debrisCount() == 6, 20);
+        // A block update from the server confirms buried debris, the way anti-xray reveals real ore.
+        server.runCommand("setblock 996 52 996 minecraft:netherrack");
+        context.waitTicks(2);
+        server.runCommand("setblock 996 52 996 minecraft:ancient_debris");
+        context.waitFor(client -> scanner.debrisCount() == 7, 20);
+        context.waitTicks(2);
+        screenshot(context, "donut-08-debris-anti-xray");
+        context.runOnClient(client -> config.debris.filterFakes = false);
+        context.waitFor(client -> scanner.debrisCount() > 1000);
+        context.waitTicks(2);
+        screenshot(context, "donut-08-debris-unfiltered");
+        context.runOnClient(client -> config.debris.filterFakes = true);
+        context.waitFor(client -> scanner.debrisCount() == 7);
+        server.runCommand("forceload remove 992 992 1007 1023");
+        server.runCommand("tp @a 0.5 65 12.5 180 12");
+        // The server must load the chunks around spawn again before blocks can be placed there.
+        context.waitFor(client -> client.player.position().distanceTo(new net.minecraft.world.phys.Vec3(0.5, 65, 12.5)) < 1);
+        world.getClientWorld().waitForChunksRender();
+
+        // Dug passages inside a block of stone: a 14-long tunnel, a 19-deep hole and a 6-step staircase.
+        server.runCommand("fill -40 30 20 -20 56 26 minecraft:stone");
+        server.runCommand("fill -38 42 23 -25 43 23 minecraft:air");
+        server.runCommand("fill -22 32 21 -22 50 21 minecraft:air");
+        for (int i = 0; i < 6; i++) server.runCommand("fill %d %d 25 %d %d 25 minecraft:air".formatted(-35 + i, 50 - i, -35 + i, 52 - i));
+        // A cave-like room nearby must not count.
+        server.runCommand("fill -38 34 20 -30 38 22 minecraft:air");
+        context.runOnClient(client -> {
+            config.tunnels.enabled = true;
+            config.tunnels.tracers = true;
+        });
+        context.waitFor(client -> scanner.tunnels().size() >= 3, 200);
+        context.waitTicks(20);
+        context.runOnClient(client -> require(scanner.tunnels().size() == 3, "Unexpected passages: " + scanner.tunnels()));
+        context.runOnClient(client -> {
+            for (TunnelDetector.Segment segment : scanner.tunnels()) {
+                switch (segment.kind()) {
+                    case TUNNEL -> require(segment.length() == 14 && segment.x() == -38 && segment.y() == 42, "Unexpected tunnel " + segment);
+                    case HOLE -> require(segment.length() == 19 && segment.y() == 32, "Unexpected hole " + segment);
+                    case STAIRS -> require(segment.length() == 6 && segment.dy() == -1, "Unexpected staircase " + segment);
+                }
+            }
+        });
+
+        // X-ray hides the stone, so the passages and their highlights show from outside.
+        server.runCommand("tp @a -10.5 52 40.5 150 25");
+        context.runOnClient(client -> config.xray.enabled = true);
+        context.waitTicks(3);
+        context.runOnClient(client -> {
+            require(XrayController.enabled(), "X-ray did not turn on");
+            var stone = Blocks.STONE.defaultBlockState();
+            require(XrayController.filter(client.level, new BlockPos(-30, 40, 24), stone).isAir(), "X-ray did not hide stone");
+            var sideways = Blocks.DEEPSLATE.defaultBlockState().setValue(net.minecraft.world.level.block.RotatedPillarBlock.AXIS,
+                    net.minecraft.core.Direction.Axis.X);
+            require(!XrayController.filter(client.level, BlockPos.ZERO, sideways).isAir(), "X-ray hid sideways deepslate");
+            require(FullbrightController.effectiveGamma(0.5) > 1, "X-ray did not brighten the world");
+        });
+        world.getClientWorld().waitForChunksRender(false);
+        context.waitTicks(2);
+        screenshot(context, "donut-09-tunnels-xray");
+        context.runOnClient(client -> config.xray.enabled = false);
+        context.waitTicks(3);
+        world.getClientWorld().waitForChunksRender(false);
+        context.waitTicks(2);
+        screenshot(context, "donut-09-tunnels-tracers");
+
+        // EntityFinder outlines mobs with tracers; labels name the nearest finds.
+        server.runCommand("tp @a 0.5 65 12.5 180 12");
+        server.runCommand("summon minecraft:pig 3 65 6 {NoAI:1b}");
+        server.runCommand("difficulty easy");
+        server.runCommand("summon minecraft:husk -3 65 6 {NoAI:1b,PersistenceRequired:1b}");
+        context.runOnClient(client -> {
+            config.tunnels.enabled = false;
+            config.entities.enabled = true;
+            config.entities.hostiles = true;
+            config.entities.passives = true;
+            config.storage.tracers = true;
+        });
+        context.waitFor(client -> scanner.summaries().stream()
+                .anyMatch(line -> line.name().equals("Entities") && line.count() >= 2));
+        context.waitTicks(3);
+        context.runOnClient(client -> require(!dev.donut.client.render.HighlightRenderer.labels().isEmpty(),
+                "No labels were projected for visible highlights"));
+        screenshot(context, "donut-10-entities-tracers-labels");
+
+        // Fullbright at midnight, with and without fog.
+        server.runCommand("time set midnight");
+        context.runOnClient(client -> {
+            config.entities.enabled = false;
+            config.storage.tracers = false;
+            config.fullbright.enabled = true;
+        });
+        context.waitTicks(3);
+        context.runOnClient(client -> require(FullbrightController.effectiveGamma(0.5) > 1 && FullbrightController.noFog(),
+                "Fullbright did not apply"));
+        screenshot(context, "donut-11-fullbright-midnight");
+        context.runOnClient(client -> config.fullbright.enabled = false);
+        context.waitTicks(3);
+        context.runOnClient(client -> require(FullbrightController.effectiveGamma(0.5) == 0.5 && !FullbrightController.noFog(),
+                "Fullbright did not turn off"));
+        screenshot(context, "donut-11-normal-midnight");
+        server.runCommand("time set noon");
+    }
+
 
     private static void createFixtures(TestServerContext server) {
         server.runCommand("gamemode creative @a");
@@ -234,6 +404,10 @@ public final class DonutClientGameTest implements FabricClientGameTest {
         server.runCommand("setblock 4 65 0 minecraft:spawner");
         server.runCommand("setblock 6 65 0 minecraft:trial_spawner");
         server.runCommand("setblock 8 65 0 minecraft:ancient_debris");
+        server.runCommand("setblock -6 65 2 minecraft:barrel");
+        server.runCommand("setblock -4 65 2 minecraft:hopper");
+        server.runCommand("setblock -2 65 2 minecraft:dispenser");
+        server.runCommand("setblock 0 65 2 minecraft:furnace");
         server.runCommand("tp @a 0.5 65 12.5 180 12");
     }
 
@@ -263,19 +437,6 @@ public final class DonutClientGameTest implements FabricClientGameTest {
         });
     }
 
-    private static void clickPanel(ClientGameTestContext context, double x, double y) {
-        context.runOnClient(client -> {
-            require(client.screen instanceof DonutScreen, "Donut screen is not open");
-            var screen = client.screen;
-            float scale = Math.max(0.1f, Math.min(1, Math.min((screen.width - 16f) / 650, (screen.height - 16f) / 408)));
-            double actualX = (screen.width - 650 * scale) / 2 + x * scale;
-            double actualY = (screen.height - 408 * scale) / 2 + y * scale;
-            var event = new MouseButtonEvent(actualX, actualY, new MouseButtonInfo(GLFW.GLFW_MOUSE_BUTTON_LEFT, 0));
-            require(screen.mouseClicked(event, false), "Donut screen did not consume mouse input");
-            screen.mouseReleased(event);
-        });
-        context.waitTick();
-    }
 
     private static void screenshot(ClientGameTestContext context, String name) {
         context.takeScreenshot(TestScreenshotOptions.of(name).withSize(1280, 800));

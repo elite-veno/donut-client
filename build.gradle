@@ -41,6 +41,8 @@ fabricApi {
         modId = 'donut-gametest'
         enableGameTests = false
         enableClientGameTests = true
+        // DebrisSeedGameTest runs a dedicated server, which needs the Minecraft EULA accepted.
+        eula = true
     }
 }
 

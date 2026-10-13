@@ -15,8 +15,6 @@ import net.fabricmc.fabric.api.client.gametest.v1.context.TestServerContext;
 import net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.ContainerScreen;
-import net.minecraft.client.input.MouseButtonEvent;
-import net.minecraft.client.input.MouseButtonInfo;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.SimpleContainer;
@@ -25,7 +23,6 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ChunkPos;
-import org.lwjgl.glfw.GLFW;
 
 /**
  * Runs Auto RTP against the integrated server. A relative teleport stands in for /rtp, and a client-side
@@ -138,9 +135,9 @@ public final class AutoRtpGameTest implements FabricClientGameTest {
             context.setScreen(() -> new DonutScreen(config, () -> { }, scanner::activityStats, controller::status));
             context.waitForScreen(DonutScreen.class);
             context.waitTicks(2);
-            clickPanel(context, 70, 305); // Auto RTP sidebar entry.
-            context.waitTicks(2);
+            GuiClicks.expand(context, "AutoRTP");
             screenshot(context, "donut-rtp-03-settings");
+            GuiClicks.collapse(context, "AutoRTP");
             context.setScreen(() -> null);
         } finally {
             active.set(false);
@@ -174,19 +171,6 @@ public final class AutoRtpGameTest implements FabricClientGameTest {
         return stack;
     }
 
-    private static void clickPanel(ClientGameTestContext context, double x, double y) {
-        context.runOnClient(client -> {
-            require(client.screen instanceof DonutScreen, "Donut screen is not open");
-            var screen = client.screen;
-            float scale = Math.max(0.1f, Math.min(1, Math.min((screen.width - 16f) / 650, (screen.height - 16f) / 408)));
-            double actualX = (screen.width - 650 * scale) / 2 + x * scale;
-            double actualY = (screen.height - 408 * scale) / 2 + y * scale;
-            var event = new MouseButtonEvent(actualX, actualY, new MouseButtonInfo(GLFW.GLFW_MOUSE_BUTTON_LEFT, 0));
-            require(screen.mouseClicked(event, false), "Donut screen did not consume mouse input");
-            screen.mouseReleased(event);
-        });
-        context.waitTick();
-    }
 
     private static void screenshot(ClientGameTestContext context, String name) {
         context.takeScreenshot(TestScreenshotOptions.of(name).withSize(1280, 800));

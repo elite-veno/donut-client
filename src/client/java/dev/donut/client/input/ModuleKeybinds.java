@@ -11,27 +11,27 @@ import java.util.Set;
 
 /** The click GUI edits the same mappings exposed in Minecraft's Controls screen. */
 public final class ModuleKeybinds {
-    private static final KeyMapping[] MODULES = new KeyMapping[6];
-    private static final boolean[] pressed = new boolean[6];
+    public static final int COUNT = 10;
+    private static final KeyMapping[] MODULES = new KeyMapping[COUNT];
+    private static final boolean[] pressed = new boolean[COUNT];
     private static final Set<InputConstants.Key> heldInputs = new HashSet<>();
     private static boolean discardNextTick;
 
     private ModuleKeybinds() { }
 
-    public static void initialize(KeyMapping storage, KeyMapping spawner, KeyMapping freecam, KeyMapping debris,
-                                  KeyMapping activity, KeyMapping autoRtp) {
-        MODULES[0] = storage;
-        MODULES[1] = spawner;
-        MODULES[2] = freecam;
-        MODULES[3] = debris;
-        MODULES[4] = activity;
-        MODULES[5] = autoRtp;
+    /**
+     * In module order: storage, spawner, freecam, debris, activity, Auto RTP, X-ray, Fullbright, entities, tunnels.
+     * Modules without a mapping stay unbound.
+     */
+    public static void initialize(KeyMapping... modules) {
+        Arrays.fill(MODULES, null);
+        System.arraycopy(modules, 0, MODULES, 0, Math.min(modules.length, COUNT));
         Arrays.fill(pressed, false);
         heldInputs.clear();
         discardNextTick = false;
     }
 
-    public static KeyMapping mapping(int index) { return MODULES[index]; }
+    public static KeyMapping mapping(int index) { return index >= 0 && index < COUNT ? MODULES[index] : null; }
 
     public static void setKey(Minecraft client, int index, InputConstants.Key key) {
         KeyMapping mapping = mapping(index);

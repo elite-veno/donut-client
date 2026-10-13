@@ -16,19 +16,13 @@ import net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptio
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.input.KeyEvent;
-import net.minecraft.client.input.MouseButtonEvent;
-import net.minecraft.client.input.MouseButtonInfo;
 import org.lwjgl.glfw.GLFW;
 
 /** Uses the production screen, saved options and keyboard event route in an isolated game-test world. */
 public final class ModuleKeybindGameTest implements FabricClientGameTest {
     private static final int[] TEST_KEYS = {GLFW.GLFW_KEY_F8, GLFW.GLFW_KEY_F9, GLFW.GLFW_KEY_F10, GLFW.GLFW_KEY_F7,
-            GLFW.GLFW_KEY_F12, GLFW.GLFW_KEY_F4};
-    /** Modules whose overview card fits above the fold; the others are bound from their settings page. */
-    private static final int OVERVIEW_CARDS = 3;
-    private static final int DEBRIS = 3, ACTIVITY = 4, AUTO_RTP = 5;
-    /** Sidebar entry heights for the modules bound from their settings page. */
-    private static final int[] SIDEBAR_Y = {0, 0, 0, 241, 273, 305};
+            GLFW.GLFW_KEY_F12, GLFW.GLFW_KEY_F4, GLFW.GLFW_KEY_KP_1, GLFW.GLFW_KEY_KP_2, GLFW.GLFW_KEY_KP_3, GLFW.GLFW_KEY_KP_4};
+    private static final int DEBRIS = 3, ACTIVITY = 4, AUTO_RTP = 5, XRAY = 6, FULLBRIGHT = 7, ENTITIES = 8, TUNNELS = 9;
 
     @Override
     public void runTest(ClientGameTestContext context) {
@@ -36,10 +30,8 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
         ClientConfig originalConfig = store.load();
         FreecamController freecam = FreecamController.getInstance();
         AutoRtpController rtp = AutoRtpController.getInstance();
-        String[] originalKeys = context.computeOnClient(client -> new String[] {
-                ModuleKeybinds.mapping(0).saveString(), ModuleKeybinds.mapping(1).saveString(),
-                ModuleKeybinds.mapping(2).saveString(), ModuleKeybinds.mapping(3).saveString(),
-                ModuleKeybinds.mapping(4).saveString(), ModuleKeybinds.mapping(5).saveString()});
+        String[] originalKeys = context.computeOnClient(client -> java.util.stream.IntStream.range(0, ModuleKeybinds.COUNT)
+                .mapToObj(module -> ModuleKeybinds.mapping(module).saveString()).toArray(String[]::new));
         int originalGuiScale = context.computeOnClient(client -> client.options.guiScale().get());
         boolean originalHideGui = context.computeOnClient(client -> client.options.hideGui);
         KeyMapping openGui = context.computeOnClient(client -> Arrays.stream(client.options.keyMappings)
@@ -69,29 +61,27 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     openGui(context, openGui);
                     if (!originalConfig.showHud) setHud(context, store, true);
 
-                    for (int module = 0; module < OVERVIEW_CARDS; module++) {
-                        clickPanel(context, 480, 171 + module * 77);
+                    // Every module is bound from the bind row at the top of its settings.
+                    for (int module = 0; module < TEST_KEYS.length; module++) {
+                        String name = GuiClicks.MODULES[module];
+                        GuiClicks.expand(context, name);
+                        GuiClicks.click(context, name + ".bind");
                         context.getInput().pressKey(TEST_KEYS[module]);
                         assertKey(context, module, TEST_KEYS[module]);
+                        GuiClicks.collapse(context, name);
                     }
-                    for (int module = OVERVIEW_CARDS; module < TEST_KEYS.length; module++) {
-                        clickPanel(context, 70, SIDEBAR_Y[module]);
-                        clickPanel(context, 442, 82); // Settings-header binding.
-                        context.getInput().pressKey(TEST_KEYS[module]);
-                        assertKey(context, module, TEST_KEYS[module]);
+                    for (int module : new int[] {0, 1, DEBRIS}) GuiClicks.expand(context, GuiClicks.MODULES[module]);
+                    ClientConfig afterBinding = store.load();
+                    for (int module : new int[] {0, 1, DEBRIS, ACTIVITY, XRAY, FULLBRIGHT, ENTITIES, TUNNELS}) {
+                        require(finderEnabled(afterBinding, module) == finderEnabled(originalConfig, module),
+                                "Assigning keys in the GUI must not toggle module " + module);
                     }
-                    clickPanel(context, 70, 113); // Back to the overview.
-                    require(store.load().storage.enabled == originalConfig.storage.enabled
-                                    && store.load().spawner.enabled == originalConfig.spawner.enabled
-                                    && store.load().debris.enabled == originalConfig.debris.enabled
-                                    && store.load().activity.enabled == originalConfig.activity.enabled,
-                            "Assigning keys in the GUI must not toggle finder modules");
                     context.runOnClient(client -> require(!rtp.isEnabled(), "Assigning the Auto RTP key must not start it"));
                     context.runOnClient(client -> require(!freecam.isActive(), "Assigning the Freecam key must not activate it"));
                     screenshot(context, "donut-keybind-01-assigned-normal");
 
                     // Escape cancels capture without closing the GUI or changing the existing binding.
-                    clickPanel(context, 480, 171);
+                    GuiClicks.click(context, "StorageFinder.bind");
                     screenshot(context, "donut-keybind-02-listening");
                     context.getInput().holdKey(GLFW.GLFW_KEY_ESCAPE);
                     context.runOnClient(client -> client.screen.keyPressed(new KeyEvent(GLFW.GLFW_KEY_ESCAPE, 0, 0)));
@@ -101,27 +91,27 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     assertKey(context, 0, TEST_KEYS[0]);
 
                     // Both documented clear shortcuts work, and keyboard capture can start again afterwards.
-                    clickPanel(context, 480, 248);
+                    GuiClicks.click(context, "SpawnerFinder.bind");
                     context.getInput().pressKey(GLFW.GLFW_KEY_DELETE);
                     context.runOnClient(client -> require(ModuleKeybinds.mapping(1).isUnbound(),
                             "Delete did not clear the selected module binding"));
-                    clickPanel(context, 480, 248);
+                    GuiClicks.click(context, "SpawnerFinder.bind");
                     context.getInput().pressKey(TEST_KEYS[1]);
-                    clickPanel(context, 480, 171);
+                    GuiClicks.click(context, "StorageFinder.bind");
                     context.getInput().pressKey(GLFW.GLFW_KEY_BACKSPACE);
                     context.runOnClient(client -> require(ModuleKeybinds.mapping(0).isUnbound(),
                             "Backspace did not clear the selected module binding"));
-                    clickPanel(context, 480, 171);
+                    GuiClicks.click(context, "StorageFinder.bind");
                     context.getInput().pressKey(TEST_KEYS[0]);
 
                     // A mouse binding goes through the same capture flow, then returns to a keyboard key.
-                    clickPanel(context, 480, 325);
+                    GuiClicks.click(context, "DebrisFinder.bind");
                     context.getInput().pressMouse(GLFW.GLFW_MOUSE_BUTTON_4);
-                    context.runOnClient(client -> require(ModuleKeybinds.mapping(2).saveString().equals(
+                    context.runOnClient(client -> require(ModuleKeybinds.mapping(DEBRIS).saveString().equals(
                                     InputConstants.Type.MOUSE.getOrCreate(GLFW.GLFW_MOUSE_BUTTON_4).getName()),
-                            "Mouse button capture did not update the Freecam binding"));
-                    clickPanel(context, 480, 325);
-                    context.getInput().pressKey(TEST_KEYS[2]);
+                            "Mouse button capture did not update the DebrisFinder binding"));
+                    GuiClicks.click(context, "DebrisFinder.bind");
+                    context.getInput().pressKey(TEST_KEYS[DEBRIS]);
 
                     // Check actual disk persistence and reload, not just the current mapping object's value.
                     context.runOnClient(client -> {
@@ -148,8 +138,9 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     });
                     context.waitTicks(2);
                     screenshot(context, "donut-keybind-03-assigned-scaled");
-                    clickPanel(context, 290, 143);
-                    clickPanel(context, 442, 82); // Settings-header binding at the scaled GUI size.
+                    GuiClicks.collapse(context, "SpawnerFinder");
+                    GuiClicks.collapse(context, "DebrisFinder");
+                    GuiClicks.click(context, "StorageFinder.bind"); // At the scaled GUI size.
                     screenshot(context, "donut-keybind-04-settings-listening-scaled");
                     context.getInput().pressKey(TEST_KEYS[0]);
                     assertKey(context, 0, TEST_KEYS[0]);
@@ -188,7 +179,7 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     boolean spawnerBefore = store.load().spawner.enabled;
                     context.getInput().pressKey(TEST_KEYS[1]);
                     require(store.load().spawner.enabled != spawnerBefore, "The spawner binding did not toggle its module");
-                    for (int module : new int[] {DEBRIS, ACTIVITY}) {
+                    for (int module : new int[] {DEBRIS, ACTIVITY, XRAY, FULLBRIGHT, ENTITIES, TUNNELS}) {
                         boolean before = finderEnabled(store.load(), module);
                         context.getInput().pressKey(TEST_KEYS[module]);
                         require(finderEnabled(store.load(), module) != before, "The binding of module " + module + " did not toggle it");
@@ -216,6 +207,9 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     setFinder(context, store, 1, true);
                     setFinder(context, store, DEBRIS, true);
                     setFinder(context, store, ACTIVITY, true);
+                    setFinder(context, store, TUNNELS, true);
+                    setFinder(context, store, ENTITIES, true);
+                    setFinder(context, store, FULLBRIGHT, true);
                     screenshot(context, "donut-arraylist-01-active-scaled");
                     context.getInput().pressKey(GLFW.GLFW_KEY_F1);
                     context.runOnClient(client -> require(client.options.hideGui, "F1 did not hide the HUD"));
@@ -233,6 +227,9 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     setFinder(context, store, 1, false);
                     setFinder(context, store, DEBRIS, false);
                     setFinder(context, store, ACTIVITY, false);
+                    setFinder(context, store, TUNNELS, false);
+                    setFinder(context, store, ENTITIES, false);
+                    setFinder(context, store, FULLBRIGHT, false);
                     screenshot(context, "donut-arraylist-04-disabled");
                 } finally {
                     context.setScreen(() -> null);
@@ -250,6 +247,9 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     setFinder(context, store, 1, originalConfig.spawner.enabled);
                     setFinder(context, store, DEBRIS, originalConfig.debris.enabled);
                     setFinder(context, store, ACTIVITY, originalConfig.activity.enabled);
+                    for (int module : new int[] {XRAY, FULLBRIGHT, ENTITIES, TUNNELS}) {
+                        setFinder(context, store, module, finderEnabled(originalConfig, module));
+                    }
                     if (!originalConfig.showHud) {
                         openGui(context, openGui);
                         setHud(context, store, false);
@@ -289,15 +289,17 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
             case 1 -> config.spawner.enabled;
             case DEBRIS -> config.debris.enabled;
             case ACTIVITY -> config.activity.enabled;
+            case XRAY -> config.xray.enabled;
+            case FULLBRIGHT -> config.fullbright.enabled;
+            case ENTITIES -> config.entities.enabled;
+            case TUNNELS -> config.tunnels.enabled;
             default -> throw new IllegalArgumentException("Not a finder module: " + module);
         };
     }
 
     private static void setHud(ClientGameTestContext context, ConfigStore store, boolean enabled) {
-        clickPanel(context, 402, 25);
-        if (store.load().showHud != enabled) clickPanel(context, 595, 199);
+        if (store.load().showHud != enabled) GuiClicks.click(context, "module.ArrayList");
         require(store.load().showHud == enabled, "The array-list appearance setting did not update");
-        clickPanel(context, 230, 25);
     }
 
     private static void assertKey(ClientGameTestContext context, int module, int key) {
@@ -306,19 +308,6 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                 "The selected key was not assigned to module " + module));
     }
 
-    private static void clickPanel(ClientGameTestContext context, double x, double y) {
-        context.runOnClient(client -> {
-            require(client.screen instanceof DonutScreen, "Donut screen is not open");
-            var screen = client.screen;
-            float scale = Math.max(0.1f, Math.min(1, Math.min((screen.width - 16f) / 650, (screen.height - 16f) / 408)));
-            double actualX = (screen.width - 650 * scale) / 2 + x * scale;
-            double actualY = (screen.height - 408 * scale) / 2 + y * scale;
-            var event = new MouseButtonEvent(actualX, actualY, new MouseButtonInfo(GLFW.GLFW_MOUSE_BUTTON_LEFT, 0));
-            require(screen.mouseClicked(event, false), "Donut screen did not consume mouse input");
-            screen.mouseReleased(event);
-        });
-        context.waitTick();
-    }
 
     private static void screenshot(ClientGameTestContext context, String name) {
         context.takeScreenshot(TestScreenshotOptions.of(name).withSize(1280, 800));

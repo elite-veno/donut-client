@@ -6,7 +6,15 @@ import dev.donut.client.config.FinderSettings;
 import dev.donut.client.config.RenderMode;
 import dev.donut.client.finder.ActivityArea;
 import dev.donut.client.finder.ActivityStats;
+import dev.donut.client.finder.DebrisStats;
+import dev.donut.client.finder.FinderScanner;
 import dev.donut.client.input.ModuleKeybinds;
+import dev.donut.client.sniper.Ledger;
+import dev.donut.client.sniper.LiveTrader;
+import dev.donut.client.sniper.Money;
+import dev.donut.client.sniper.PriceStats;
+import dev.donut.client.sniper.SniperEngine;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
@@ -16,59 +24,92 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
 import java.util.function.DoubleSupplier;
 import java.util.function.IntConsumer;
+import java.util.function.IntFunction;
 import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 
 import static dev.donut.client.gui.UiPaint.*;
 
-/** A compact, self-contained click GUI. Settings take effect immediately. */
+/**
+ * The Donut Client menu: a sidebar of module categories and pages, a header with the page's title and a search box,
+ * and the page itself. A category lists its modules as cards; a card's switch turns the module on or off, and clicking
+ * the card opens its settings, one row per setting with a short description. Settings take effect immediately.
+ */
 public final class DonutScreen extends Screen {
-    private static final int W = 650, H = 408;
-    private static final int TEXT = 0xFFE9EDF5, MUTED = 0xFF949DAD, DIM = 0xFF606A7B;
-    private static final int PANEL = 0xFF101319, CARD = 0xFF1B202B, BORDER = 0xFF292F3B;
-    private static final int CX = 154, CW = 474, TOP = 111, BOTTOM = 369;
-    private static final int[] PALETTE = {0x4C86FF, 0x68B4FF, 0x6DDAC5, 0x7EDD8E, 0xC5E774,
-            0xFFC66B, 0xFF975F, 0xFF707B, 0xEC80B5, 0xBA8CFF, 0xC8D1E8, 0xFFFFFF};
+    private static final int SIDEBAR_W = 148, NAV_H = 22, CARD_H = 38, CARD_GAP = 6, HEADER_H = 50, MAX_W = 720, MAX_H = 420;
+    /** The menu needs this much room; smaller screens scale the whole GUI down to fit it. */
+    private static final float MIN_W = 560, MIN_H = 340;
+    /** The default accent color. */
+    public static final int MINT = 0x5BE3C8;
+    private static final int TEXT = 0xFFF0F6F5, LABEL = 0xFFCAD7D5, MUTED = 0xFF8EA3A1, DIM = 0xFF5E7472;
+    private static final int WINDOW = 0xF6071112, SIDEBAR = 0xFF0A1718, CARD = 0xFF0C1A1B, CARD_HOVER = 0xFF102324;
+    private static final int EDGE = 0xFF1B3031, EDGE_HOVER = 0xFF2A4646, FIELD = 0xFF061011, TRACK = 0xFF1D2D2E;
+    private static final int WARN = 0xFFF2B35E, DANGER = 0xFFFF6F6F, GOOD = 0xFF6FE3A6;
+    private static final int[] PALETTE = {MINT, 0x3FC1D6, 0x68B4FF, 0x8C9BFF, 0xBA8CFF, 0xEC80B5,
+            0xFF707B, 0xFF975F, 0xF2B35E, 0xC5E774, 0x7EDD8E, 0xF0F6F5};
+    /** The page and the module whose settings are open; kept while the game runs, so the menu reopens as it was left. */
+    private static String pageId = "finders", detailName;
+    /** Settings showing their "More options", kept the same way. */
+    private static final Set<String> MORE = new HashSet<>();
 
     private final ClientConfig config;
     private final Runnable save;
     private final Supplier<ActivityStats> activityStats;
     private final Supplier<String> rtpStatus;
-    /** The focused text field, if any; its edits are saved when focus leaves it. */
-    private String textField;
-    private Supplier<String> textGetter;
-    private Consumer<String> textSetter;
+    private final SniperEngine sniper;
+    private final String version;
+    private final List<NavGroup> groups = new ArrayList<>();
+    private final Map<String, Page> pages = new LinkedHashMap<>();
+    /** The scrolling sidebar list, the scrolling page content, and the fixed parts of the window around them. */
+    private final Region nav = new Region(), content = new Region(), chrome = new Region();
     private final List<Hit> hits = new ArrayList<>();
+    /** Where each control sits in its region's content, clipped or not, so it can be scrolled into view. */
+    private final Map<String, Place> places = new HashMap<>();
     private final Map<String, Double> animations = new HashMap<>();
+    private final Deque<int[]> clips = new ArrayDeque<>();
+    private GuiGraphics graphics;
     private float scale = 1;
-    private float originX, originY;
+    /** Screen pixels per layout unit; whole, so the UI font draws sharp. */
+    private int pixels = 1;
+    private int layoutW, layoutH;
+    /** The window's place and size. */
+    private int wx, wy, ww, wh;
     private double mouseX, mouseY;
-    private int tab;
-    private int selected = -1;
-    private double scroll;
-    private double scrollTarget;
     private long lastFrame;
     private double frameSeconds;
-    private int contentHeight;
+    private boolean moving, settled;
+    /** The region being drawn, and the region under the mouse; only that one shows hover states. */
+    private Region drawing, hovered;
+    private int contentOrigin;
+    /** A short explanation shown beside the mouse, for controls too small to carry their own. */
+    private String tooltip;
     private String query = "";
     private boolean searchFocused;
+    /** The focused text field, if any; its edits are saved when focus leaves it. */
+    private String textField;
+    /** The focused field's text; it is only applied, and checked, when focus leaves the field. */
+    private String textBuffer = "";
+    private Consumer<String> textSetter;
     private boolean dirty;
     private Hit dragging;
     private String keyboardFocus;
     private ColorEditor colorEditor;
-    private boolean collectingClip;
     private int binding = -1;
-    private int hoveredBinding = -1;
     private InputConstants.Key capturedKey;
 
     public DonutScreen(ClientConfig config, Runnable save) { this(config, save, () -> ActivityStats.EMPTY); }
@@ -78,458 +119,1026 @@ public final class DonutScreen extends Screen {
     }
 
     public DonutScreen(ClientConfig config, Runnable save, Supplier<ActivityStats> activityStats, Supplier<String> rtpStatus) {
+        this(config, save, activityStats, rtpStatus, null);
+    }
+
+    public DonutScreen(ClientConfig config, Runnable save, Supplier<ActivityStats> activityStats, Supplier<String> rtpStatus,
+                       SniperEngine sniper) {
         super(Component.literal("Donut Client"));
         this.config = config;
         this.save = save;
         this.activityStats = activityStats;
         this.rtpStatus = rtpStatus;
+        this.sniper = sniper;
+        version = FabricLoader.getInstance().getModContainer("donut")
+                .map(mod -> "VERSION " + mod.getMetadata().getVersion().getFriendlyString().toUpperCase(Locale.ROOT)).orElse("");
+        group("Modules",
+                page("finders", "Finders", "search", List.of(storage(), spawners(), debris(), tunnels(), entities(), activity())),
+                page("render", "Render", "eye", List.of(xray(), fullbright(), freecam())),
+                page("utility", "Utility", "rtp", List.of(autoRtp())),
+                page("hud", "HUD", "monitor", List.of(
+                        module("ArrayList", "Active module names at the top right", "hud array list modules",
+                                () -> config.showHud, () -> change(() -> config.showHud = !config.showHud), null),
+                        module("FinderInfo", "Counts, distance and direction of the nearest finds", "hud finder info counts distance",
+                                () -> config.hud.info, () -> change(() -> config.hud.info = !config.hud.info), null),
+                        module("Labels", "Names and distances on the nearest highlights", "hud labels distance names",
+                                () -> config.hud.labels, () -> change(() -> config.hud.labels = !config.hud.labels), c ->
+                                        c.slider("count", "Labels shown", "How many of the nearest highlights get a label",
+                                                () -> config.hud.maxLabels, v -> config.hud.maxLabels = (int) Math.round(v), 1, 32, 1, "")))));
+        if (sniper != null) {
+            group("Trading",
+                    page("sniper", "Sniper", "chart", List.of(ahSniper())),
+                    page("dashboard", "Dashboard", "grid", "Profit, open trades and the sniper's activity", this::drawDashboard),
+                    page("markets", "Markets", "list", "The busiest items in the saved sale history", this::drawMarkets));
+        }
+        group("General",
+                page("keybinds", "Keybinds", "keyboard", "Keys that turn modules on or off", this::drawKeybinds),
+                page("theme", "Theme", "palette", "Colors and effects", this::drawTheme));
+        if (!pages.containsKey(pageId)) pageId = "finders";
+        // Configs from before this design carry the winter theme's colors; they move to its mint once.
+        if (config.gui.theme == null) {
+            config.gui.theme = "mint";
+            config.accentColor = MINT;
+            config.gui.snow = false;
+            save.run();
+        }
     }
+
+    private void group(String title, Page... list) {
+        groups.add(new NavGroup(title, List.of(list)));
+        for (Page p : list) pages.put(p.id, p);
+    }
+
+    private static Page page(String id, String title, String icon, List<Module> modules) {
+        return new Page(id, title, icon, null, modules, null);
+    }
+
+    private static Page page(String id, String title, String icon, String subtitle, Consumer<Column> content) {
+        return new Page(id, title, icon, subtitle, null, content);
+    }
+
+    // Modules -----------------------------------------------------------------------------------
+
+    private Module storage() {
+        FinderSettings s = config.storage;
+        return finder(0, "StorageFinder", "Chests, shulkers, barrels, hoppers and more",
+                "storage chests trapped ender shulkers barrels hoppers furnaces droppers dispensers minecarts", s, c -> {
+            c.color("color", "Base color", () -> s.color, v -> s.color = v);
+            c.toggle("perType", "Colors by type", "Give each storage family its own color", () -> s.perTypeColors, () -> s.perTypeColors = !s.perTypeColors);
+            if (s.perTypeColors) {
+                c.color("chestColor", "Chests & barrels", () -> s.chestColor, v -> s.chestColor = v);
+                c.color("shulkerColor", "Shulkers", () -> s.shulkerColor, v -> s.shulkerColor = v);
+                c.color("dropperColor", "Droppers & hoppers", () -> s.dropperColor, v -> s.dropperColor = v);
+                c.color("furnaceColor", "Furnaces", () -> s.furnaceColor, v -> s.furnaceColor = v);
+            }
+        }, c -> {
+            c.section("Filters");
+            c.chip("chests", "Chests", "Standard and double chests", () -> s.chests, () -> s.chests = !s.chests);
+            c.chip("trapped", "Trapped", "Trapped chests, which trigger redstone", () -> s.trappedChests, () -> s.trappedChests = !s.trappedChests);
+            c.chip("ender", "Ender", "Personal ender storage", () -> s.enderChests, () -> s.enderChests = !s.enderChests);
+            c.chip("shulkers", "Shulkers", "Every shulker box color", () -> s.shulkers, () -> s.shulkers = !s.shulkers);
+            c.chip("barrels", "Barrels", "Barrel storage", () -> s.barrels, () -> s.barrels = !s.barrels);
+            c.chip("hoppers", "Hoppers", "Hoppers, common in farms and sorters", () -> s.hoppers, () -> s.hoppers = !s.hoppers);
+            c.chip("droppers", "Droppers", "Dropper blocks", () -> s.droppers, () -> s.droppers = !s.droppers);
+            c.chip("dispensers", "Dispensers", "Dispenser blocks", () -> s.dispensers, () -> s.dispensers = !s.dispensers);
+            c.chip("furnaces", "Furnaces", "Furnaces, smokers and blast furnaces", () -> s.furnaces, () -> s.furnaces = !s.furnaces);
+            c.chip("minecarts", "Minecarts", "Chest and hopper minecarts, as in mineshafts", () -> s.minecarts, () -> s.minecarts = !s.minecarts);
+        });
+    }
+
+    private Module spawners() {
+        FinderSettings s = config.spawner;
+        return finder(1, "SpawnerFinder", "Spawners, and which ones players visited", "spawners trial monster activated", s, c -> {
+            c.color("color", "Spawners", () -> s.color, v -> s.color = v);
+            c.color("secondaryColor", "Activated", () -> s.secondaryColor, v -> s.secondaryColor = v);
+        }, c -> {
+            c.section("Filters");
+            c.chip("trial", "Trial spawners", "Include trial chamber spawners; monster spawners are always shown",
+                    () -> s.trialSpawners, () -> s.trialSpawners = !s.trialSpawners);
+            c.chip("activated", "Mark activated", "A changed timer means a player stood within 16 blocks of it, or placed it",
+                    () -> s.activatedSpawners, () -> s.activatedSpawners = !s.activatedSpawners);
+        });
+    }
+
+    private Module debris() {
+        FinderSettings s = config.debris;
+        return finder(3, "DebrisFinder", "Ancient debris, with anti-xray detection", "debris ancient netherite nether ores seed", s,
+                c -> {
+            c.color("color", "Debris", () -> s.color, v -> s.color = v);
+            c.color("secondaryColor", "Seed estimates", () -> s.secondaryColor, v -> s.secondaryColor = v);
+            c.color("tertiaryColor", "Search areas", () -> s.tertiaryColor, v -> s.tertiaryColor = v);
+        }, c -> {
+            c.section("Detection");
+            c.toggle("filterFakes", "Filter fakes", "Hide fake debris that anti-xray scatters through netherrack",
+                    () -> s.filterFakes, () -> s.filterFakes = !s.filterFakes);
+            c.toggle("notify", "Reveal alert", "Sound and message when mining uncovers debris", () -> s.notify, () -> s.notify = !s.notify);
+            c.toggle("searchAreas", "Search areas", "Outline 16-block sections the server's block data says still hold hidden debris",
+                    () -> s.searchAreas, () -> s.searchAreas = !s.searchAreas);
+            c.toggle("seedEstimates", "Seed estimates", "Mark the netherrack where the world seed placed debris the server hides",
+                    () -> s.seedEstimates, () -> s.seedEstimates = !s.seedEstimates);
+            if (s.seedEstimates) {
+                c.field("seed", "World seed", "The server's seed; singleplayer worlds use their own", () -> s.seed, v -> s.seed = v.trim(), false);
+            }
+            debrisScan(c, s);
+        });
+    }
+
+    /** Why DebrisFinder shows what it shows, so a server's anti-xray isn't mistaken for a broken finder. */
+    private void debrisScan(Column c, FinderSettings s) {
+        c.section("Live scan");
+        if (!s.enabled) { c.note("Enable DebrisFinder to scan loaded chunks.", MUTED); return; }
+        DebrisStats stats = FinderScanner.instance() == null ? DebrisStats.EMPTY : FinderScanner.instance().debrisStats();
+        c.info("Chunks", Integer.toString(stats.scannedChunks()), TEXT);
+        c.info("Buried", Integer.toString(stats.buried()), TEXT);
+        c.info("Exposed", Integer.toString(stats.exposed()), TEXT);
+        if (stats.fakedChunks() > 0) c.info("Fakes hidden", stats.hiddenFakes() + " in " + stats.fakedChunks() + " ch.", TEXT);
+        if (stats.searchAreas() > 0) c.info("Search areas", Integer.toString(stats.searchAreas()), TEXT);
+        if (stats.seeded()) {
+            c.info("Seed estimates", Integer.toString(stats.estimates()), TEXT);
+            if (stats.bedrockReady()) c.info("Bedrock check", Math.round(100.0 * stats.bedrockMatched() / stats.bedrockChecked()) + "% match",
+                    stats.bedrockMismatch() ? WARN : GOOD);
+            if (stats.seedChecked() > 0) c.info("Seed check", stats.seedMatched() + " of " + stats.seedChecked() + " real debris",
+                    stats.debrisMismatch() ? WARN : GOOD);
+            int verified = stats.seedChunks() + stats.offSeedChunks();
+            if (verified > 0) c.info("Seed applies", stats.seedChunks() + " of " + verified + " chunks", stats.seedChunks() > 0 ? GOOD : WARN);
+            if (stats.dugOut() > 0) c.info("Already dug out", Integer.toString(stats.dugOut()), TEXT);
+        }
+        if (stats.scannedChunks() > 0 && !stats.nether()) {
+            c.note("Ancient debris only generates in the Nether.", WARN);
+        } else if (stats.bedrockMismatch()) {
+            c.note("This Nether's bedrock doesn't match the seed: it is another world's seed, so its estimates are wrong.", WARN);
+        } else if (stats.oresRandomized()) {
+            c.note("The seed is right, but real debris is elsewhere: this server places ores from its own random seeds, so estimates can't work here.", WARN);
+        } else if (stats.seedMismatch()) {
+            c.note("Real debris here is not where this seed puts it: the seed is not this world's, so its estimates are wrong.", WARN);
+        } else if (stats.seeded() && stats.offSeedChunks() > 0 && stats.seedChunks() == 0) {
+            c.note("This area's gravel and blackstone aren't where the seed puts them: the server generated it another way, so it gets no estimates.", WARN);
+        } else if (stats.seeded() && stats.seedChunks() > 0 && stats.estimates() == 0 && stats.dugOut() > 0) {
+            c.note("Every seed spot around here is already dug out: other players mined this debris. Try another area.", WARN);
+        } else if (stats.seeded() && (stats.fakedChunks() > 0 || stats.likelyHidden())) {
+            c.note("This server hides debris (anti-xray). Seed estimates mark the netherrack where the world seed placed it.", WARN);
+        } else if (stats.fakedChunks() > 0) {
+            c.note("This server fills buried netherrack with fake debris (anti-xray). Shown: exposed debris, and debris it reveals as you mine.", WARN);
+        } else if (stats.likelyHidden()) {
+            c.note("No buried debris in any loaded chunk: this server hides it (anti-xray). Mined-open debris lights up with a sound.", WARN);
+        }
+    }
+
+    private Module tunnels() {
+        FinderSettings s = config.tunnels;
+        return finder(9, "TunnelFinder", "Dug tunnels, holes and staircases; anti-xray never hides dug-out air",
+                "tunnels holes shafts staircases stairs dug base underground", s, c -> {
+            c.color("color", "Tunnels", () -> s.color, v -> s.color = v);
+            c.color("secondaryColor", "Holes", () -> s.secondaryColor, v -> s.secondaryColor = v);
+            c.color("tertiaryColor", "Staircases", () -> s.tertiaryColor, v -> s.tertiaryColor = v);
+        }, c -> {
+            c.section("Detection");
+            c.chip("tunnelRuns", "Tunnels", "Straight 1x2 corridors", () -> s.tunnels, () -> s.tunnels = !s.tunnels);
+            c.chip("holes", "Holes", "1x1 vertical shafts", () -> s.holes, () -> s.holes = !s.holes);
+            c.chip("stairs", "Staircases", "1-wide stairs dug up or down", () -> s.staircases, () -> s.staircases = !s.staircases);
+            c.slider("minLength", "Min length", "Caves are rarely this narrow and straight for long; raise it if natural caves show up",
+                    () -> s.minLength, v -> s.minLength = v, 4, 32, 1, " blocks");
+        });
+    }
+
+    private Module entities() {
+        FinderSettings s = config.entities;
+        return finder(8, "EntityFinder", "Players and mobs through walls, with tracers; only entities the server sends",
+                "entities players esp mobs hostile animals items tracers", s, c -> {
+            c.color("color", "Players", () -> s.color, v -> s.color = v);
+            c.color("secondaryColor", "Hostile mobs", () -> s.secondaryColor, v -> s.secondaryColor = v);
+            c.color("tertiaryColor", "Other mobs", () -> s.tertiaryColor, v -> s.tertiaryColor = v);
+            c.color("itemColor", "Items", () -> s.itemColor, v -> s.itemColor = v);
+        }, c -> {
+            c.section("Detection");
+            c.chip("players", "Players", "Everyone except you, labeled with their name", () -> s.players, () -> s.players = !s.players);
+            c.chip("hostiles", "Hostile mobs", "Zombies, creepers, skeletons and other monsters", () -> s.hostiles, () -> s.hostiles = !s.hostiles);
+            c.chip("passives", "Other mobs", "Animals, villagers and golems", () -> s.passives, () -> s.passives = !s.passives);
+            c.chip("items", "Items", "Items lying on the ground", () -> s.items, () -> s.items = !s.items);
+        });
+    }
+
+    private Module activity() {
+        FinderSettings s = config.activity;
+        return finder(4, "ActivityFinder", "Long-loaded chunks from amethyst growth",
+                "activity base basefinder players amethyst geode crystals clusters", s,
+                c -> c.color("color", "Squares", () -> s.color, v -> s.color = v), c -> {
+            c.section("Detection");
+            c.slider("minActivity", "Min growth", "Worldgen buds score near 0%; 50% is roughly an hour of nearby activity",
+                    () -> s.minActivity, v -> s.minActivity = v, 0, 1, .01, "%");
+            c.toggle("surface", "Surface marker", "Squares on the surface with a guide down to the geode",
+                    () -> s.surfaceMarker, () -> s.surfaceMarker = !s.surfaceMarker);
+            c.toggle("allLoaded", "All loaded chunks", "Every chunk your client has, at any distance and depth",
+                    () -> s.allLoadedChunks, () -> s.allLoadedChunks = !s.allLoadedChunks);
+            activityScan(c, s);
+        });
+    }
+
+    /** Live counts, including chunks below the threshold, so an empty world view can be explained. */
+    private void activityScan(Column c, FinderSettings s) {
+        c.section("Live scan");
+        if (!s.enabled) { c.note("Enable ActivityFinder to scan loaded chunks.", MUTED); return; }
+        ActivityStats stats = activityStats.get();
+        c.info("Chunks", Integer.toString(stats.scannedChunks()), TEXT);
+        c.info("With amethyst", Integer.toString(stats.amethystChunks()), TEXT);
+        c.info("Budding blocks", Integer.toString(stats.budding()), TEXT);
+        ActivityArea best = stats.best();
+        c.info("Highest", best == null ? "None" : Math.round(best.score() * 100) + "%", TEXT);
+        if (best != null) c.info("At", "x " + (best.chunk().getMinBlockX() + 8) + ", z " + (best.chunk().getMinBlockZ() + 8), MUTED);
+        if (!stats.overworld()) {
+            c.note("Amethyst geodes only generate in the Overworld.", WARN);
+        } else if (stats.scannedChunks() >= 100 && stats.amethystChunks() == 0) {
+            c.note("No budding amethyst in any loaded chunk. Geodes are common, so this server may hide amethyst (anti-xray).", WARN);
+        } else if (best != null && best.score() < s.minActivity) {
+            c.note("Nothing reaches Min growth; lower it to see weaker chunks.", MUTED);
+        }
+    }
+
+    /**
+     * A finder's settings: the controls people use up front, then its own detection settings, with the look of the
+     * highlights behind "More options".
+     */
+    private Module finder(int index, String name, String description, String keywords, FinderSettings s,
+                          Consumer<Column> colors, Consumer<Column> detection) {
+        return module(name, description, keywords, () -> s.enabled, () -> change(() -> s.enabled = !s.enabled), c -> {
+            c.bind(index);
+            // ActivityFinder can cover every loaded chunk, which makes range and distance fade irrelevant.
+            boolean everyChunk = s == config.activity && s.allLoadedChunks;
+            c.section("Render");
+            c.choice("mode", "Mode", RenderMode.values().length, () -> s.mode.ordinal(),
+                    v -> s.mode = RenderMode.values()[v], v -> modeName(RenderMode.values()[v]));
+            c.toggle("walls", "Through walls", "Keep highlights visible behind blocks", () -> s.throughWalls, () -> s.throughWalls = !s.throughWalls);
+            c.toggle("tracers", "Tracers", "Lines from your crosshair to every highlight", () -> s.tracers, () -> s.tracers = !s.tracers);
+            if (!everyChunk) c.slider("range", "Range", "Detection range; only loaded chunks can be highlighted",
+                    () -> s.range, v -> s.range = v, 16, 256, 1, " blocks");
+            detection.accept(c);
+            c.more(m -> {
+                m.section("Appearance");
+                m.slider("outlineOpacity", "Outline opacity", "How opaque the outlines are",
+                        () -> s.outlineOpacity, v -> s.outlineOpacity = v, 0, 1, .01, "%");
+                m.slider("fillOpacity", "Fill opacity", "How opaque the filled faces are", () -> s.fillOpacity, v -> s.fillOpacity = v, 0, 1, .01, "%");
+                m.slider("lineWidth", "Line width", "Outline width", () -> s.lineWidth, v -> s.lineWidth = v, .5, 5, .1, " px");
+                if (!everyChunk) m.toggle("fade", "Distance fade", "Soften highlights near the range limit",
+                        () -> s.distanceFade, () -> s.distanceFade = !s.distanceFade);
+                m.section("Colors");
+                colors.accept(m);
+            });
+        }).key(index);
+    }
+
+    private Module xray() {
+        var s = config.xray;
+        return module("Xray", "See through terrain to the ores, caves and builds it hides",
+                "xray x-ray see through stone ores caves underground hidden base", () -> s.enabled, () -> change(() -> s.enabled = !s.enabled), c -> {
+            c.bind(6);
+            c.section("Hide");
+            c.chip("stone", "Stone", "Stone, deepslate, tuff, granite, diorite, andesite and bedrock; sideways deepslate stays, since only players place it",
+                    () -> s.hideStone, () -> s.hideStone = !s.hideStone);
+            c.chip("soil", "Dirt & sand", "Dirt, sand and gravel; also grass, clay and sandstone", () -> s.hideSoil, () -> s.hideSoil = !s.hideSoil);
+            c.chip("nether", "Nether", "Netherrack, basalt, blackstone, soul sand and magma", () -> s.hideNether, () -> s.hideNether = !s.hideNether);
+            c.chip("end", "End stone", "The End's islands", () -> s.hideEndStone, () -> s.hideEndStone = !s.hideEndStone);
+            c.chip("water", "Water", "Also seagrass and kelp", () -> s.hideWater, () -> s.hideWater = !s.hideWater);
+            c.chip("lava", "Lava", "See debris and bases behind lava lakes", () -> s.hideLava, () -> s.hideLava = !s.hideLava);
+            c.section("Anti-xray");
+            c.toggle("exposed", "Exposed ores only", "Hide ores touching no air; anti-xray fakes never do",
+                    () -> s.exposedOresOnly, () -> s.exposedOresOnly = !s.exposedOresOnly);
+            c.more(m -> m.field("extra", "Also hide", "Block ids, separated by commas", () -> s.extraHidden, v -> s.extraHidden = v, false));
+            c.note("Uses Minecraft's own renderer; Sodium replaces it and is not supported.", DIM);
+        }).key(6);
+    }
+
+    private Module fullbright() {
+        var s = config.fullbright;
+        return module("Fullbright", "Full brightness in caves and at night; your brightness setting is left alone",
+                "fullbright brightness gamma night vision fog dark caves", () -> s.enabled, () -> change(() -> s.enabled = !s.enabled), c -> {
+            c.bind(7);
+            c.toggle("noFog", "Remove fog", "Distance, water, lava, blindness and darkness fog", () -> s.noFog, () -> s.noFog = !s.noFog);
+        }).key(7);
+    }
+
+    private Module freecam() {
+        var s = config.freecam;
+        return worldModule("Freecam", "Explore with a detached camera; close this menu to fly", "freecam free camera fly perspective spectator",
+                () -> s.enabled, () -> s.enabled = !s.enabled, c -> {
+            c.bind(2);
+            c.section("Movement");
+            c.slider("speed", "Speed", "Camera speed", () -> s.speed, v -> s.speed = v, .1, 5, .1, " blocks/tick");
+            c.slider("boost", "Sprint boost", "Speed multiplier while sprinting", () -> s.boostMultiplier, v -> s.boostMultiplier = v, 1, 10, .1, "x");
+            c.section("Controls");
+            c.info("Move", keyName(minecraft.options.keyUp) + keyName(minecraft.options.keyLeft)
+                    + keyName(minecraft.options.keyDown) + keyName(minecraft.options.keyRight), LABEL);
+            c.info("Up / down", keyName(minecraft.options.keyJump) + " / " + keyName(minecraft.options.keyShift), LABEL);
+            c.info("Boost", keyName(minecraft.options.keySprint), LABEL);
+        }).key(2);
+    }
+
+    private Module autoRtp() {
+        var s = config.rtp;
+        return worldModule("AutoRTP", "/rtp until ActivityFinder sees activity", "autortp auto rtp random teleport wild activity base",
+                () -> s.enabled, () -> s.enabled = !s.enabled, c -> {
+            c.bind(5);
+            c.note(rtpStatus.get(), s.enabled ? TEXT : MUTED);
+            c.section("Command");
+            c.field("command", "Command", "Sent without the slash", () -> s.command, v -> s.command = v, false);
+            c.section("Stop");
+            c.slider("stopAt", "Stop at growth", "Stops once a chunk reaches this growth; ActivityFinder's squares keep their own threshold",
+                    () -> s.stopAtGrowth, v -> s.stopAtGrowth = v, 0, 1, .01, "%");
+            c.toggle("hurt", "Stop when hurt", "Stop as soon as you lose health", () -> s.stopWhenHurt, () -> s.stopWhenHurt = !s.stopWhenHurt);
+            c.more(m -> {
+                m.section("Menu");
+                m.field("menu", "Menu item", "Clicked when the command opens a menu", () -> s.menuItem, v -> s.menuItem = v, false);
+                m.section("Timing");
+                m.slider("interval", "Interval", "Time between attempts; waits longer whenever the server reports a cooldown",
+                        () -> s.intervalSeconds, v -> s.intervalSeconds = v, 5, 600, 5, " s");
+                m.slider("scan", "Scan time", "Time ActivityFinder scans after each teleport", () -> s.scanSeconds, v -> s.scanSeconds = v, 2, 30, 1, " s");
+                m.slider("attempts", "Max attempts", "Stops after this many teleports", () -> s.maxAttempts,
+                        v -> s.maxAttempts = (int) Math.round(v), 1, 200, 1, "");
+            });
+            c.note("Check the server's rules before automating commands.", DIM);
+        }).key(5);
+    }
+
+    private Module ahSniper() {
+        var s = config.sniper;
+        return new Module("AHSniper", "Watches the Auction House for listings far under their usual price",
+                "sniper ah auction house trading deals flip", () -> s.enabled, () -> {
+            if (s.enabled || canUseWorld()) s.enabled = !s.enabled;
+        }, () -> s.enabled || canUseWorld(), "Join a server to start the sniper", c -> {
+            c.note(sniper.status(), s.enabled ? TEXT : MUTED);
+            c.info("Mode", s.live ? "Live" : "Paper", s.live ? DANGER : LABEL);
+            c.info("Checked", sniper.listingsChecked() + " listings", LABEL);
+            c.info("Deals", Integer.toString(sniper.deals()), LABEL);
+            if (sniper.traderPhase() != LiveTrader.Phase.IDLE) {
+                c.info("Trader", sniper.traderPhase().name().toLowerCase(Locale.ROOT).replace('_', ' '), TEXT);
+            }
+            c.section("Account");
+            c.field("key", "API key", "Run /api in game to get one", () -> s.apiKey, v -> s.apiKey = v, true);
+            c.toggle("live", "Live trading", "Real purchases with your money; resets every session", () -> s.live, () -> s.live = !s.live);
+            if (s.live) c.note("Live: buys with your money.", DANGER);
+            c.section("Limits");
+            c.money("max", "Max price", "Never pay more per trade", () -> s.maxPrice, v -> s.maxPrice = v);
+            c.money("exposure", "Max exposure", "Total in items not yet sold back", () -> s.maxExposure, v -> s.maxExposure = v);
+            c.more(m -> {
+                m.section("Deal rules");
+                m.slider("deviation", "Min deviation", "Robust standard deviations under the item's value", () -> s.minDeviation,
+                        v -> s.minDeviation = v, 1, 6, .1, "σ");
+                m.slider("margin", "Min margin", "Margin after tax when resold", () -> s.minMargin, v -> s.minMargin = v, .02, 1, .01, "%");
+                m.money("profit", "Min profit", "Per trade, after tax; type 250k, 1.5M or 12000", () -> s.minProfit, v -> s.minProfit = v);
+                m.slider("tax", "AH tax", "The Auction House's cut of each sale", () -> s.taxPercent, v -> s.taxPercent = v, 0, 20, .5, " %");
+                m.slider("undercut", "Undercut", "Relist this far under the cheapest competitor", () -> s.undercutPercent,
+                        v -> s.undercutPercent = v, 0, 10, .5, " %");
+                m.slider("sales", "Min sales", "Sales on record before an item is traded", () -> s.minSales,
+                        v -> s.minSales = (int) Math.round(v), 3, 50, 1, "");
+                m.slider("perDay", "Min sales / day", "How often the item must sell", () -> s.minSalesPerDay, v -> s.minSalesPerDay = v, 0, 50, .5, "");
+                m.section("Pace");
+                m.slider("rate", "Trades / hour", "Maximum live trades per hour", () -> s.maxTradesPerHour,
+                        v -> s.maxTradesPerHour = (int) Math.round(v), 1, 100, 1, "");
+                m.slider("poll", "Poll every", "Check new listings this often", () -> s.pollSeconds, v -> s.pollSeconds = v, 2, 30, 1, " s");
+                m.slider("history", "History", "Sale history to keep", () -> s.historyDays, v -> s.historyDays = v, 1, 30, 1, " days");
+                m.section("Commands");
+                m.field("search", "Search command", "{item} becomes the item name", () -> s.searchCommand, v -> s.searchCommand = v, false);
+                m.field("sell", "Sell command", "{price} becomes the stack price", () -> s.sellCommand, v -> s.sellCommand = v, false);
+                m.field("confirm", "Confirm button", "Text on the confirm item", () -> s.confirmText, v -> s.confirmText = v, false);
+            });
+            c.note("Try paper mode first. Check the server's rules before automating trades.", DIM);
+        }, -1);
+    }
+
+    private Module module(String name, String description, String keywords, BooleanSupplier enabled, Runnable toggle,
+                          Consumer<Column> settings) {
+        return new Module(name, description, keywords, enabled, toggle, () -> true, "", settings, -1);
+    }
+
+    /** Freecam and Auto RTP act in a world, so they can only start inside one. */
+    private Module worldModule(String name, String description, String keywords, BooleanSupplier enabled, Runnable flip,
+                               Consumer<Column> settings) {
+        return new Module(name, description, keywords, enabled, () -> {
+            if (enabled.getAsBoolean() || canUseWorld()) flip.run();
+        }, () -> enabled.getAsBoolean() || canUseWorld(), "Join a world to use " + name, settings, -1);
+    }
+
+    private boolean canUseWorld() { return minecraft.level != null && minecraft.player != null; }
+
+    private String modeName(RenderMode mode) {
+        return switch (mode) { case OUTLINE -> "Outline"; case FILL -> "Filled"; case BOTH -> "Both"; };
+    }
+
+    // Pages -------------------------------------------------------------------------------------
+
+    private void drawDashboard(Column c) {
+        Ledger ledger = sniper.ledger();
+        c.label(sniper.status(), TEXT);
+        String trader = sniper.traderPhase() == LiveTrader.Phase.IDLE ? ""
+                : "  ·  trading: " + sniper.traderPhase().name().toLowerCase(Locale.ROOT).replace('_', ' ');
+        c.note(sniper.listingsChecked() + " listings checked  ·  " + sniper.deals() + " deals" + trader, MUTED);
+        c.y += 4;
+        boolean wide = c.w >= 440;
+        int columns = wide ? 4 : 2, gap = 8, w = (c.w - gap * (columns - 1)) / columns;
+        String[][] stats = {
+                {"Paper profit", Money.format(ledger.realized(false)), ledger.count(false, Ledger.State.SOLD) + " sold"},
+                {"Paper open", Money.format(ledger.exposure(false)), ledger.count(false, Ledger.State.OPEN) + " trades"},
+                {"Live profit", Money.format(ledger.realized(true)), ledger.count(true, Ledger.State.SOLD) + " sold"},
+                {"Live listed", Money.format(ledger.exposure(true)), ledger.count(true, Ledger.State.LISTED) + " listed"}};
+        for (int i = 0; i < stats.length; i++) {
+            stat(c.x + (i % columns) * (w + gap), c.y + (i / columns) * 48, w, stats[i][0], stats[i][1], stats[i][2]);
+        }
+        c.y += (stats.length / columns) * 48;
+        c.section("Trades");
+        var trades = ledger.recent(6);
+        if (trades.isEmpty()) c.note("No trades yet.", MUTED);
+        for (Ledger.Position trade : trades) {
+            String result = trade.state == Ledger.State.SOLD ? "+" + Money.format(trade.realized)
+                    : trade.state == Ledger.State.UNSOLD ? "unsold" : trade.state == Ledger.State.LISTED ? "listed" : "open";
+            String price = Money.format(trade.cost) + "  →  " + result;
+            int priceWidth = width(price, Size.BASE);
+            draw(fit((trade.live ? "" : "[paper] ") + trade.label + " x" + trade.count, Size.BASE, c.w - priceWidth - 10),
+                    Size.BASE, c.x, c.y + 3, LABEL);
+            draw(price, Size.BASE, c.x + c.w - priceWidth, c.y + 3, trade.state == Ledger.State.SOLD ? GOOD : MUTED);
+            c.y += 16;
+        }
+        c.section("Activity");
+        var lines = sniper.log();
+        if (lines.isEmpty()) c.note("Start the sniper to watch the Auction House.", MUTED);
+        for (String line : lines.subList(0, Math.min(lines.size(), 25))) {
+            draw(fit(line, Size.SMALL, c.w), Size.SMALL, c.x, c.y + 2, MUTED);
+            c.y += 12;
+        }
+    }
+
+    private void stat(int x, int y, int w, String label, String value, String detail) {
+        round(graphics, x, y, w, 40, 6, CARD_HOVER);
+        outline(graphics, x, y, w, 40, 6, EDGE);
+        draw(fit(label.toUpperCase(Locale.ROOT), Size.SMALL, w - 20), Size.SMALL, x + 10, y + 5, DIM);
+        bold(fit(value, Size.BASE, w - 20), x + 10, y + 16, TEXT);
+        draw(fit(detail, Size.SMALL, w - 20), Size.SMALL, x + 10, y + 28, MUTED);
+    }
+
+    private void drawMarkets(Column c) {
+        c.note("Busiest items in the last " + Math.round(config.sniper.historyDays) + " days of saved sales.", MUTED);
+        int count = c.x + c.w, perDay = count - 48, spread = perDay - 52, median = spread - 62;
+        draw("ITEM", Size.SMALL, c.x, c.y + 2, DIM);
+        String[] heads = {"MEDIAN", "SPREAD", "/ DAY", "SALES"};
+        int[] rights = {median, spread, perDay, count};
+        for (int i = 0; i < heads.length; i++) draw(heads[i], Size.SMALL, rights[i] - width(heads[i], Size.SMALL), c.y + 2, DIM);
+        round(graphics, c.x, c.y + 13, c.w, 1, 0, EDGE);
+        c.y += 18;
+        var rows = sniper.busiest(60);
+        if (rows.isEmpty()) c.note("No sales yet. Start the sniper with an API key.", MUTED);
+        for (SniperEngine.MarketRow row : rows) {
+            PriceStats stats = row.stats();
+            String[] cells = {Money.format(stats.median()),
+                    stats.sales() == 0 || stats.median() <= 0 ? "-" : Math.round(stats.sigma() / stats.median() * 100) + "%",
+                    String.format(Locale.ROOT, "%.1f", stats.salesPerDay()), Integer.toString(stats.sales())};
+            draw(fit(row.name(), Size.BASE, median - 70 - c.x), Size.BASE, c.x, c.y + 3, LABEL);
+            for (int i = 0; i < cells.length; i++) {
+                draw(cells[i], Size.BASE, rights[i] - width(cells[i], Size.BASE), c.y + 3, i == 0 ? TEXT : MUTED);
+            }
+            c.y += 16;
+        }
+    }
+
+    private void drawKeybinds(Column c) {
+        for (Page p : pages.values()) {
+            if (p.modules == null) continue;
+            for (Module m : p.modules) if (m.key >= 0) c.bindRow("keys." + m.name, m.key, m.name, m.description);
+        }
+        c.note("Click a key, then press the new one. Delete or Backspace clears it, Esc cancels.", MUTED);
+    }
+
+    private void drawTheme(Column c) {
+        c.section("Colors");
+        c.color("accent", "Accent color", "Switches, sliders and the selected page", () -> config.accentColor, v -> config.accentColor = v);
+        c.section("Effects");
+        c.toggle("snow", "Snowfall", "Faint snow behind the menu", () -> config.gui.snow, () -> config.gui.snow = !config.gui.snow);
+    }
+
+    // Navigation --------------------------------------------------------------------------------
+
+    private Page currentPage() { return pages.getOrDefault(pageId, pages.values().iterator().next()); }
+
+    /** The module whose settings are open, if any. */
+    private Module detail() {
+        if (detailName == null || !query.isEmpty()) return null;
+        for (Page p : pages.values()) {
+            if (p.modules == null) continue;
+            for (Module m : p.modules) if (m.name.equals(detailName)) return m;
+        }
+        return null;
+    }
+
+    private Page pageOf(Module module) {
+        for (Page p : pages.values()) if (p.modules != null && p.modules.contains(module)) return p;
+        return currentPage();
+    }
+
+    private void openPage(String id) {
+        pageId = id;
+        detailName = null;
+        query = "";
+        searchFocused = false;
+        restart();
+    }
+
+    private void openDetail(Module m) {
+        pageId = pageOf(m).id;
+        detailName = m.name;
+        query = "";
+        searchFocused = false;
+        restart();
+    }
+
+    private void closeDetail() {
+        detailName = null;
+        restart();
+    }
+
+    /** Scrolls a new page to its top and slides it in. */
+    private void restart() {
+        content.scroll = content.scrollTarget = 0;
+        animations.put("page", 0.0);
+        keyboardFocus = null;
+    }
+
+    private List<Module> searchResults() {
+        String needle = query.toLowerCase(Locale.ROOT).trim();
+        List<Module> found = new ArrayList<>();
+        for (Page p : pages.values()) {
+            if (p.modules == null) continue;
+            for (Module m : p.modules) {
+                if ((m.name + " " + m.keywords + " " + m.description).toLowerCase(Locale.ROOT).contains(needle)) found.add(m);
+            }
+        }
+        return found;
+    }
+
+    /** Shows the page that holds a control, for game tests that click controls by id. */
+    private void navigateTo(String id) {
+        boolean row = id.startsWith("module.") || id.startsWith("expand.");
+        String name = row ? id.substring(7) : id.indexOf('.') > 0 && !id.startsWith("keys.") && !id.startsWith("nav.")
+                ? id.substring(0, id.indexOf('.')) : null;
+        if (name == null) return;
+        for (Page p : pages.values()) {
+            if (p.modules == null) continue;
+            for (Module m : p.modules) {
+                if (!m.name.equals(name)) continue;
+                query = "";
+                pageId = p.id;
+                if (!row) detailName = name;
+                else if (!name.equals(detailName)) detailName = null;
+                restart();
+                return;
+            }
+        }
+    }
+
+    // Layout ------------------------------------------------------------------------------------
 
     @Override
     protected void init() {
-        scale = Math.min(1.0f, Math.min((width - 16f) / W, (height - 16f) / H));
-        scale = Math.max(0.1f, scale);
-        originX = (width - W * scale) / 2f;
-        originY = (height - H * scale) / 2f;
+        int gui = minecraft.getWindow().getGuiScale();
+        float fit = Math.clamp(Math.min(width / MIN_W, height / MIN_H), 0.1f, 1f);
+        // A whole number of screen pixels per unit keeps text sharp. Large GUI scales are capped so the window stays
+        // inside the screen with room around it instead of filling it.
+        pixels = Math.min((int) (gui * fit), Math.max(1, minecraft.getWindow().getHeight() / 384));
+        if (pixels >= 1) {
+            scale = (float) pixels / gui;
+        } else {
+            // A window too small for even one pixel per unit gets a fractional scale, and slightly soft text.
+            scale = fit;
+            pixels = 1;
+        }
+        layoutW = Math.round(width / scale);
+        layoutH = Math.round(height / scale);
+        ww = Math.min(layoutW - 32, MAX_W);
+        wh = Math.min(layoutH - 24, MAX_H);
+        wx = (layoutW - ww) / 2;
+        wy = (layoutH - wh) / 2;
         dragging = null;
         hits.clear();
     }
 
+    private int mainX() { return wx + 8 + SIDEBAR_W + 18; }
+
+    private int mainW() { return wx + ww - 18 - mainX(); }
+
+    private Region regionAt(double x, double y) {
+        if (colorEditor != null) return null;
+        if (content.contains(x, y)) return content;
+        if (nav.contains(x, y)) return nav;
+        return x >= wx && x < wx + ww && y >= wy && y < wy + wh ? chrome : null;
+    }
+
+    // Drawing -----------------------------------------------------------------------------------
+
     @Override
     public void render(GuiGraphics g, int mx, int my, float delta) {
+        graphics = g;
         long now = System.nanoTime();
         frameSeconds = lastFrame == 0 ? 1.0 / 60 : Math.min(.1, (now - lastFrame) / 1_000_000_000.0);
         lastFrame = now;
-        scroll = ease(scroll, scrollTarget, 18);
-        mouseX = (mx - originX) / scale;
-        mouseY = (my - originY) / scale;
-        hoveredBinding = -1;
+        // The exact cursor position: the integer one moves in steps of several screen pixels on a large GUI scale.
+        mouseX = minecraft.mouseHandler.getScaledXPos(minecraft.getWindow()) / scale;
+        mouseY = minecraft.mouseHandler.getScaledYPos(minecraft.getWindow()) / scale;
         hits.clear();
-        // Keep the live world visible under a quiet tint; no pause or expensive blur pass.
-        g.fill(0, 0, width, height, 0x66050911);
+        places.clear();
+        clips.clear();
+        moving = false;
+        tooltip = null;
+        hovered = regionAt(mouseX, mouseY);
+        g.fill(0, 0, width, height, 0x9A030808);
         g.pose().pushMatrix();
-        g.pose().translate(originX, originY);
         g.pose().scale(scale, scale);
-        shadow(g, 0, 0, W, H, 13, 0x80000000);
-        round(g, 0, 0, W, H, 13, BORDER);
-        round(g, 1, 1, W - 2, H - 2, 12, PANEL);
-        round(g, 1, 49, W - 2, 1, 0, 0xFF242A35);
-        round(g, 137, 66, 1, H - 106, 0, 0xFF242A35);
-        drawChrome(g);
-        if (tab == 2) drawAppearance(g);
-        else if (selected >= 0) drawSettings(g);
-        else drawOverview(g);
-        round(g, 16, H - 31, W - 32, 1, 0, 0xFF242A35);
-        drawFooter(g);
-        if (colorEditor != null) drawColorEditor(g);
-        if (keyboardFocus != null) {
-            hits.stream().filter(h -> h.id.equals(keyboardFocus)).findFirst().ifPresent(h ->
-                    outline(g, h.x - 2, h.y - 2, h.w + 4, h.h + 4, 6, alpha(config.accentColor, .85)));
+        UiPaint.pixelScale(pixels);
+        try {
+            if (config.gui.snow) drawSnow();
+            drawWindow();
+            if (colorEditor != null) drawColorEditor();
+            if (keyboardFocus != null) {
+                hits.stream().filter(h -> h.id.equals(keyboardFocus)).findFirst().ifPresent(h ->
+                        outline(g, h.x - 2, h.y - 2, h.w + 4, h.h + 4, 5, alpha(accent(), .85)));
+            }
+            if (tooltip != null) drawTooltip();
+        } finally {
+            // The HUD draws at the GUI scale again.
+            UiPaint.pixelScale(0);
         }
         g.pose().popMatrix();
+        settled = !moving;
     }
 
-    private void drawChrome(GuiGraphics g) {
-        round(g, 17, 14, 23, 23, 11, alpha(config.accentColor, 1));
-        round(g, 24, 21, 9, 9, 4, PANEL);
-        round(g, 31, 16, 2, 3, 1, 0xFFFFFFFF);
-        strong(g, font, "DONUT", 48, 21, TEXT);
-        nav(g, "Modules", 191, 78, 0);
-        nav(g, "Favorites", 273, 83, 1);
-        nav(g, "Appearance", 361, 99, 2);
-        double closeHover = animate("closeHover", inside(610, 13, 26, 25) ? 1 : 0);
-        round(g, 610, 13, 26, 25, 6, blend(PANEL, CARD, closeHover));
-        line(g, 619, 21, 626, 28, MUTED);
-        line(g, 626, 21, 619, 28, MUTED);
-        hit("close", 610, 13, 26, 25, this::onClose);
-
-        text(g, font, tab == 2 ? "PERSONALIZE" : "VISUAL", 22, 72, DIM);
-        if (tab == 2) {
-            sidebar(g, "Theme & HUD", 99, true, () -> { });
-        } else {
-            sidebar(g, "Overview", 99, selected == -1, () -> select(-1));
-            // Six modules fit above the footer text at 32-pixel spacing.
-            sidebar(g, "Storage", 131, selected == 0, () -> select(0));
-            sidebar(g, "Spawners", 163, selected == 1, () -> select(1));
-            sidebar(g, "Freecam", 195, selected == 2, () -> select(2));
-            sidebar(g, "Debris", 227, selected == 3, () -> select(3));
-            sidebar(g, "Activity", 259, selected == 4, () -> select(4));
-            sidebar(g, "Auto RTP", 291, selected == 5, () -> select(5));
-            if (config.storage.enabled) round(g, 117, 143, 4, 4, 2, alpha(config.accentColor, 1));
-            if (config.spawner.enabled) round(g, 117, 175, 4, 4, 2, alpha(config.accentColor, 1));
-            if (config.freecam.enabled) round(g, 117, 207, 4, 4, 2, alpha(config.accentColor, 1));
-            if (config.debris.enabled) round(g, 117, 239, 4, 4, 2, alpha(config.accentColor, 1));
-            if (config.activity.enabled) round(g, 117, 271, 4, 4, 2, alpha(config.accentColor, 1));
-            if (config.rtp.enabled) round(g, 117, 303, 4, 4, 2, alpha(config.accentColor, 1));
+    /** Slow, faint snowfall behind the window, placed by formula so it needs no state. */
+    private void drawSnow() {
+        double time = System.nanoTime() / 1e9 % 100_000;
+        int span = layoutH + 8;
+        for (int i = 0; i < 70; i++) {
+            double across = fraction(i * .618034), start = fraction(i * .754878 + .31), depth = fraction(i * .569840 + .67);
+            double y = (start * span + time * (6 + 12 * depth)) % span - 4;
+            double x = across * layoutW + Math.sin(time * (.3 + .5 * depth) + i * 1.7) * (3 + 5 * depth);
+            float size = 1f + (float) depth * 1.6f;
+            round(graphics, (float) x, (float) y, size, size, size / 2, alpha(0xFFFFFF, .18 + .32 * depth));
         }
-        text(g, font, "DONUT CLIENT", 22, H - 81, DIM);
-        text(g, font, "Fabric 1.21.11", 22, H - 65, MUTED);
-        int enabled = (config.storage.enabled ? 1 : 0) + (config.spawner.enabled ? 1 : 0)
-                + (config.freecam.enabled ? 1 : 0) + (config.debris.enabled ? 1 : 0) + (config.activity.enabled ? 1 : 0)
-                + (config.rtp.enabled ? 1 : 0);
-        text(g, font, enabled + " / 6 active", 22, H - 49, DIM);
     }
 
-    private void nav(GuiGraphics g, String label, int x, int w, int target) {
-        double hover = animate("navHover" + target, inside(x, 13, w, 25) ? 1 : 0);
-        double active = animate("navActive" + target, tab == target ? 1 : 0);
-        round(g, x, 13, w, 25, 7, blend(blend(PANEL, 0xFF171B24, hover), CARD, active));
-        text(g, font, label, x + 12, 21, tab == target ? TEXT : MUTED);
-        hit("tab" + target, x, 13, w, 25, () -> { tab = target; select(-1); query = ""; searchFocused = false; });
+    private static double fraction(double value) { return value - Math.floor(value); }
+
+    private void drawWindow() {
+        drawing = chrome;
+        chrome.set(wx, wy, ww, wh);
+        shadow(graphics, wx, wy + 4, ww, wh, 12, 0xC8000000);
+        round(graphics, wx, wy, ww, wh, 10, WINDOW);
+        // A soft glow of the accent behind the page title.
+        graphics.enableScissor(wx, wy, wx + ww, wy + wh);
+        shadow(graphics, mainX() + mainW() / 5, wy - 46, mainW() * 3 / 5, 44, 40, alpha(config.accentColor, .13));
+        graphics.disableScissor();
+        outline(graphics, wx, wy, ww, wh, 10, EDGE);
+        drawSidebar();
+        drawing = chrome;
+        drawHeader();
+        drawPage();
+        drawing = null;
     }
 
-    private void sidebar(GuiGraphics g, String title, int y, boolean active, Runnable action) {
-        double hover = animate("sideHover" + title, inside(14, y, 114, 29) ? 1 : 0);
-        double selected = animate("sideActive" + title, active ? 1 : 0);
-        round(g, 14, y, 114, 29, 6,
-                blend(blend(PANEL, 0xFF191E27, hover), blend(PANEL, config.accentColor, .15), selected));
-        if (active) round(g, 14, y + 7, 3, 15, 1, alpha(config.accentColor, 1));
-        text(g, font, title, 25, y + 10, active ? TEXT : MUTED);
-        hit("side" + title, 14, y, 114, 29, action);
-    }
-
-    private void select(int value) {
-        selected = value;
-        scroll = scrollTarget = 0;
-        animations.clear();
-        searchFocused = false;
-        keyboardFocus = null;
-    }
-
-    private void drawOverview(GuiGraphics g) {
-        strong(g, font, tab == 1 ? "Your favorites" : "Visual modules", CX, 73, TEXT);
-        text(g, font, "A clearer view of your world.", CX, 91, MUTED);
-        round(g, 421, 69, 207, 29, 7, searchFocused ? BORDER : CARD);
-        search(g, 432, 78, MUTED);
-        String shown = query.isEmpty() && !searchFocused ? "Search modules..." : query + (searchFocused && System.currentTimeMillis() % 1000 < 500 ? "|" : "");
-        while (UiPaint.width(font, shown) > 166 && !shown.isEmpty()) shown = removeFirstCharacter(shown);
-        text(g, font, shown, 450, 79, query.isEmpty() ? DIM : TEXT);
-        hit("search", 421, 69, 207, 29, () -> searchFocused = true);
-
-        // Not every card fits, so the list scrolls; full-width cards keep the bar in the margin.
-        beginContent(g);
-        int top = TOP + 8 - (int) scroll;
-        int y = top;
-        for (int index = 0; index < 6; index++) {
-            if (matches(index)) { moduleCard(g, index, y); y += 77; }
-        }
-        if (y == top) {
-            round(g, CX, y, CW, 125, 10, 0xFF161B24);
-            text(g, font, query.isEmpty() ? "Keep your essentials close." : "No matching modules", CX + 22, y + 34, TEXT);
-            text(g, font, query.isEmpty() ? "Click a star on a module to add it here." : "Try storage, debris, amethyst or freecam.", CX + 22, y + 57, MUTED);
-            y += 136;
-        }
-        endContent(g, y, CX + CW + 5);
-    }
-
-    private boolean matches(int index) {
-        if (tab == 1 && !favorite(index)) return false;
-        String words = switch (index) {
-            case 0 -> "storagefinder chests trapped ender shulker droppers";
-            case 1 -> "spawnerfinder spawners trial";
-            case 2 -> "freecam free camera fly perspective spectator";
-            case 3 -> "debrisfinder ancient debris netherite nether ores";
-            case 4 -> "activityfinder activity base basefinder players amethyst geode crystals clusters";
-            default -> "autortp auto rtp random teleport wild activity base basefinder";
-        };
-        return words.contains(query.toLowerCase(Locale.ROOT).trim());
-    }
-
-    private void moduleCard(GuiGraphics g, int index, int y) {
-        boolean enabled = enabled(index);
-        boolean hovered = inside(CX, y, CW, 66);
-        double hover = animate("cardHover" + index, hovered ? 1 : 0);
-        double active = animate("cardActive" + index, enabled ? 1 : 0);
-        int bg = blend(blend(CARD, 0xFF252C39, hover), blend(CARD, config.accentColor, .28), active);
-        round(g, CX, y, CW, 66, 10, bg);
-        round(g, CX + 13, y + 14, 37, 37, 9, enabled ? alpha(config.accentColor, .35) : 0xFF2B3241);
-        if (index == 0) chest(g, CX + 23, y + 23, TEXT);
-        else if (index == 1) spawner(g, CX + 23, y + 23, TEXT);
-        else if (index == 2) camera(g, CX + 23, y + 23, TEXT);
-        else if (index == 3) debris(g, CX + 23, y + 23, TEXT);
-        else if (index == 4) amethyst(g, CX + 23, y + 23, TEXT);
-        else rtp(g, CX + 23, y + 23, TEXT);
-        strong(g, font, name(index), CX + 64, y + 16, TEXT);
-        String description = switch (index) {
-            case 0 -> "Chests, shulkers & droppers";
-            case 1 -> "Monster & trial spawners";
-            case 2 -> "Explore with a detached camera";
-            case 3 -> "Ancient debris in loaded chunks";
-            case 4 -> "Long-loaded chunks from amethyst growth";
-            default -> "/rtp until ActivityFinder sees activity";
-        };
-        text(g, font, description, CX + 64, y + 34, MUTED);
-        boolean needsWorld = (index == 2 || index == 5) && !canUseFreecam();
-        text(g, font, needsWorld ? "Join a world to enable" : "Configure  >", CX + 64, y + 49, enabled ? 0xFFAFCAFF : DIM);
-        hit("module" + index, CX, y, CW - 94, 66, () -> select(index));
-        keybindButton(g, index, 434, y + 43, 92, 19);
-        star(g, CX + CW - 87, y + 25, favorite(index) ? 0xFFFFC66B : DIM);
-        hit("favorite" + index, CX + CW - 95, y + 15, 30, 36, () -> change(() -> toggleFavorite(index)));
-        if (index == 2) freecamToggle(g, "enable2", CX + CW - 51, y + 25);
-        else if (index == 5) rtpToggle(g, "enable5", CX + CW - 51, y + 25);
-        else toggle(g, "enable" + index, CX + CW - 51, y + 25, enabled,
-                () -> change(() -> settings(index).enabled = !settings(index).enabled));
-    }
-
-    private FinderSettings settings(int index) {
-        return switch (index) { case 0 -> config.storage; case 1 -> config.spawner; case 3 -> config.debris; default -> config.activity; };
-    }
-    private boolean enabled(int index) {
-        return index == 2 ? config.freecam.enabled : index == 5 ? config.rtp.enabled : settings(index).enabled;
-    }
-    private boolean favorite(int index) {
-        return index == 2 ? config.freecam.favorite : index == 5 ? config.rtp.favorite : settings(index).favorite;
-    }
-    private void toggleFavorite(int index) {
-        if (index == 2) config.freecam.favorite = !config.freecam.favorite;
-        else if (index == 5) config.rtp.favorite = !config.rtp.favorite;
-        else settings(index).favorite = !settings(index).favorite;
-    }
-    private String name(int index) {
-        return switch (index) {
-            case 0 -> "StorageFinder"; case 1 -> "SpawnerFinder"; case 2 -> "Freecam"; case 3 -> "DebrisFinder";
-            case 4 -> "ActivityFinder"; default -> "AutoRTP";
-        };
-    }
-
-    private boolean canUseFreecam() { return minecraft.level != null && minecraft.player != null; }
-
-    private void freecamToggle(GuiGraphics g, String id, int x, int y) {
-        if (!config.freecam.enabled && !canUseFreecam()) {
-            round(g, x, y, 31, 17, 8, 0xFF262D39);
-            round(g, x + 3, y + 3, 11, 11, 5, DIM);
-            return;
-        }
-        toggle(g, id, x, y, config.freecam.enabled, () -> {
-            if (config.freecam.enabled || canUseFreecam()) config.freecam.enabled = !config.freecam.enabled;
-        });
-    }
-
-    /** Auto RTP sends commands, so like Freecam it can only start inside a world. */
-    private void rtpToggle(GuiGraphics g, String id, int x, int y) {
-        if (!config.rtp.enabled && !canUseFreecam()) {
-            round(g, x, y, 31, 17, 8, 0xFF262D39);
-            round(g, x + 3, y + 3, 11, 11, 5, DIM);
-            return;
-        }
-        toggle(g, id, x, y, config.rtp.enabled, () -> {
-            if (config.rtp.enabled || canUseFreecam()) config.rtp.enabled = !config.rtp.enabled;
-        });
-    }
-
-    private void drawRtpSettings(GuiGraphics g) {
-        var s = config.rtp;
-        strong(g, font, "AutoRTP", CX, 73, TEXT);
-        text(g, font, "Random-teleport until activity shows up.", CX, 91, MUTED);
-        keybindButton(g, 5, 386, 69, 111, 27);
-        String state = s.enabled ? "Running" : canUseFreecam() ? "Stopped" : "Join a world";
-        text(g, font, state, CX + CW - 111, 81, s.enabled ? 0xFF92BAFF : MUTED);
-        rtpToggle(g, "detailEnabled", CX + CW - 33, 78);
-        beginContent(g);
-        int y = TOP + 3 - (int) scroll;
-        round(g, CX, y, CW - 10, 68, 9, 0xFF161D2B);
-        round(g, CX + 18, y + 15, 37, 37, 9, alpha(config.accentColor, .2));
-        rtp(g, CX + 28, y + 25, alpha(config.accentColor, 1));
-        text(g, font, "STATUS", CX + 76, y + 15, DIM);
-        text(g, font, ellipsize(rtpStatus.get(), CW - 100), CX + 76, y + 32, TEXT);
-        text(g, font, "Stops once a chunk reaches " + Math.round(s.stopAtGrowth * 100) + "% amethyst growth.",
-                CX + 76, y + 49, MUTED);
-        y += 84;
-        section(g, "COMMAND", y); y += 18;
-        textRow(g, "rtpCommand", "Command", "Sent without the slash", y, () -> s.command, v -> s.command = v); y += 43;
-        textRow(g, "rtpMenu", "Menu item", "Clicked when the command opens a menu", y, () -> s.menuItem, v -> s.menuItem = v); y += 51;
-        section(g, "TARGET", y); y += 18;
-        slider(g, "rtpStopAt", "Stop at growth", y, () -> s.stopAtGrowth, v -> s.stopAtGrowth = v, 0, 1, .01, "%"); y += 51;
-        section(g, "TIMING", y); y += 18;
-        slider(g, "rtpInterval", "Time between attempts", y, () -> s.intervalSeconds, v -> s.intervalSeconds = v, 5, 600, 5, " s"); y += 47;
-        slider(g, "rtpScan", "Scan time after teleport", y, () -> s.scanSeconds, v -> s.scanSeconds = v, 2, 30, 1, " s"); y += 47;
-        slider(g, "rtpAttempts", "Maximum attempts", y, () -> s.maxAttempts, v -> s.maxAttempts = (int) Math.round(v), 1, 200, 1, ""); y += 51;
-        section(g, "SAFETY", y); y += 18;
-        settingToggle(g, "rtpHurt", "Stop when hurt", "Stop as soon as you lose health", y, () -> s.stopWhenHurt, () -> s.stopWhenHurt = !s.stopWhenHurt); y += 51;
-        text(g, font, "Waits longer whenever the server reports a cooldown.", CX + 3, y, MUTED); y += 17;
-        text(g, font, "Turns on ActivityFinder to scan; its squares keep their own threshold.", CX + 3, y, MUTED); y += 17;
-        text(g, font, "Check the server's rules before automating commands.", CX + 3, y, DIM); y += 25;
-        endContent(g, y);
-    }
-
-    private void textRow(GuiGraphics g, String id, String label, String description, int y,
-                         Supplier<String> getter, Consumer<String> setter) {
-        text(g, font, label, CX + 3, y + 3, TEXT);
-        text(g, font, description, CX + 3, y + 19, MUTED);
-        boolean focused = id.equals(textField);
-        int fx = CX + CW - 216, fw = 202;
-        round(g, fx, y + 2, fw, 27, 6, focused ? BORDER : CARD);
-        String value = getter.get();
-        String shown = value + (focused && System.currentTimeMillis() % 1000 < 500 ? "|" : "");
-        // Keep the end in view while typing.
-        while (!shown.isEmpty() && UiPaint.width(font, shown) > fw - 20) shown = removeFirstCharacter(shown);
-        text(g, font, shown, fx + 10, y + 12, focused ? TEXT : MUTED);
-        hit("text" + id, fx, y + 2, fw, 27, () -> {
-            textField = id;
-            textGetter = getter;
-            textSetter = setter;
-            keyboardFocus = null;
-        });
-    }
-
-    private void commitText() {
-        if (textField == null) return;
-        textField = null;
-        config.rtp.sanitize();
-        dirty = true;
-        flush();
-    }
-
-    private void drawSettings(GuiGraphics g) {
-        if (selected == 2) { drawFreecamSettings(g); return; }
-        if (selected == 5) { drawRtpSettings(g); return; }
-        FinderSettings s = settings(selected);
-        strong(g, font, name(selected), CX, 73, TEXT);
-        text(g, font, "Fine-tune every highlight.", CX, 91, MUTED);
-        keybindButton(g, selected, 386, 69, 111, 27);
-        text(g, font, s.enabled ? "Enabled" : "Disabled", CX + CW - 111, 81, s.enabled ? 0xFF92BAFF : MUTED);
-        toggle(g, "detailEnabled", CX + CW - 33, 78, s.enabled, () -> change(() -> s.enabled = !s.enabled));
-        beginContent(g);
-        int y = TOP + 3 - (int) scroll;
-        round(g, CX, y, CW - 10, 68, 9, 0xFF161D2B);
-        boolean outline = s.mode != RenderMode.FILL;
-        boolean filled = s.mode != RenderMode.OUTLINE;
-        cube(g, CX + 22, y + 13, 30, s.color, outline ? s.outlineOpacity : 0, filled ? s.fillOpacity : 0);
-        text(g, font, "HIGHLIGHT PREVIEW", CX + 89, y + 15, DIM);
-        // ActivityFinder can cover every loaded chunk, which makes range and distance fade irrelevant.
-        boolean everyChunk = selected == 4 && s.allLoadedChunks;
-        text(g, font, modeName(s.mode) + "  /  " + (everyChunk ? "All loaded chunks" : (int) s.range + " block range"), CX + 89, y + 32, TEXT);
-        text(g, font, s.throughWalls ? "Visible through blocks" : "Visible surfaces only", CX + 89, y + 49, MUTED);
-        y += 84;
-        section(g, "RENDERING", y); y += 18;
-        modeRow(g, s, y); y += 40;
-        slider(g, "outlineOpacity", "Outline opacity", y, () -> s.outlineOpacity, v -> s.outlineOpacity = v, 0, 1, .01, "%"); y += 47;
-        slider(g, "fillOpacity", "Fill opacity", y, () -> s.fillOpacity, v -> s.fillOpacity = v, 0, 1, .01, "%"); y += 47;
-        slider(g, "lineWidth", "Outline width", y, () -> s.lineWidth, v -> s.lineWidth = v, .5, 5, .1, " px"); y += 47;
-        if (!everyChunk) { slider(g, "range", "Detection range", y, () -> s.range, v -> s.range = v, 16, 256, 1, " blocks"); y += 47; }
-        settingToggle(g, "walls", "Through walls", "Keep highlights visible behind blocks", y, () -> s.throughWalls, () -> s.throughWalls = !s.throughWalls);
-        if (everyChunk) y += 51;
-        else {
-            y += 43;
-            settingToggle(g, "fade", "Distance fade", "Soften highlights near the range limit", y, () -> s.distanceFade, () -> s.distanceFade = !s.distanceFade); y += 51;
-        }
-        section(g, "COLORS", y); y += 19;
-        colorRow(g, "Base highlight", y, () -> s.color, value -> s.color = value); y += 36;
-        if (selected == 0) {
-            settingToggle(g, "perType", "Colors by block type", "Give each storage family its own color", y, () -> s.perTypeColors, () -> s.perTypeColors = !s.perTypeColors); y += 45;
-            if (s.perTypeColors) {
-                colorRow(g, "Chests", y, () -> s.chestColor, value -> s.chestColor = value); y += 36;
-                colorRow(g, "Shulkers", y, () -> s.shulkerColor, value -> s.shulkerColor = value); y += 36;
-                colorRow(g, "Droppers", y, () -> s.dropperColor, value -> s.dropperColor = value); y += 36;
+    private void drawSidebar() {
+        int x = wx + 8, y = wy + 8, w = SIDEBAR_W, h = wh - 16;
+        round(graphics, x, y, w, h, 8, SIDEBAR);
+        outline(graphics, x, y, w, h, 8, EDGE);
+        donut(graphics, x + 12, y + 12, accent());
+        bold("Donut", x + 34, y + 11, TEXT);
+        draw("Client", Size.BASE, x + 34 + width("Donut ", Size.BASE) + 1, y + 11, accent(), false, true);
+        if (!version.isEmpty()) draw(fit(version, Size.SMALL, w - 44), Size.SMALL, x + 34, y + 24, DIM);
+        int top = y + 44;
+        nav.set(x, top, w, y + h - 6 - top);
+        drawing = nav;
+        nav.scroll = ease(nav.scroll, nav.scrollTarget, 18);
+        pushClip(nav.x, nav.y, nav.x + nav.w, nav.y + nav.h);
+        int shift = snapped(nav.scroll);
+        graphics.pose().pushMatrix();
+        graphics.pose().translate(0, (float) (shift - nav.scroll));
+        contentOrigin = top - shift;
+        int cy = contentOrigin;
+        for (int i = 0; i < groups.size(); i++) {
+            NavGroup group = groups.get(i);
+            if (i > 0) {
+                round(graphics, x + 12, cy + 3, w - 24, 1, 0, EDGE);
+                cy += 10;
             }
+            draw(group.title.toUpperCase(Locale.ROOT), Size.SMALL, x + 13, cy + 2, DIM);
+            cy += 16;
+            for (Page p : group.pages) {
+                navItem(p, x + 7, cy, w - 14);
+                cy += NAV_H + 3;
+            }
+            cy += 5;
         }
-        y += 9;
-        section(g, selected >= 3 ? "DETECTION" : "BLOCK FILTERS", y); y += 18;
-        if (selected == 0) {
-            settingToggle(g, "chests", "Chests", "Standard and double chests", y, () -> s.chests, () -> s.chests = !s.chests); y += 43;
-            settingToggle(g, "trapped", "Trapped chests", "Redstone-triggering chests", y, () -> s.trappedChests, () -> s.trappedChests = !s.trappedChests); y += 43;
-            settingToggle(g, "ender", "Ender chests", "Personal ender storage", y, () -> s.enderChests, () -> s.enderChests = !s.enderChests); y += 43;
-            settingToggle(g, "shulkers", "Shulker boxes", "Every shulker color", y, () -> s.shulkers, () -> s.shulkers = !s.shulkers); y += 43;
-            settingToggle(g, "droppers", "Droppers", "Dropper blocks", y, () -> s.droppers, () -> s.droppers = !s.droppers); y += 43;
-        } else if (selected == 1) {
-            text(g, font, "Monster spawners are always included.", CX + 3, y + 8, MUTED); y += 31;
-            settingToggle(g, "trial", "Trial spawners", "Include trial chamber spawners", y, () -> s.trialSpawners, () -> s.trialSpawners = !s.trialSpawners); y += 43;
-        } else if (selected == 3) {
-            text(g, font, "Searches loaded chunk sections for ancient debris.", CX + 3, y + 8, MUTED); y += 23;
-            text(g, font, "Anti-xray servers can hide or fake debris until it is exposed.", CX + 3, y + 8, MUTED); y += 31;
+        graphics.pose().popMatrix();
+        popClip();
+        nav.contentHeight = cy - contentOrigin;
+        clampScroll(nav);
+        drawing = chrome;
+    }
+
+    private void navItem(Page p, int x, int y, int w) {
+        boolean selected = p.id.equals(pageId) && query.isEmpty(), over = inside(x, y, w, NAV_H);
+        double on = animate("nav." + p.id, selected ? 1 : 0);
+        if (on > .01) {
+            round(graphics, x, y, w, NAV_H, 6, blend(SIDEBAR, accent(), .14 * on));
+            outline(graphics, x, y, w, NAV_H, 6, alpha(config.accentColor, .55 * on));
+        } else if (over) {
+            round(graphics, x, y, w, NAV_H, 6, alpha(0xFFFFFF, .04));
+        }
+        icon(p.icon, x + 8, y + 6, selected ? accent() : over ? TEXT : LABEL);
+        draw(p.title, Size.BASE, x + 26, y + 8, selected || over ? TEXT : LABEL);
+        if (p.modules != null) {
+            String count = Integer.toString(p.modules.size());
+            draw(count, Size.SMALL, x + w - 9 - width(count, Size.SMALL), y + 8, DIM);
+        }
+        hit("nav." + p.id, x, y, w, NAV_H, () -> openPage(p.id), null);
+    }
+
+    /** The page icons are drawn on a 17-unit grid and shown at ten units. */
+    private void icon(String name, int x, int y, int color) {
+        if (name.equals("search")) { search(graphics, x, y, color); return; }
+        graphics.pose().pushMatrix();
+        graphics.pose().translate(x, y);
+        graphics.pose().scale(.6f, .6f);
+        switch (name) {
+            case "eye" -> eye(graphics, 0, 0, color);
+            case "rtp" -> rtp(graphics, 0, 0, color);
+            case "chart" -> chart(graphics, 0, 0, color);
+            case "monitor" -> monitor(graphics, 0, 0, color);
+            case "grid" -> grid(graphics, 0, 0, color);
+            case "list" -> list(graphics, 0, 0, color);
+            case "keyboard" -> keyboard(graphics, 0, 0, color);
+            case "palette" -> palette(graphics, 0, 0, color);
+            default -> sliders(graphics, 0, 0, color);
+        }
+        graphics.pose().popMatrix();
+    }
+
+    private void drawHeader() {
+        int x = mainX(), w = mainW();
+        Page page = currentPage();
+        String title = query.isEmpty() ? page.title : "Search";
+        int searchW = Math.min(176, w / 3), titleW = w - searchW - 16;
+        draw("Donut", Size.TITLE, x, wy + 21, accent(), false, true);
+        int after = x + width("Donut ", Size.TITLE) + 2;
+        draw(fit(title, Size.TITLE, x + titleW - after), Size.TITLE, after, wy + 21, TEXT, true, false);
+        String subtitle;
+        if (!query.isEmpty()) {
+            int found = searchResults().size();
+            subtitle = found + (found == 1 ? " module" : " modules");
+        } else if (page.modules != null) {
+            long enabled = page.modules.stream().filter(m -> m.enabled.getAsBoolean()).count();
+            subtitle = page.modules.size() + (page.modules.size() == 1 ? " module" : " modules") + "  ·  " + enabled + " enabled";
         } else {
-            slider(g, "minActivity", "Minimum growth", y, () -> s.minActivity, v -> s.minActivity = v, 0, 1, .01, "%"); y += 47;
-            settingToggle(g, "surface", "Surface marker", "Squares on the surface with a guide down to the geode", y,
-                    () -> s.surfaceMarker, () -> s.surfaceMarker = !s.surfaceMarker); y += 43;
-            settingToggle(g, "allLoaded", "All loaded chunks", "Every chunk your client has, at any distance and depth", y,
-                    () -> s.allLoadedChunks, () -> s.allLoadedChunks = !s.allLoadedChunks); y += 47;
-            text(g, font, "Amethyst only grows while a player is within simulation distance.", CX + 3, y + 2, MUTED); y += 17;
-            text(g, font, "Worldgen buds score near 0%. 50% is roughly an hour of nearby activity.", CX + 3, y + 2, MUTED); y += 17;
-            text(g, font, "Squares mark the geode's chunk; the player was within a few chunks.", CX + 3, y + 2, MUTED); y += 25;
-            y = drawActivityScan(g, s, y);
+            subtitle = page.subtitle;
         }
-        y += 12;
-        text(g, font, "Only blocks in loaded chunks can be highlighted.", CX + 3, y, DIM); y += 23;
-        endContent(g, y);
+        draw(fit(subtitle, Size.SMALL, titleW), Size.SMALL, x, wy + 35, MUTED);
+        drawSearch(x + w - searchW, wy + 14, searchW, 22);
     }
 
-    /** Live counts, including chunks below the threshold, so an empty world view can be explained. */
-    private int drawActivityScan(GuiGraphics g, FinderSettings s, int y) {
-        section(g, "LIVE SCAN", y); y += 19;
-        ActivityStats stats = activityStats.get();
-        if (!s.enabled) {
-            text(g, font, "Enable ActivityFinder to scan loaded chunks.", CX + 3, y, MUTED); return y + 25;
-        }
-        controlHint(g, "Chunks scanned", Integer.toString(stats.scannedChunks()), y); y += 19;
-        controlHint(g, "With budding amethyst", stats.amethystChunks() + " chunks, " + stats.budding() + " blocks", y); y += 19;
-        ActivityArea best = stats.best();
-        controlHint(g, "Highest growth", best == null ? "None" : Math.round(best.score() * 100) + "% at x "
-                + (best.chunk().getMinBlockX() + 8) + ", z " + (best.chunk().getMinBlockZ() + 8), y); y += 23;
-        if (!stats.overworld()) {
-            text(g, font, "Amethyst geodes only generate in the Overworld.", CX + 3, y, 0xFFFFC66B); y += 23;
-        } else if (stats.scannedChunks() >= 100 && stats.amethystChunks() == 0) {
-            text(g, font, "No budding amethyst in any loaded chunk. Geodes are common,", CX + 3, y, 0xFFFFC66B); y += 15;
-            text(g, font, "so this server may hide amethyst from clients (anti-xray).", CX + 3, y, 0xFFFFC66B); y += 23;
-        } else if (best != null && best.score() < s.minActivity) {
-            text(g, font, "Nothing reaches Minimum growth; lower it to see weaker chunks.", CX + 3, y, MUTED); y += 23;
-        }
-        return y;
+    private void drawSearch(int x, int y, int w, int h) {
+        boolean over = inside(x, y, w, h);
+        round(graphics, x, y, w, h, 7, alpha(FIELD, .9));
+        outline(graphics, x, y, w, h, 7, searchFocused ? accent() : over ? EDGE_HOVER : EDGE);
+        search(graphics, x + 9, y + 6, searchFocused || !query.isEmpty() ? LABEL : MUTED);
+        String shown = query.isEmpty() && !searchFocused ? "Search modules"
+                : query + (searchFocused && System.currentTimeMillis() % 1000 < 500 ? "|" : "");
+        while (width(shown, Size.BASE) > w - 34 && !shown.isEmpty()) shown = removeFirstCharacter(shown);
+        draw(shown, Size.BASE, x + 25, y + h / 2 - 3, query.isEmpty() ? MUTED : TEXT);
+        hit("search", x, y, w, h, () -> searchFocused = true, null);
     }
 
-    private void drawFreecamSettings(GuiGraphics g) {
-        var s = config.freecam;
-        strong(g, font, "Freecam", CX, 73, TEXT);
-        text(g, font, "See your world from a new angle.", CX, 91, MUTED);
-        keybindButton(g, 2, 386, 69, 111, 27);
-        String status = s.enabled ? "Enabled" : canUseFreecam() ? "Disabled" : "Join a world";
-        text(g, font, status, CX + CW - 111, 81, s.enabled ? 0xFF92BAFF : MUTED);
-        freecamToggle(g, "detailEnabled", CX + CW - 33, 78);
-        beginContent(g);
-        int y = TOP + 3 - (int) scroll;
-        round(g, CX, y, CW - 10, 68, 9, 0xFF161D2B);
-        round(g, CX + 18, y + 15, 37, 37, 9, alpha(config.accentColor, .2));
-        camera(g, CX + 28, y + 25, alpha(config.accentColor, 1));
-        text(g, font, "FREE CAMERA", CX + 76, y + 15, DIM);
-        text(g, font, "Move your viewpoint independently of your player.", CX + 76, y + 32, TEXT);
-        text(g, font, "Client-side perspective. Uses already loaded chunks.", CX + 76, y + 49, MUTED);
-        y += 84;
-        section(g, "MOVEMENT", y); y += 18;
-        slider(g, "freecamSpeed", "Camera speed", y, () -> s.speed, value -> s.speed = value, .1, 5, .1, " blocks/tick"); y += 47;
-        slider(g, "freecamBoost", "Sprint boost", y, () -> s.boostMultiplier, value -> s.boostMultiplier = value, 1, 10, .1, "x"); y += 55;
-        section(g, "YOUR CONTROLS", y); y += 20;
-        controlHint(g, "Move", keyName(minecraft.options.keyUp) + " / " + keyName(minecraft.options.keyLeft)
-                + " / " + keyName(minecraft.options.keyDown) + " / " + keyName(minecraft.options.keyRight), y); y += 23;
-        controlHint(g, "Ascend / descend", keyName(minecraft.options.keyJump) + " / " + keyName(minecraft.options.keyShift), y); y += 23;
-        controlHint(g, "Speed boost", keyName(minecraft.options.keySprint), y); y += 32;
-        text(g, font, "Close this menu to fly. Reopen it to turn Freecam off.", CX + 3, y, MUTED); y += 23;
-        text(g, font, "Your camera returns to your player when disabled.", CX + 3, y, DIM); y += 26;
-        endContent(g, y);
+    private void drawPage() {
+        int x = mainX(), w = mainW(), top = wy + HEADER_H + 6, bottom = wy + wh - 14;
+        Page page = currentPage();
+        Module open = detail();
+        if (!query.isEmpty()) {
+            drawModules(searchResults(), x, top, w, bottom);
+        } else if (open != null) {
+            drawDetail(open, x, top, w, bottom);
+        } else if (page.modules != null) {
+            drawModules(page.modules, x, top, w, bottom);
+        } else {
+            int frame = bottom - top;
+            round(graphics, x, top, w, frame, 9, CARD);
+            outline(graphics, x, top, w, frame, 9, EDGE);
+            scrolled(x + 1, top + 1, w - 2, frame - 2, origin -> {
+                Column c = new Column(x + 16, w - 32, origin + 10, "");
+                page.content.accept(c);
+                c.flushChips();
+                return c.y + 10;
+            });
+        }
     }
+
+    /** Draws content into the scrolling region, sliding it in after a page change. */
+    private void scrolled(int x, int y, int w, int h, java.util.function.IntUnaryOperator draw) {
+        content.set(x, y, w, h);
+        Region previous = drawing;
+        drawing = content;
+        content.scroll = ease(content.scroll, content.scrollTarget, 18);
+        double slide = 1 - animate("page", 1);
+        pushClip(x, y, x + w, y + h);
+        int shift = snapped(content.scroll);
+        graphics.pose().pushMatrix();
+        graphics.pose().translate(0, (float) (shift - content.scroll + slide * 8));
+        contentOrigin = y - shift;
+        int end = draw.applyAsInt(contentOrigin);
+        graphics.pose().popMatrix();
+        popClip();
+        content.contentHeight = end - contentOrigin;
+        clampScroll(content);
+        int max = Math.max(0, content.contentHeight - h);
+        if (max > 0) {
+            int thumb = Math.max(16, h * h / content.contentHeight);
+            int thumbY = y + (int) (content.scroll / max * (h - thumb));
+            round(graphics, x + w + 5, thumbY, 3, thumb, 1.5f, alpha(0xFFFFFF, .16));
+        }
+        drawing = previous;
+    }
+
+    /** Scroll offsets snap to whole screen pixels, so text does not shimmer while it moves. */
+    private int snapped(double scroll) { return (int) Math.floor(Math.round(scroll * pixels) / (double) pixels); }
+
+    private void clampScroll(Region r) {
+        int max = Math.max(0, r.contentHeight - r.h);
+        r.scroll = Math.clamp(r.scroll, 0, max);
+        r.scrollTarget = Math.clamp(r.scrollTarget, 0, max);
+    }
+
+    private void drawModules(List<Module> modules, int x, int top, int w, int bottom) {
+        scrolled(x, top, w, bottom - top, origin -> {
+            int y = origin;
+            if (modules.isEmpty()) {
+                String message = fit("No modules match \"" + query.trim() + "\"", Size.BASE, w);
+                draw(message, Size.BASE, x + (w - width(message, Size.BASE)) / 2, y + 30, MUTED);
+                return y + 60;
+            }
+            for (Module m : modules) {
+                moduleCard(m, x, y, w);
+                y += CARD_H + CARD_GAP;
+            }
+            return y;
+        });
+    }
+
+    private void moduleCard(Module m, int x, int y, int w) {
+        boolean usable = m.available.getAsBoolean(), on = m.enabled.getAsBoolean(), expandable = m.settings != null;
+        boolean over = inside(x, y, w, CARD_H);
+        double hover = animate("card." + m.name, over ? 1 : 0);
+        round(graphics, x, y, w, CARD_H, 8, blend(CARD, CARD_HOVER, hover));
+        outline(graphics, x, y, w, CARD_H, 8, blend(EDGE, EDGE_HOVER, hover));
+        if (hover > .01) round(graphics, x, y + 10, 2f, CARD_H - 20f, 1f, alpha(config.accentColor, hover));
+        bold(fit(m.name, Size.BASE, w - 120), x + 15, y + 10, usable ? TEXT : DIM);
+        String description = usable ? m.description : m.unavailable;
+        draw(fit(description, Size.SMALL, w - 120), Size.SMALL, x + 15, y + 23, usable ? MUTED : WARN);
+        // Every switch sits at the same place, whether or not its card has settings.
+        int switchX = x + w - 64;
+        if (m.toggle != null) toggleSwitch(switchX, y + 13, 26, 13, on, "card.switch." + m.name, usable);
+        if (expandable) chevron(x + w - 18, y + CARD_H / 2f, false, over ? TEXT : MUTED);
+        Runnable open = () -> openDetail(m);
+        if (expandable) {
+            hit("expand." + m.name, x, y, w, CARD_H, open, m.toggle);
+            if (m.toggle != null) hit("module." + m.name, switchX - 8, y, 42, CARD_H, m.toggle, null);
+        } else {
+            hit("module." + m.name, x, y, w, CARD_H, m.toggle, null);
+        }
+    }
+
+    private void drawDetail(Module m, int x, int top, int w, int bottom) {
+        boolean overBack = inside(x, top, 62, 20);
+        round(graphics, x, top, 62, 20, 10, overBack ? CARD_HOVER : CARD);
+        outline(graphics, x, top, 62, 20, 10, overBack ? EDGE_HOVER : EDGE);
+        chevronLeft(x + 15, top + 10, overBack ? TEXT : LABEL);
+        draw("Back", Size.BASE, x + 24, top + 7, overBack ? TEXT : LABEL);
+        hit("expand." + m.name, x, top, 62, 20, this::closeDetail, null);
+        int y = top + 28, h = bottom - y;
+        round(graphics, x, y, w, h, 9, CARD);
+        outline(graphics, x, y, w, h, 9, EDGE);
+        boolean usable = m.available.getAsBoolean();
+        bold(fit(m.name, Size.BASE, w - 90), x + 16, y + 13, TEXT);
+        draw(fit(usable ? m.description : m.unavailable, Size.SMALL, w - 90), Size.SMALL, x + 16, y + 27, usable ? MUTED : WARN);
+        if (m.toggle != null) {
+            int switchX = x + w - 46;
+            toggleSwitch(switchX, y + 15, 30, 15, m.enabled.getAsBoolean(), "detail.switch." + m.name, usable);
+            hit("module." + m.name, switchX - 8, y, 46, 44, m.toggle, null);
+        }
+        round(graphics, x + 1, y + 44, w - 2, 1, 0, EDGE);
+        scrolled(x + 1, y + 45, w - 2, h - 49, origin -> {
+            Column c = new Column(x + 16, w - 32, origin + 8, m.name);
+            m.settings.accept(c);
+            c.flushChips();
+            return c.y + 10;
+        });
+    }
+
+    /** A switch; the knob slides across a track filled with the accent when on. */
+    private void toggleSwitch(int x, int y, int w, int h, boolean on, String animation, boolean usable) {
+        double position = animate(animation, on ? 1 : 0);
+        int track = blend(TRACK, accent(), position);
+        round(graphics, (float) x, (float) y, w, h, h / 2f, usable ? track : alpha(track, .45));
+        if (position < .99) outline(graphics, (float) x, (float) y, w, h, h / 2f, alpha(0xFFFFFF, .08 * (1 - position)));
+        float knob = h - 4f, knobX = x + 2f + (w - h) * (float) position;
+        round(graphics, knobX, y + 2.6f, knob, knob, knob / 2, 0x55000000);
+        round(graphics, knobX, y + 2f, knob, knob, knob / 2, usable ? 0xFFFFFFFF : 0xFF9AAAA8);
+    }
+
+    private void chevron(float cx, float cy, boolean down, int color) {
+        if (down) {
+            line(graphics, cx - 3, cy - 1.5f, cx, cy + 1.5f, color);
+            line(graphics, cx, cy + 1.5f, cx + 3, cy - 1.5f, color);
+        } else {
+            line(graphics, cx - 1.5f, cy - 3, cx + 1.5f, cy, color);
+            line(graphics, cx + 1.5f, cy, cx - 1.5f, cy + 3, color);
+        }
+    }
+
+    private void chevronLeft(float cx, float cy, int color) {
+        line(graphics, cx + 1.5f, cy - 3, cx - 1.5f, cy, color);
+        line(graphics, cx - 1.5f, cy, cx + 1.5f, cy + 3, color);
+    }
+
+    private void drawTooltip() {
+        List<String> lines = wrap(tooltip, 180, Size.SMALL);
+        int w = 0;
+        for (String line : lines) w = Math.max(w, width(line, Size.SMALL));
+        w += 16;
+        int h = lines.size() * 11 + 9;
+        int x = (int) Math.min(mouseX + 10, layoutW - w - 4), y = (int) Math.min(mouseY + 14, layoutH - h - 4);
+        shadow(graphics, x, y + 2, w, h, 6, 0x90000000);
+        round(graphics, x, y, w, h, 6, 0xF5112122);
+        outline(graphics, x, y, w, h, 6, EDGE_HOVER);
+        for (int i = 0; i < lines.size(); i++) draw(lines.get(i), Size.SMALL, x + 8, y + 5 + i * 11, LABEL);
+    }
+
+    // Color editor ------------------------------------------------------------------------------
+
+    private void drawColorEditor() {
+        // Modal hit testing replaces the window's controls.
+        hits.clear();
+        clips.clear();
+        graphics.fill(0, 0, layoutW, layoutH, 0x99030808);
+        int w = 206, h = 168, x = (layoutW - w) / 2, y = (layoutH - h) / 2;
+        int color = colorEditor.getter.getAsInt();
+        shadow(graphics, x, y + 3, w, h, 10, 0xC0000000);
+        round(graphics, x, y, w, h, 10, WINDOW);
+        outline(graphics, x, y, w, h, 10, EDGE);
+        bold(fit(colorEditor.title, Size.BASE, w - 70), x + 14, y + 12, TEXT);
+        round(graphics, x + w - 58, y + 10, 22, 12, 4, alpha(color, 1));
+        outline(graphics, x + w - 58, y + 10, 22, 12, 4, alpha(0xFFFFFF, .16));
+        boolean overClose = inside(x + w - 28, y + 4, 22, 24);
+        int closeColor = overClose ? TEXT : MUTED;
+        line(graphics, x + w - 20, y + 12, x + w - 14, y + 18, closeColor);
+        line(graphics, x + w - 14, y + 12, x + w - 20, y + 18, closeColor);
+        hit("colorClose", x + w - 28, y + 4, 22, 24, this::closeColor, null);
+        round(graphics, x + 1, y + 31, w - 2, 1, 0, EDGE);
+        for (int i = 0; i < PALETTE.length; i++) {
+            int px = x + 14 + i * 15, swatch = PALETTE[i];
+            round(graphics, px, y + 42, 12, 12, 6, alpha(swatch, 1));
+            if (color == swatch) outline(graphics, px - 2, y + 40, 16, 16, 8, TEXT);
+            hit("swatch" + i, px - 2, y + 40, 16, 16, () -> { colorEditor.set(swatch); flush(); }, null);
+        }
+        colorChannel("Red", 16, 0xFFF17886, x, y + 66, w);
+        colorChannel("Green", 8, 0xFF84DCB3, x, y + 86, w);
+        colorChannel("Blue", 0, 0xFF81AEFF, x, y + 106, w);
+        round(graphics, x + 14, y + 134, 90, 20, 6, FIELD);
+        outline(graphics, x + 14, y + 134, 90, 20, 6, colorEditor.hexFocused ? accent() : EDGE);
+        String value = "#" + colorEditor.hex + (colorEditor.hexFocused && System.currentTimeMillis() % 1000 < 500 ? "|" : "");
+        draw(value, Size.BASE, x + 22, y + 141, colorEditor.hex.length() == 6 ? TEXT : WARN);
+        hit("hex", x + 14, y + 134, 90, 20, () -> { colorEditor.hexFocused = true; colorEditor.replaceHex = true; }, null);
+        boolean overDone = inside(x + w - 84, y + 134, 70, 20);
+        round(graphics, x + w - 84, y + 134, 70, 20, 6, overDone ? accent() : alpha(accent(), .85));
+        bold("Done", x + w - 49 - width("Done", Size.BASE) / 2, y + 141, 0xFF041011);
+        hit("colorDone", x + w - 84, y + 134, 70, 20, this::closeColor, null);
+    }
+
+    private void colorChannel(String label, int shift, int tint, int x, int y, int w) {
+        int value = (colorEditor.getter.getAsInt() >> shift) & 255;
+        draw(label, Size.SMALL, x + 14, y + 1, tint);
+        String number = Integer.toString(value);
+        draw(number, Size.SMALL, x + w - 14 - width(number, Size.SMALL), y + 1, MUTED);
+        int sx = x + 56, sw = w - 96;
+        float filled = sw * value / 255f;
+        round(graphics, (float) sx, y + 3.5f, (float) sw, 3f, 1.5f, TRACK);
+        round(graphics, (float) sx, y + 3.5f, Math.max(3f, filled), 3f, 1.5f, tint);
+        round(graphics, sx + filled - 4f, y + 1f, 8f, 8f, 4f, tint);
+        dragHit("rgb" + shift, sx, y - 4, sw, 16, t -> {
+            int channel = (int) Math.round(Math.clamp(t, 0, 1) * 255);
+            colorEditor.set((colorEditor.getter.getAsInt() & ~(255 << shift)) | channel << shift);
+        }, direction -> {
+            int channel = Math.clamp(((colorEditor.getter.getAsInt() >> shift) & 255) + direction, 0, 255);
+            colorEditor.set((colorEditor.getter.getAsInt() & ~(255 << shift)) | channel << shift);
+            flush();
+        });
+    }
+
+    private void closeColor() { colorEditor = null; dragging = null; keyboardFocus = null; flush(); }
+    private String hex(int color) { return String.format(Locale.ROOT, "#%06X", color & 0xFFFFFF); }
+
+    // Keybinds ----------------------------------------------------------------------------------
 
     private String keyName(KeyMapping key) { return key.getTranslatedKeyMessage().getString(); }
-
-    private void keybindButton(GuiGraphics g, int index, int x, int y, int w, int h) {
-        KeyMapping mapping = ModuleKeybinds.mapping(index);
-        if (mapping == null) return;
-        boolean capturing = binding == index;
-        boolean hovered = inside(x, y, w, h);
-        if (hovered) hoveredBinding = index;
-        boolean conflict = !conflicts(index).isEmpty();
-        double hover = animate("bindHover" + index, hovered || capturing ? 1 : 0);
-        round(g, x, y, w, h, 5, blend(0xFF222938, 0xFF354159, hover));
-        if (capturing) outline(g, x, y, w, h, 5, alpha(config.accentColor, .85));
-        String value = capturing ? "Press a key..." : (conflict ? "! " : "Key: ")
-                + (mapping.isUnbound() ? "None" : keyName(mapping));
-        value = ellipsize(value, w - 12);
-        text(g, font, value, x + (w - UiPaint.width(font, value)) / 2, y + (h - 8) / 2,
-                capturing ? TEXT : conflict ? 0xFFFFC66B : MUTED);
-        hit("keybind" + index, x, y, w, h, () -> {
-            binding = index;
-            dragging = null;
-            searchFocused = false;
-            keyboardFocus = null;
-        });
-    }
 
     private String conflicts(int index) {
         KeyMapping mapping = ModuleKeybinds.mapping(index);
@@ -541,202 +1150,58 @@ public final class DonutScreen extends Screen {
         return String.join(", ", names);
     }
 
-    private void drawFooter(GuiGraphics g) {
-        String message = "Changes save automatically";
-        int color = MUTED;
-        if (binding >= 0) {
-            message = "Press a key or mouse button. Delete / Backspace clears.";
-            color = TEXT;
-        } else if (hoveredBinding >= 0 && colorEditor == null) {
-            String conflict = conflicts(hoveredBinding);
-            KeyMapping mapping = ModuleKeybinds.mapping(hoveredBinding);
-            message = conflict.isEmpty()
-                    ? (mapping.isUnbound() ? "Click to bind a key or mouse button."
-                    : "Bound to " + keyName(mapping) + ". Click to change.")
-                    : "Also used by: " + conflict;
-            if (!conflict.isEmpty()) color = 0xFFFFC66B;
-        }
-        round(g, 19, H - 19, 5, 5, 2, binding >= 0 ? alpha(config.accentColor, 1) : 0xFF6DDAC5);
-        text(g, font, ellipsize(message, W - 145), 30, H - 22, color);
-        right(g, font, binding >= 0 ? "ESC  Cancel" : "ESC  Close", W - 20, H - 22, DIM);
+    // Text fields -------------------------------------------------------------------------------
+
+    private void commitText() {
+        if (textField == null) return;
+        textField = null;
+        textSetter.accept(textBuffer);
+        config.sanitize();
+        dirty = true;
+        flush();
     }
 
-    private String ellipsize(String value, int maxWidth) {
-        if (UiPaint.width(font, value) <= maxWidth) return value;
-        while (!value.isEmpty() && UiPaint.width(font, value + "...") > maxWidth) value = removeLastCharacter(value);
+    // Helpers -----------------------------------------------------------------------------------
+
+    private int accent() { return alpha(config.accentColor, 1); }
+
+    private void draw(String text, Size size, int x, int y, int color) { draw(text, size, x, y, color, false, false); }
+
+    private void draw(String text, Size size, int x, int y, int color, boolean bold, boolean italic) {
+        UiPaint.text(graphics, font, text, size, x, y, color, bold, italic);
+    }
+
+    private void bold(String text, int x, int y, int color) { draw(text, Size.BASE, x, y, color, true, false); }
+
+    private int width(String text, Size size) { return UiPaint.width(font, text, size); }
+
+    private String fit(String value, Size size, int maxWidth) {
+        if (width(value, size) <= maxWidth) return value;
+        while (!value.isEmpty() && width(value + "...", size) > maxWidth) value = removeLastCharacter(value);
         return value + "...";
     }
 
-    private void controlHint(GuiGraphics g, String label, String keys, int y) {
-        text(g, font, label, CX + 3, y, TEXT);
-        String shown = keys;
-        while (!shown.isEmpty() && UiPaint.width(font, shown) > CW - 165) shown = removeLastCharacter(shown);
-        if (!shown.equals(keys)) shown += "...";
-        right(g, font, shown, CX + CW - 15, y, MUTED);
-    }
-
-    private void beginContent(GuiGraphics g) {
-        g.enableScissor(CX - 2, TOP, CX + CW, BOTTOM);
-        g.pose().pushMatrix();
-        g.pose().translate(0, (float) ((int) scroll - scroll));
-        collectingClip = true;
-    }
-
-    private void endContent(GuiGraphics g, int endY) { endContent(g, endY, CX + CW - 3); }
-
-    private void endContent(GuiGraphics g, int endY, int barX) {
-        contentHeight = endY + (int) scroll - TOP;
-        collectingClip = false;
-        g.pose().popMatrix();
-        g.disableScissor();
-        int viewHeight = BOTTOM - TOP;
-        int maxScroll = Math.max(0, contentHeight - viewHeight);
-        scroll = Math.clamp(scroll, 0, maxScroll);
-        scrollTarget = Math.clamp(scrollTarget, 0, maxScroll);
-        if (maxScroll > 0) {
-            round(g, barX, TOP + 2, 3, viewHeight - 4, 1, CARD);
-            int thumbHeight = Math.max(25, viewHeight * viewHeight / contentHeight);
-            int thumbY = TOP + (int) (scroll / maxScroll * (viewHeight - thumbHeight));
-            round(g, barX, thumbY, 3, thumbHeight, 1, 0xFF58657B);
-            dragHit("scrollbar", barX - 5, TOP, 10, viewHeight,
-                    value -> scroll = scrollTarget = Math.clamp(value, 0, 1) * maxScroll, true);
+    private List<String> wrap(String value, int maxWidth, Size size) {
+        List<String> lines = new ArrayList<>();
+        StringBuilder line = new StringBuilder();
+        for (String word : value.split(" ")) {
+            String next = line.isEmpty() ? word : line + " " + word;
+            if (!line.isEmpty() && width(next, size) > maxWidth) {
+                lines.add(line.toString());
+                line = new StringBuilder(word);
+            } else {
+                line = new StringBuilder(next);
+            }
         }
+        if (!line.isEmpty()) lines.add(fit(line.toString(), size, maxWidth));
+        return lines;
     }
-
-    private void section(GuiGraphics g, String title, int y) {
-        text(g, font, title, CX + 3, y, DIM);
-    }
-
-    private void modeRow(GuiGraphics g, FinderSettings s, int y) {
-        text(g, font, "Render mode", CX + 3, y + 9, TEXT);
-        int x = CX + 175;
-        for (RenderMode mode : RenderMode.values()) {
-            final int bx = x;
-            boolean active = s.mode == mode;
-            round(g, x, y, 91, 29, 6, active ? alpha(config.accentColor, 1) : CARD);
-            String label = modeName(mode);
-            text(g, font, label, x + (91 - UiPaint.width(font, label)) / 2, y + 10, active ? 0xFFFFFFFF : MUTED);
-            hit("mode" + mode, bx, y, 91, 29, () -> change(() -> s.mode = mode));
-            x += 95;
-        }
-    }
-
-    private String modeName(RenderMode mode) {
-        return switch (mode) { case OUTLINE -> "Outline"; case FILL -> "Filled"; case BOTH -> "Both"; };
-    }
-
-    private void slider(GuiGraphics g, String id, String label, int y, DoubleSupplier getter,
-                        DoubleConsumer setter, double min, double max, double step, String unit) {
-        double value = getter.getAsDouble();
-        text(g, font, label, CX + 3, y + 2, TEXT);
-        String display = unit.equals("%") ? Math.round(value * 100) + "%"
-                : step >= 1 ? Math.round(value) + unit : String.format(Locale.ROOT, "%.1f%s", value, unit);
-        right(g, font, display, CX + CW - 15, y + 2, MUTED);
-        int sx = CX + 5, sw = CW - 24;
-        double t = Math.clamp((value - min) / (max - min), 0, 1);
-        round(g, sx, y + 25, sw, 4, 2, 0xFF303847);
-        round(g, sx, y + 25, Math.max(4, (int) (sw * t)), 4, 2, alpha(config.accentColor, 1));
-        round(g, sx + (int) (sw * t) - 4, y + 22, 9, 10, 4, 0xFFE7EDFA);
-        dragHit(id, sx, y + 15, sw, 25, position -> {
-            double next = Math.round((min + Math.clamp(position, 0, 1) * (max - min)) / step) * step;
-            setter.accept(Math.clamp(next, min, max)); dirty = true;
-        }, false, direction -> { setter.accept(Math.clamp(getter.getAsDouble() + direction * step, min, max)); dirty = true; flush(); });
-    }
-
-    private void settingToggle(GuiGraphics g, String id, String label, String description, int y,
-                               BooleanSupplier value, Runnable action) {
-        text(g, font, label, CX + 3, y + 3, TEXT);
-        text(g, font, description, CX + 3, y + 19, MUTED);
-        toggle(g, id, CX + CW - 47, y + 8, value.getAsBoolean(), () -> change(action));
-    }
-
-    private void toggle(GuiGraphics g, String id, int x, int y, boolean on, Runnable action) {
-        double position = animate("toggle" + id, on ? 1 : 0);
-        round(g, x, y, 31, 17, 8, blend(0xFF343D4D, config.accentColor, position));
-        round(g, x + 3 + (float) (14 * position), y + 3, 11, 11, 5, blend(0xFFADBACD, 0xFFFFFFFF, position));
-        hit(id, x - 3, y - 5, 37, 27, action);
-    }
-
-    private void colorRow(GuiGraphics g, String label, int y, IntSupplier getter, IntConsumer setter) {
-        text(g, font, label, CX + 3, y + 10, TEXT);
-        round(g, CX + CW - 136, y + 2, 122, 27, 6, CARD);
-        round(g, CX + CW - 127, y + 9, 12, 12, 3, alpha(getter.getAsInt(), 1));
-        text(g, font, hex(getter.getAsInt()), CX + CW - 107, y + 10, MUTED);
-        text(g, font, ">", CX + CW - 27, y + 10, DIM);
-        hit("color" + label, CX + CW - 136, y + 2, 122, 27,
-                () -> { colorEditor = new ColorEditor(label, getter, setter); keyboardFocus = null; });
-    }
-
-    private void drawAppearance(GuiGraphics g) {
-        strong(g, font, "Make yourself at home", CX, 73, TEXT);
-        text(g, font, "A small collection of personal touches.", CX, 91, MUTED);
-        beginContent(g);
-        int y = TOP + 10 - (int) scroll;
-        section(g, "INTERFACE", y); y += 19;
-        colorRow(g, "Accent color", y, () -> config.accentColor, value -> config.accentColor = value); y += 49;
-        settingToggle(g, "hud", "Array list", "Active module names with a soft shadow", y, () -> config.showHud, () -> config.showHud = !config.showHud); y += 65;
-        round(g, CX + 3, y, CW - 17, 79, 8, 0xFF171D29);
-        text(g, font, "A few useful controls", CX + 17, y + 14, TEXT);
-        text(g, font, "Click a module to customize it. Scroll for more settings.", CX + 17, y + 35, MUTED);
-        text(g, font, "Drag sliders, choose colors, and star your favorites.", CX + 17, y + 52, MUTED);
-        y += 94;
-        endContent(g, y);
-    }
-
-    private void drawColorEditor(GuiGraphics g) {
-        // Modal hit testing replaces the underlying settings' controls.
-        hits.clear();
-        g.fill(0, 0, W, H, 0xAC06090F);
-        int x = 180, y = 78, w = 318, h = 252;
-        round(g, x - 1, y - 1, w + 2, h + 2, 11, BORDER);
-        round(g, x, y, w, h, 10, PANEL);
-        strong(g, font, colorEditor.title, x + 18, y + 17, TEXT);
-        text(g, font, "Choose a color", x + 18, y + 35, MUTED);
-        round(g, x + w - 53, y + 16, 33, 33, 8, alpha(colorEditor.getter.getAsInt(), 1));
-        for (int i = 0; i < PALETTE.length; i++) {
-            int px = x + 18 + i * 24;
-            int color = PALETTE[i];
-            round(g, px, y + 61, 18, 18, 5, alpha(color, 1));
-            if (colorEditor.getter.getAsInt() == color) outline(g, px - 2, y + 59, 22, 22, 6, TEXT);
-            hit("swatch" + i, px - 2, y + 59, 22, 22, () -> { colorEditor.set(color); flush(); });
-        }
-        colorChannel(g, "Red", 16, 0xFFF17886, x, y + 99);
-        colorChannel(g, "Green", 8, 0xFF84DCB3, x, y + 133);
-        colorChannel(g, "Blue", 0, 0xFF81AEFF, x, y + 167);
-        round(g, x + 18, y + 210, 141, 27, 6, colorEditor.hexFocused ? BORDER : CARD);
-        String value = "#" + colorEditor.hex + (colorEditor.hexFocused && System.currentTimeMillis() % 1000 < 500 ? "|" : "");
-        text(g, font, value, x + 29, y + 220, colorEditor.hex.length() == 6 ? TEXT : 0xFFFFC66B);
-        hit("hex", x + 18, y + 210, 141, 27, () -> { colorEditor.hexFocused = true; colorEditor.replaceHex = true; });
-        round(g, x + w - 111, y + 210, 93, 27, 6, alpha(config.accentColor, 1));
-        text(g, font, "Done", x + w - 80, y + 220, 0xFFFFFFFF);
-        hit("colorDone", x + w - 111, y + 210, 93, 27, this::closeColor);
-    }
-
-    private void colorChannel(GuiGraphics g, String label, int shift, int tint, int x, int y) {
-        int value = (colorEditor.getter.getAsInt() >> shift) & 255;
-        text(g, font, label, x + 18, y, tint);
-        right(g, font, Integer.toString(value), x + 298, y, MUTED);
-        int sx = x + 76, sw = 181;
-        round(g, sx, y + 3, sw, 4, 2, BORDER);
-        round(g, sx, y + 3, Math.max(4, (int) (sw * value / 255.0)), 4, 2, tint);
-        round(g, sx + (int) (sw * value / 255.0) - 4, y, 9, 10, 4, TEXT);
-        dragHit("rgb" + shift, sx, y - 5, sw, 20, t -> {
-            int channel = (int) Math.round(Math.clamp(t, 0, 1) * 255);
-            int next = (colorEditor.getter.getAsInt() & ~(255 << shift)) | channel << shift;
-            colorEditor.set(next);
-        }, false, direction -> {
-            int channel = Math.clamp(((colorEditor.getter.getAsInt() >> shift) & 255) + direction, 0, 255);
-            colorEditor.set((colorEditor.getter.getAsInt() & ~(255 << shift)) | channel << shift);
-            flush();
-        });
-    }
-
-    private void closeColor() { colorEditor = null; dragging = null; keyboardFocus = null; flush(); }
-    private String hex(int color) { return String.format(Locale.ROOT, "#%06X", color & 0xFFFFFF); }
 
     private double ease(double current, double target, double speed) {
         double result = current + (target - current) * (1 - Math.exp(-speed * frameSeconds));
-        return Math.abs(result - target) < .001 ? target : result;
+        if (Math.abs(result - target) < .001) return target;
+        moving = true;
+        return result;
     }
 
     private double animate(String id, double target) {
@@ -745,56 +1210,135 @@ public final class DonutScreen extends Screen {
         return result;
     }
 
+    private void pushClip(int x0, int y0, int x1, int y1) {
+        int[] top = clips.peek();
+        int[] clip = top == null ? new int[]{x0, y0, x1, y1}
+                : new int[]{Math.max(x0, top[0]), Math.max(y0, top[1]), Math.min(x1, top[2]), Math.min(y1, top[3])};
+        clips.push(clip);
+        graphics.enableScissor(x0, y0, x1, Math.max(y0, y1));
+    }
+
+    private void popClip() {
+        clips.pop();
+        graphics.disableScissor();
+    }
+
     private boolean inside(int x, int y, int w, int h) {
-        if (collectingClip && (mouseY < TOP || mouseY >= BOTTOM)) return false;
+        if (drawing != hovered) return false;
+        int[] clip = clips.peek();
+        if (clip != null && (mouseX < clip[0] || mouseX >= clip[2] || mouseY < clip[1] || mouseY >= clip[3])) return false;
         return mouseX >= x && mouseX < x + w && mouseY >= y && mouseY < y + h;
     }
 
-    private void hit(String id, int x, int y, int w, int h, Runnable action) {
-        if (collectingClip && (y + h <= TOP || y >= BOTTOM)) return;
-        int top = collectingClip ? Math.max(y, TOP) : y;
-        int bottom = collectingClip ? Math.min(y + h, BOTTOM) : y + h;
-        hits.add(new Hit(id, x, top, w, bottom - top, action, null, false, null));
+    /** Records where content sits in its region, so it can be scrolled into view later. */
+    private void mark(String id, int y, int h) {
+        if (drawing != null) places.put(id, new Place(drawing, y - contentOrigin, h));
     }
 
-    private void dragHit(String id, int x, int y, int w, int h, DoubleConsumer action, boolean vertical) {
-        dragHit(id, x, y, w, h, action, vertical, null);
+    private void hit(String id, int x, int y, int w, int h, Runnable action, Runnable secondary) {
+        addHit(id, x, y, w, h, action, secondary, null, null);
     }
 
-    private void dragHit(String id, int x, int y, int w, int h, DoubleConsumer action, boolean vertical, IntConsumer nudge) {
-        if (collectingClip && (y + h <= TOP || y >= BOTTOM)) return;
-        int top = collectingClip ? Math.max(y, TOP) : y;
-        int bottom = collectingClip ? Math.min(y + h, BOTTOM) : y + h;
-        hits.add(new Hit(id, x, top, w, bottom - top, null, action, vertical, nudge));
+    private void dragHit(String id, int x, int y, int w, int h, DoubleConsumer action, IntConsumer nudge) {
+        addHit(id, x, y, w, h, null, null, action, nudge);
     }
+
+    private void addHit(String id, int x, int y, int w, int h, Runnable action, Runnable secondary, DoubleConsumer drag, IntConsumer nudge) {
+        if (!clips.isEmpty()) mark(id, y, h);
+        int[] clip = clips.peek();
+        int left = x, top = y, right = x + w, bottom = y + h;
+        if (clip != null) {
+            left = Math.max(left, clip[0]); top = Math.max(top, clip[1]);
+            right = Math.min(right, clip[2]); bottom = Math.min(bottom, clip[3]);
+            if (right <= left || bottom <= top) return;
+        }
+        // Drag targets keep their full width, so a slider's value still maps across the whole track.
+        hits.add(new Hit(id, drawing, drag == null ? left : x, top, drag == null ? right - left : w, bottom - top,
+                action, secondary, drag, nudge));
+    }
+
+    /**
+     * A control's x, y, width and height in screen coordinates as drawn in the last frame, or null unless all of it
+     * was on screen. For game tests, which click controls by id.
+     */
+    public double[] controlBounds(String id) {
+        Place place = places.get(id);
+        for (int i = hits.size() - 1; i >= 0; i--) {
+            Hit h = hits.get(i);
+            if (!h.id.equals(id)) continue;
+            // Partly scrolled out of view, or covered.
+            if (place != null && h.h < place.h || regionAt(h.x + h.w / 2.0, h.y + h.h / 2.0) != h.region) return null;
+            return new double[]{h.x * scale, h.y * scale, h.w * scale, h.h * scale};
+        }
+        return null;
+    }
+
+    /** Whether a module's settings page is open. */
+    public boolean isExpanded(String module) { return module.equals(detailName) && query.isEmpty(); }
+
+    /** Whether a module's settings show their "More options". */
+    public boolean showsMore(String module) { return MORE.contains(module + ".more"); }
+
+    /** True once the last frame had no animation or scrolling still in progress. */
+    public boolean isSettled() { return settled; }
+
+    /**
+     * Scrolls a control into view from the next frame, first showing the page that holds it if needed; false until the
+     * control has been laid out.
+     */
+    public boolean scrollTo(String id) {
+        Place place = places.get(id);
+        if (place == null) {
+            // Headers, the sidebar and the search box never scroll.
+            if (hits.stream().anyMatch(h -> h.id.equals(id))) return true;
+            navigateTo(id);
+            return false;
+        }
+        Region r = place.region;
+        if (place.y < r.scroll || place.y + place.h > r.scroll + r.h) {
+            r.scroll = r.scrollTarget = Math.clamp(place.y - 12, 0, Math.max(0, r.contentHeight - r.h));
+        }
+        return true;
+    }
+
+    // Input -------------------------------------------------------------------------------------
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubled) {
         if (binding >= 0) {
-            ModuleKeybinds.setKey(minecraft, binding, InputConstants.Type.MOUSE.getOrCreate(event.button()));
+            // The two main buttons cancel; binding them would toggle the module on every attack or use.
+            int button = event.button();
+            if (button != GLFW.GLFW_MOUSE_BUTTON_LEFT && button != GLFW.GLFW_MOUSE_BUTTON_RIGHT) {
+                ModuleKeybinds.setKey(minecraft, binding, InputConstants.Type.MOUSE.getOrCreate(button));
+            }
             binding = -1;
             return true;
         }
-        if (event.button() != GLFW.GLFW_MOUSE_BUTTON_LEFT) return false;
-        double x = (event.x() - originX) / scale, y = (event.y() - originY) / scale;
+        boolean secondary = event.button() == GLFW.GLFW_MOUSE_BUTTON_RIGHT;
+        if (event.button() != GLFW.GLFW_MOUSE_BUTTON_LEFT && !secondary) return false;
+        double x = event.x() / scale, y = event.y() / scale;
         keyboardFocus = null;
         searchFocused = false;
         commitText();
         if (colorEditor != null) colorEditor.hexFocused = false;
+        Region under = regionAt(x, y);
         for (int i = hits.size() - 1; i >= 0; i--) {
             Hit h = hits.get(i);
-            if (!h.contains(x, y)) continue;
-            if (h.drag != null) { dragging = h; h.move(x, y); }
+            if (!h.contains(x, y) || h.region != under) continue;
+            if (secondary) { if (h.secondary != null) h.secondary.run(); }
+            else if (h.drag != null) { dragging = h; h.move(x, y); }
             else h.action.run();
             return true;
         }
+        // Clicking beside the color editor closes it.
+        if (colorEditor != null && (Math.abs(x - layoutW / 2.0) > 103 || Math.abs(y - layoutH / 2.0) > 84)) closeColor();
         return true;
     }
 
     @Override
     public boolean mouseDragged(MouseButtonEvent event, double dx, double dy) {
         if (dragging == null) return false;
-        dragging.move((event.x() - originX) / scale, (event.y() - originY) / scale);
+        dragging.move(event.x() / scale, event.y() / scale);
         return true;
     }
 
@@ -807,13 +1351,15 @@ public final class DonutScreen extends Screen {
     @Override
     public boolean mouseScrolled(double x, double y, double horizontal, double vertical) {
         if (colorEditor != null || binding >= 0) return true;
-        double localX = (x - originX) / scale, localY = (y - originY) / scale;
-        if (localX >= CX && localX <= CX + CW + 10 && localY >= TOP && localY <= BOTTOM) {
-            scrollTarget = Math.clamp(scrollTarget - vertical * 31, 0, Math.max(0, contentHeight - (BOTTOM - TOP)));
-            keyboardFocus = null;
-            return true;
-        }
-        return false;
+        Region r = regionAt(x / scale, y / scale);
+        if (r == null || r == chrome) return false;
+        scroll(r, -vertical * 24);
+        keyboardFocus = null;
+        return true;
+    }
+
+    private void scroll(Region r, double amount) {
+        r.scrollTarget = Math.clamp(r.scrollTarget + amount, 0, Math.max(0, r.contentHeight - r.h));
     }
 
     @Override
@@ -833,7 +1379,7 @@ public final class DonutScreen extends Screen {
         }
         if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
             if (colorEditor != null) closeColor();
-            else if (searchFocused) { searchFocused = false; query = ""; }
+            else if (searchFocused || !query.isEmpty()) { searchFocused = false; query = ""; restart(); }
             else if (textField != null) commitText();
             else onClose();
             return true;
@@ -860,21 +1406,22 @@ public final class DonutScreen extends Screen {
         if (searchFocused) {
             if (event.key() == GLFW.GLFW_KEY_V && event.hasControlDown()) {
                 String pasted = minecraft.keyboardHandler.getClipboard().replaceAll("[\\p{Cntrl}]", "");
-                query = (query + pasted).substring(0, Math.min(64, query.length() + pasted.length())); return true;
+                query = (query + pasted).substring(0, Math.min(64, query.length() + pasted.length()));
+                content.scroll = content.scrollTarget = 0;
+                return true;
             }
             if (event.key() == GLFW.GLFW_KEY_BACKSPACE) { query = removeLastCharacter(query); return true; }
             if (event.key() == GLFW.GLFW_KEY_ENTER) { searchFocused = false; return true; }
             if (event.key() == GLFW.GLFW_KEY_A && (event.modifiers() & GLFW.GLFW_MOD_CONTROL) != 0) { query = ""; return true; }
         }
         if (textField != null) {
-            String value = textGetter.get();
             if (event.key() == GLFW.GLFW_KEY_V && event.hasControlDown()) {
-                String pasted = minecraft.keyboardHandler.getClipboard().replaceAll("[\\p{Cntrl}]", "");
-                textSetter.accept((value + pasted).substring(0, Math.min(64, value.length() + pasted.length()))); return true;
+                String pasted = minecraft.keyboardHandler.getClipboard().replaceAll("[\\p{Cntrl}]", "").strip();
+                textBuffer = (textBuffer + pasted).substring(0, Math.min(128, textBuffer.length() + pasted.length())); return true;
             }
-            if (event.key() == GLFW.GLFW_KEY_BACKSPACE) { textSetter.accept(removeLastCharacter(value)); return true; }
+            if (event.key() == GLFW.GLFW_KEY_BACKSPACE) { textBuffer = removeLastCharacter(textBuffer); return true; }
             if (event.key() == GLFW.GLFW_KEY_ENTER) { commitText(); return true; }
-            if (event.key() == GLFW.GLFW_KEY_A && (event.modifiers() & GLFW.GLFW_MOD_CONTROL) != 0) { textSetter.accept(""); return true; }
+            if (event.key() == GLFW.GLFW_KEY_A && (event.modifiers() & GLFW.GLFW_MOD_CONTROL) != 0) { textBuffer = ""; return true; }
             if (event.key() == GLFW.GLFW_KEY_TAB) commitText();
         }
         if (event.key() == GLFW.GLFW_KEY_TAB && !hits.isEmpty()) {
@@ -883,6 +1430,7 @@ public final class DonutScreen extends Screen {
             int direction = (event.modifiers() & GLFW.GLFW_MOD_SHIFT) != 0 ? -1 : 1;
             keyboardFocus = hits.get(Math.floorMod(index + direction, hits.size())).id;
             searchFocused = false;
+            scrollTo(keyboardFocus);
             return true;
         }
         if (keyboardFocus != null && (event.key() == GLFW.GLFW_KEY_ENTER || event.key() == GLFW.GLFW_KEY_SPACE)) {
@@ -901,11 +1449,12 @@ public final class DonutScreen extends Screen {
         }
         if (colorEditor == null) {
             if (event.key() == GLFW.GLFW_KEY_PAGE_DOWN || event.key() == GLFW.GLFW_KEY_PAGE_UP) {
-                scrollTarget = Math.clamp(scrollTarget + (event.key() == GLFW.GLFW_KEY_PAGE_DOWN ? 170 : -170), 0, Math.max(0, contentHeight - (BOTTOM - TOP)));
-                keyboardFocus = null; return true;
+                scroll(content, event.key() == GLFW.GLFW_KEY_PAGE_DOWN ? 150 : -150);
+                keyboardFocus = null;
+                return true;
             }
-            if (event.key() == GLFW.GLFW_KEY_HOME) { scrollTarget = 0; return true; }
-            if (event.key() == GLFW.GLFW_KEY_END) { scrollTarget = Math.max(0, contentHeight - (BOTTOM - TOP)); return true; }
+            if (event.key() == GLFW.GLFW_KEY_HOME) { content.scrollTarget = 0; return true; }
+            if (event.key() == GLFW.GLFW_KEY_END) { scroll(content, content.contentHeight); return true; }
         }
         return false;
     }
@@ -928,12 +1477,18 @@ public final class DonutScreen extends Screen {
             }
             return true;
         }
-        if (searchFocused && event.isAllowedChatCharacter() && query.length() < 64) {
-            query += event.codepointAsString();
+        if (textField != null) {
+            if (event.isAllowedChatCharacter() && textBuffer.length() < 128) textBuffer += event.codepointAsString();
             return true;
         }
-        if (textField != null && event.isAllowedChatCharacter() && textGetter.get().length() < 64) {
-            textSetter.accept(textGetter.get() + event.codepointAsString());
+        // Typing anywhere else searches, as long as no other field has focus.
+        if (colorEditor == null && !searchFocused && event.isAllowedChatCharacter() && !Character.isWhitespace(event.codepoint())) {
+            searchFocused = true;
+            keyboardFocus = null;
+        }
+        if (searchFocused && event.isAllowedChatCharacter() && query.length() < 64) {
+            if (query.isEmpty()) content.scroll = content.scrollTarget = 0;
+            query += event.codepointAsString();
             return true;
         }
         return false;
@@ -959,9 +1514,327 @@ public final class DonutScreen extends Screen {
     @Override
     public boolean isPauseScreen() { return false; }
 
-    private record Hit(String id, int x, int y, int w, int h, Runnable action, DoubleConsumer drag, boolean vertical, IntConsumer nudge) {
+    // Settings rows -----------------------------------------------------------------------------
+
+    /**
+     * Lays out a module's settings or a page's content from top to bottom: each setting is a row with its label and a
+     * short description on the left and its control on the right.
+     */
+    private final class Column {
+        final int x, w;
+        final String scope;
+        int y;
+        /** Where the next chip goes on the current line of chips, or -1 when no line is open. */
+        private int chipX = -1;
+
+        Column(int x, int w, int y, String scope) {
+            this.x = x;
+            this.w = w;
+            this.y = y;
+            this.scope = scope;
+        }
+
+        private String id(String key) { return scope.isEmpty() ? key : scope + "." + key; }
+
+        private int rowHeight(String description) { return description == null || description.isEmpty() ? 22 : 32; }
+
+        /** A row's label and description; a hovered row gets an accent tick at its left edge. */
+        private void rowLabel(String label, String description, int descriptionColor, boolean over, int h, int controlWidth) {
+            int room = w - controlWidth - 14;
+            boolean described = description != null && !description.isEmpty();
+            if (over) round(graphics, x - 9, y + 6, 2f, h - 12f, 1f, accent());
+            bold(fit(label, Size.BASE, room), x, y + (described ? 7 : 8), TEXT);
+            if (described) draw(fit(description, Size.SMALL, room), Size.SMALL, x, y + 20, descriptionColor);
+        }
+
+        void section(String title) {
+            flushChips();
+            y += 10;
+            String label = title.toUpperCase(Locale.ROOT);
+            mark(id("section." + title), y, 12);
+            draw(label, Size.SMALL, x, y + 2, DIM);
+            int rule = x + width(label, Size.SMALL) + 8;
+            if (rule < x + w) round(graphics, rule, y + 6, x + w - rule, 1, 0, EDGE);
+            y += 16;
+        }
+
+        /** A line of text the width of the column. */
+        void label(String value, int color) {
+            flushChips();
+            draw(fit(value, Size.BASE, w), Size.BASE, x, y + 3, color);
+            y += 16;
+        }
+
+        void toggle(String key, String label, String description, BooleanSupplier value, Runnable action) {
+            flushChips();
+            String id = id(key);
+            int h = rowHeight(description);
+            boolean over = inside(x - 10, y, w + 20, h);
+            rowLabel(label, description, MUTED, over, h, 40);
+            toggleSwitch(x + w - 26, y + (h - 13) / 2, 26, 13, value.getAsBoolean(), "toggle." + id, true);
+            hit(id, x - 10, y, w + 20, h, () -> change(action), null);
+            y += h + 2;
+        }
+
+        /** A small on/off pill; consecutive chips share lines, so a list of filters stays compact. */
+        void chip(String key, String label, String description, BooleanSupplier value, Runnable action) {
+            String id = id(key);
+            int chipW = width(label, Size.BASE) + 20;
+            if (chipX < 0) {
+                chipX = x;
+                y += 2;
+            } else if (chipX + chipW > x + w) {
+                chipX = x;
+                y += 24;
+            }
+            boolean over = inside(chipX, y, chipW, 20);
+            if (over) tooltip = description;
+            double on = animate("chip." + id, value.getAsBoolean() ? 1 : 0);
+            round(graphics, chipX, y, chipW, 20, 10, blend(FIELD, blend(CARD, accent(), .18), on));
+            outline(graphics, chipX, y, chipW, 20, 10, over ? EDGE_HOVER : blend(EDGE, alpha(config.accentColor, .75), on));
+            draw(label, Size.BASE, chipX + 10, y + 7, over ? TEXT : blend(MUTED, TEXT, on));
+            hit(id, chipX, y, chipW, 20, () -> change(action), null);
+            chipX += chipW + 6;
+        }
+
+        /** Ends the current line of chips. */
+        void flushChips() {
+            if (chipX < 0) return;
+            chipX = -1;
+            y += 26;
+        }
+
+        /** A segmented control; each option is its own target, named by the option. */
+        void choice(String key, String label, int count, IntSupplier getter, IntConsumer setter, IntFunction<String> name) {
+            flushChips();
+            String id = id(key);
+            int index = getter.getAsInt(), h = 26, total = 4;
+            int[] widths = new int[count];
+            for (int i = 0; i < count; i++) total += widths[i] = width(name.apply(i), Size.BASE) + 22;
+            int left = x + w - total, top = y + (h - 20) / 2;
+            boolean over = inside(x - 10, y, w + 20, h);
+            rowLabel(label, null, MUTED, over, h, total);
+            round(graphics, left, top, total, 20, 7, FIELD);
+            outline(graphics, left, top, total, 20, 7, EDGE);
+            int offset = 2;
+            for (int i = 0; i < index; i++) offset += widths[i];
+            // The highlight slides by its offset inside the control, so moving the control (a resize) does not animate it.
+            float slideX = left + (float) animate("choice.x." + id, offset), slideW = (float) animate("choice.w." + id, widths[index]);
+            round(graphics, slideX, top + 2f, slideW, 16f, 5f, blend(CARD, accent(), .22));
+            outline(graphics, slideX, top + 2f, slideW, 16f, 5f, alpha(config.accentColor, .8));
+            int sx = left + 2;
+            for (int i = 0; i < count; i++) {
+                String option = name.apply(i);
+                boolean overOption = inside(sx, top, widths[i], 20);
+                draw(option, Size.BASE, sx + (widths[i] - width(option, Size.BASE)) / 2, top + 7,
+                        i == index ? TEXT : overOption ? LABEL : MUTED, i == index, false);
+                int value = i;
+                hit(id + "." + option, sx, top, widths[i], 20, () -> change(() -> setter.accept(value)), null);
+                sx += widths[i];
+            }
+            y += h + 2;
+        }
+
+        void slider(String key, String label, String description, DoubleSupplier getter, DoubleConsumer setter,
+                    double min, double max, double step, String unit) {
+            flushChips();
+            String id = id(key);
+            double value = getter.getAsDouble();
+            String display = unit.equals("%") ? Math.round(value * 100) + "%"
+                    : step >= 1 ? Math.round(value) + unit : String.format(Locale.ROOT, "%.1f%s", value, unit);
+            int h = rowHeight(description);
+            int box = Math.max(46, width(display, Size.BASE) + 16), trackW = Math.min(140, (int) (w * .3));
+            int trackX = x + w - box - 14 - trackW, mid = y + h / 2;
+            boolean over = inside(x - 10, y, w + 20, h);
+            rowLabel(label, description, MUTED, over, h, box + 14 + trackW + 6);
+            float filled = (float) (trackW * Math.clamp((value - min) / (max - min), 0, 1));
+            round(graphics, (float) trackX, mid - 2f, (float) trackW, 4f, 2f, TRACK);
+            round(graphics, (float) trackX, mid - 2f, Math.max(4f, filled), 4f, 2f, accent());
+            round(graphics, trackX + filled - 5f, mid - 4.4f, 10f, 10f, 5f, 0x66000000);
+            round(graphics, trackX + filled - 5f, mid - 5f, 10f, 10f, 5f, over ? blend(accent(), 0xFFFFFFFF, .25) : accent());
+            round(graphics, x + w - box, mid - 9, box, 18, 5, FIELD);
+            outline(graphics, x + w - box, mid - 9, box, 18, 5, EDGE);
+            draw(display, Size.BASE, x + w - box + (box - width(display, Size.BASE)) / 2, mid - 3, TEXT);
+            dragHit(id, trackX, y, trackW, h, position -> {
+                double next = Math.round((min + Math.clamp(position, 0, 1) * (max - min)) / step) * step;
+                setter.accept(Math.clamp(next, min, max));
+                dirty = true;
+            }, direction -> { setter.accept(Math.clamp(getter.getAsDouble() + direction * step, min, max)); dirty = true; flush(); });
+            y += h + 2;
+        }
+
+        void color(String key, String label, IntSupplier getter, IntConsumer setter) { color(key, label, null, getter, setter); }
+
+        void color(String key, String label, String description, IntSupplier getter, IntConsumer setter) {
+            flushChips();
+            String id = id(key);
+            int h = rowHeight(description), mid = y + h / 2;
+            boolean over = inside(x - 10, y, w + 20, h);
+            String code = hex(getter.getAsInt());
+            rowLabel(label, description, MUTED, over, h, 30 + 10 + width(code, Size.SMALL));
+            draw(code, Size.SMALL, x + w - 40 - width(code, Size.SMALL), mid - 3, over ? LABEL : DIM);
+            round(graphics, x + w - 30, mid - 7, 30, 14, 5, alpha(getter.getAsInt(), 1));
+            outline(graphics, x + w - 30, mid - 7, 30, 14, 5, alpha(0xFFFFFF, over ? .3 : .14));
+            hit(id, x - 10, y, w + 20, h, () -> { colorEditor = new ColorEditor(label, getter, setter); keyboardFocus = null; }, null);
+            y += h + 2;
+        }
+
+        void field(String key, String label, String description, Supplier<String> getter, Consumer<String> setter, boolean secret) {
+            flushChips();
+            String id = id(key);
+            boolean focused = id.equals(textField);
+            int h = rowHeight(description), boxW = Math.min(220, (int) (w * .45)), bx = x + w - boxW, by = y + h / 2 - 10;
+            boolean over = inside(x - 10, y, w + 20, h);
+            rowLabel(label, description, MUTED, over, h, boxW);
+            round(graphics, bx, by, boxW, 20, 6, FIELD);
+            outline(graphics, bx, by, boxW, 20, 6, focused ? accent() : over ? EDGE_HOVER : EDGE);
+            String value = focused ? textBuffer : getter.get();
+            // Secrets show only their last four characters unless being edited.
+            if (secret && !focused) value = value.isEmpty() ? "" : "*".repeat(Math.min(12, Math.max(0, value.length() - 4)))
+                    + value.substring(Math.max(0, value.length() - 4));
+            String shown = value + (focused && System.currentTimeMillis() % 1000 < 500 ? "|" : "");
+            // Keep the end in view while typing.
+            while (!shown.isEmpty() && width(shown, Size.BASE) > boxW - 16) shown = removeFirstCharacter(shown);
+            draw(shown, Size.BASE, bx + 8, by + 7, focused ? TEXT : LABEL);
+            hit(id, x - 10, y, w + 20, h, () -> {
+                textField = id;
+                textBuffer = getter.get();
+                textSetter = setter;
+                keyboardFocus = null;
+            }, null);
+            y += h + 2;
+        }
+
+        /** Amounts are typed as 250k, 1.5M or 12000. */
+        void money(String key, String label, String description, DoubleSupplier getter, DoubleConsumer setter) {
+            field(key, label, description, () -> Money.format(getter.getAsDouble()), text -> {
+                double value = Money.parse(text);
+                if (Double.isFinite(value)) setter.accept(value);
+            }, false);
+        }
+
+        void info(String label, String value, int color) {
+            flushChips();
+            draw(label, Size.BASE, x, y + 4, MUTED);
+            int labelWidth = width(label, Size.BASE) + 10;
+            String shown = fit(value, Size.BASE, w - labelWidth);
+            draw(shown, Size.BASE, x + w - width(shown, Size.BASE), y + 4, color);
+            y += 17;
+        }
+
+        void note(String value, int color) {
+            flushChips();
+            y += 2;
+            for (String line : wrap(value, w, Size.SMALL)) {
+                draw(line, Size.SMALL, x, y + 2, color);
+                y += 12;
+            }
+            y += 4;
+        }
+
+        void bind(int index) {
+            bindRow("bind", index, "Keybind", "Turns " + scope + " on or off");
+        }
+
+        /** A key binding row; click it, then press a key or mouse button. */
+        void bindRow(String key, int index, String label, String description) {
+            flushChips();
+            KeyMapping mapping = ModuleKeybinds.mapping(index);
+            if (mapping == null) return;
+            String id = id(key);
+            boolean capturing = binding == index;
+            int h = 32;
+            boolean over = inside(x - 10, y, w + 20, h);
+            String conflict = conflicts(index);
+            String name = capturing ? "Press a key..." : mapping.isUnbound() ? "None" : keyName(mapping);
+            int boxW = Math.max(72, width(name, Size.BASE) + 24), bx = x + w - boxW, by = y + h / 2 - 10;
+            rowLabel(label, conflict.isEmpty() ? description : "Also used by " + conflict, conflict.isEmpty() ? MUTED : WARN,
+                    over, h, boxW);
+            double hover = animate("bind." + id, over || capturing ? 1 : 0);
+            round(graphics, bx, by, boxW, 20, 6, capturing ? blend(FIELD, accent(), .15) : FIELD);
+            outline(graphics, bx, by, boxW, 20, 6, capturing ? accent() : blend(EDGE, EDGE_HOVER, hover));
+            draw(name, Size.BASE, bx + (boxW - width(name, Size.BASE)) / 2, by + 7,
+                    capturing ? TEXT : !conflict.isEmpty() ? WARN : mapping.isUnbound() ? MUTED : TEXT, !capturing, false);
+            hit(id, x - 10, y, w + 20, h, () -> {
+                binding = index;
+                dragging = null;
+                searchFocused = false;
+                keyboardFocus = null;
+            }, null);
+            y += h + 2;
+        }
+
+        void button(String key, String label, String description, Runnable action) {
+            flushChips();
+            String id = id(key);
+            int h = rowHeight(description), bw = width(label, Size.BASE) + 28, bx = x + w - bw, by = y + h / 2 - 10;
+            boolean over = inside(x - 10, y, w + 20, h);
+            rowLabel(label, description, MUTED, over, h, bw);
+            round(graphics, bx, by, bw, 20, 6, over ? CARD_HOVER : FIELD);
+            outline(graphics, bx, by, bw, 20, 6, over ? EDGE_HOVER : EDGE);
+            draw(label, Size.BASE, bx + 14, by + 7, over ? TEXT : LABEL);
+            hit(id, x - 10, y, w + 20, h, () -> change(action), null);
+            y += h + 2;
+        }
+
+        /** Settings most people leave alone, folded away until asked for. */
+        void more(Consumer<Column> body) {
+            flushChips();
+            String id = id("more");
+            boolean open = MORE.contains(id);
+            y += 6;
+            boolean over = inside(x - 10, y, w + 20, 20);
+            String label = open ? "Fewer options" : "More options";
+            int labelWidth = width(label, Size.BASE);
+            draw(label, Size.BASE, x, y + 6, over ? TEXT : MUTED, over, false);
+            chevron(x + labelWidth + 9, y + 10, open, over ? TEXT : MUTED);
+            int rule = x + labelWidth + 18;
+            if (rule < x + w) round(graphics, rule, y + 10, x + w - rule, 1, 0, EDGE);
+            hit(id, x - 10, y, w + 20, 20, () -> { if (!MORE.remove(id)) MORE.add(id); }, null);
+            y += 22;
+            if (open) {
+                body.accept(this);
+                flushChips();
+            }
+        }
+    }
+
+    private record NavGroup(String title, List<Page> pages) { }
+
+    /** A sidebar entry: a category of modules, or a page that draws its own content. */
+    private record Page(String id, String title, String icon, String subtitle, List<Module> modules, Consumer<Column> content) { }
+
+    /** A module: its switch, its settings (or null), and the index of its keybind (or -1). */
+    private record Module(String name, String description, String keywords, BooleanSupplier enabled, Runnable toggle,
+                          BooleanSupplier available, String unavailable, Consumer<Column> settings, int key) {
+        Module key(int index) {
+            return new Module(name, description, keywords, enabled, toggle, available, unavailable, settings, index);
+        }
+    }
+
+    /** A part of the window that takes the mouse; the sidebar and the page content also scroll. */
+    private static final class Region {
+        int x, y, w, h;
+        double scroll, scrollTarget;
+        int contentHeight;
+
+        void set(int x, int y, int w, int h) {
+            this.x = x;
+            this.y = y;
+            this.w = w;
+            this.h = h;
+        }
+
+        boolean contains(double mx, double my) { return mx >= x && mx < x + w && my >= y && my < y + h; }
+    }
+
+    private record Place(Region region, int y, int h) { }
+
+    /** A clickable area; only the region under the mouse receives clicks. */
+    private record Hit(String id, Region region, int x, int y, int w, int h, Runnable action, Runnable secondary,
+                       DoubleConsumer drag, IntConsumer nudge) {
         boolean contains(double mx, double my) { return mx >= x && my >= y && mx < x + w && my < y + h; }
-        void move(double mx, double my) { drag.accept(vertical ? (my - y) / h : (mx - x) / w); }
+        void move(double mx, double my) { drag.accept((mx - x) / w); }
     }
 
     private final class ColorEditor {

@@ -1,5 +1,7 @@
 package dev.donut.client.finder;
 
+import it.unimi.dsi.fastutil.longs.LongIterator;
+import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -14,28 +16,41 @@ import net.minecraft.world.level.chunk.status.ChunkStatus;
 
 /**
  * Caches one scan result per loaded chunk for searches that must read block data directly.
- * Scans are spread over ticks, nearest chunks first.
+ * Scans are spread over ticks, nearest chunks first. Chunks marked dirty by block updates are
+ * rescanned on the next tick, so changes show at once instead of waiting for the periodic refresh.
  */
 final class ChunkIndex<T> {
-    /** Indexed chunks are rescanned so block updates appear without reloading. */
-    private static final int REFRESH_TICKS = 40;
+    /** Dirty chunks rescanned per tick; a large explosion or section update can dirty many at once. */
+    private static final int DIRTY_PER_TICK = 24;
 
     private final Function<LevelChunk, T> scanner;
     private final int chunksPerTick;
+    /** Indexed chunks are also rescanned periodically, as a safety net for missed updates. */
+    private final int refreshTicks;
     private final Map<Long, Scan<T>> scans = new HashMap<>();
+    private final LongLinkedOpenHashSet dirty = new LongLinkedOpenHashSet();
     private int[] offsets = new int[0];
     private double offsetsRange = -1;
     private long tick;
 
     /** The scanner may return null for chunks without a result. */
-    ChunkIndex(Function<LevelChunk, T> scanner, int chunksPerTick) {
+    ChunkIndex(Function<LevelChunk, T> scanner, int chunksPerTick) { this(scanner, chunksPerTick, 40); }
+
+    ChunkIndex(Function<LevelChunk, T> scanner, int chunksPerTick, int refreshTicks) {
         this.scanner = scanner;
         this.chunksPerTick = chunksPerTick;
+        this.refreshTicks = refreshTicks;
     }
 
     void clear() {
         scans.clear();
+        dirty.clear();
         tick = 0;
+    }
+
+    /** Rescan this chunk on the next tick, if it is loaded and within range. */
+    void markDirty(int chunkX, int chunkZ) {
+        if (dirty.size() < 4096) dirty.add(ChunkPos.asLong(chunkX, chunkZ));
     }
 
     void tick(ClientLevel level, ChunkPos center, double range) {
@@ -44,6 +59,7 @@ final class ChunkIndex<T> {
             offsets = offsets(range);
             offsetsRange = range;
         }
+        rescanDirty(level, center, range);
         // Newly loaded chunks take priority over refreshing chunks that are already indexed.
         int budget = scan(level, center, chunksPerTick, false);
         if (budget > 0) scan(level, center, budget, true);
@@ -53,9 +69,30 @@ final class ChunkIndex<T> {
     /** Indexed chunks, with or without a result. */
     int size() { return scans.size(); }
 
+    /** This chunk's result, or null when it has none or isn't indexed. */
+    T get(int chunkX, int chunkZ) {
+        Scan<T> scan = scans.get(ChunkPos.asLong(chunkX, chunkZ));
+        return scan == null ? null : scan.result;
+    }
+
     void forEach(Consumer<T> action) {
         for (Scan<T> scan : scans.values()) {
             if (scan.result != null) action.accept(scan.result);
+        }
+    }
+
+    private void rescanDirty(ClientLevel level, ChunkPos center, double range) {
+        int budget = DIRTY_PER_TICK;
+        LongIterator iterator = dirty.iterator();
+        while (iterator.hasNext() && budget > 0) {
+            long key = iterator.nextLong();
+            iterator.remove();
+            int x = ChunkPos.getX(key), z = ChunkPos.getZ(key);
+            if (!withinRange(x - center.x, z - center.z, range)) continue;
+            LevelChunk chunk = level.getChunkSource().getChunk(x, z, ChunkStatus.FULL, false);
+            if (chunk == null) continue;
+            scans.put(key, new Scan<>(chunk, tick, scanner.apply(chunk)));
+            budget--;
         }
     }
 
@@ -68,7 +105,7 @@ final class ChunkIndex<T> {
             Scan<T> previous = scans.get(key);
             // A reloaded chunk is a new object, even when it reuses the same position.
             boolean indexed = previous != null && previous.chunk == chunk;
-            if (refresh ? !indexed || tick - previous.tick < REFRESH_TICKS : indexed) continue;
+            if (refresh ? !indexed || tick - previous.tick < refreshTicks : indexed) continue;
             scans.put(key, new Scan<>(chunk, tick, scanner.apply(chunk)));
             budget--;
         }
