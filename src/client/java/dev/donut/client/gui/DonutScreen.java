@@ -287,7 +287,9 @@ public final class DonutScreen extends Screen {
         boolean filled = s.mode != RenderMode.OUTLINE;
         cube(g, CX + 22, y + 13, 30, s.color, outline ? s.outlineOpacity : 0, filled ? s.fillOpacity : 0);
         text(g, font, "HIGHLIGHT PREVIEW", CX + 89, y + 15, DIM);
-        text(g, font, modeName(s.mode) + "  /  " + (int) s.range + " block range", CX + 89, y + 32, TEXT);
+        // ActivityFinder can cover every loaded chunk, which makes range and distance fade irrelevant.
+        boolean everyChunk = selected == 4 && s.allLoadedChunks;
+        text(g, font, modeName(s.mode) + "  /  " + (everyChunk ? "All loaded chunks" : (int) s.range + " block range"), CX + 89, y + 32, TEXT);
         text(g, font, s.throughWalls ? "Visible through blocks" : "Visible surfaces only", CX + 89, y + 49, MUTED);
         y += 84;
         section(g, "RENDERING", y); y += 18;
@@ -295,9 +297,13 @@ public final class DonutScreen extends Screen {
         slider(g, "outlineOpacity", "Outline opacity", y, () -> s.outlineOpacity, v -> s.outlineOpacity = v, 0, 1, .01, "%"); y += 47;
         slider(g, "fillOpacity", "Fill opacity", y, () -> s.fillOpacity, v -> s.fillOpacity = v, 0, 1, .01, "%"); y += 47;
         slider(g, "lineWidth", "Outline width", y, () -> s.lineWidth, v -> s.lineWidth = v, .5, 5, .1, " px"); y += 47;
-        slider(g, "range", "Detection range", y, () -> s.range, v -> s.range = v, 16, 256, 1, " blocks"); y += 47;
-        settingToggle(g, "walls", "Through walls", "Keep highlights visible behind blocks", y, () -> s.throughWalls, () -> s.throughWalls = !s.throughWalls); y += 43;
-        settingToggle(g, "fade", "Distance fade", "Soften highlights near the range limit", y, () -> s.distanceFade, () -> s.distanceFade = !s.distanceFade); y += 51;
+        if (!everyChunk) { slider(g, "range", "Detection range", y, () -> s.range, v -> s.range = v, 16, 256, 1, " blocks"); y += 47; }
+        settingToggle(g, "walls", "Through walls", "Keep highlights visible behind blocks", y, () -> s.throughWalls, () -> s.throughWalls = !s.throughWalls);
+        if (everyChunk) y += 51;
+        else {
+            y += 43;
+            settingToggle(g, "fade", "Distance fade", "Soften highlights near the range limit", y, () -> s.distanceFade, () -> s.distanceFade = !s.distanceFade); y += 51;
+        }
         section(g, "COLORS", y); y += 19;
         colorRow(g, "Base highlight", y, () -> s.color, value -> s.color = value); y += 36;
         if (selected == 0) {
@@ -325,7 +331,9 @@ public final class DonutScreen extends Screen {
         } else {
             slider(g, "minActivity", "Minimum growth", y, () -> s.minActivity, v -> s.minActivity = v, 0, 1, .01, "%"); y += 47;
             settingToggle(g, "surface", "Surface marker", "Squares on the surface with a guide down to the geode", y,
-                    () -> s.surfaceMarker, () -> s.surfaceMarker = !s.surfaceMarker); y += 47;
+                    () -> s.surfaceMarker, () -> s.surfaceMarker = !s.surfaceMarker); y += 43;
+            settingToggle(g, "allLoaded", "All loaded chunks", "Every chunk your client has, at any distance and depth", y,
+                    () -> s.allLoadedChunks, () -> s.allLoadedChunks = !s.allLoadedChunks); y += 47;
             text(g, font, "Amethyst only grows while a player is within simulation distance.", CX + 3, y + 2, MUTED); y += 17;
             text(g, font, "Worldgen buds score near 0%. 50% is roughly an hour of nearby activity.", CX + 3, y + 2, MUTED); y += 17;
             text(g, font, "Squares mark the geode's chunk; the player was within a few chunks.", CX + 3, y + 2, MUTED); y += 25;

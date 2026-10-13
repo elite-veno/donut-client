@@ -17,7 +17,7 @@ import net.minecraft.world.phys.Vec3;
 final class DebrisIndex {
     private static final Predicate<BlockState> DEBRIS = state -> state.is(Blocks.ANCIENT_DEBRIS);
 
-    private final ChunkIndex<List<FoundBlock>> chunks = new ChunkIndex<>(DebrisIndex::find);
+    private final ChunkIndex<List<FoundBlock>> chunks = new ChunkIndex<>(DebrisIndex::find, 8);
 
     void clear() { chunks.clear(); }
 

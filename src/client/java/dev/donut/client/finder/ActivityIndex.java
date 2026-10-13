@@ -22,7 +22,7 @@ final class ActivityIndex {
     private static final Predicate<BlockState> BUDDING = state -> state.is(Blocks.BUDDING_AMETHYST);
     private static final Direction[] DIRECTIONS = Direction.values();
 
-    private final ChunkIndex<ActivityArea> chunks = new ChunkIndex<>(ActivityIndex::scan);
+    private final ChunkIndex<ActivityArea> chunks = new ChunkIndex<>(ActivityIndex::scan, 16);
 
     void clear() { chunks.clear(); }
 

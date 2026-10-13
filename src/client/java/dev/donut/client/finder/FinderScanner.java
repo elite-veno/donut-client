@@ -18,6 +18,7 @@ public final class FinderScanner {
     private final ActivityIndex activity = new ActivityIndex();
     private List<FoundBlock> targets = List.of();
     private List<ActivityArea> areas = List.of();
+    private double activityRange;
     private ClientLevel lastLevel;
     private int ticks;
 
@@ -28,6 +29,8 @@ public final class FinderScanner {
     public long debrisCount() { return targets.stream().filter(t -> t.kind().isDebris()).count(); }
     /** Chunks whose amethyst growth reaches the ActivityFinder threshold, nearest first. */
     public List<ActivityArea> activity() { return areas; }
+    /** The horizontal reach ActivityFinder used for its last scan, in blocks. */
+    public double activityRange() { return activityRange; }
 
     public void clear() {
         targets = List.of();
@@ -47,7 +50,8 @@ public final class FinderScanner {
         // The chunk indexes spread their block scans over every tick, so they run before the cadence check.
         if (config.debris.enabled) debris.tick(client.level, client.player.chunkPosition(), config.debris.range);
         else debris.clear();
-        if (config.activity.enabled) activity.tick(client.level, client.player.chunkPosition(), config.activity.range);
+        activityRange = config.activity.allLoadedChunks ? loadedRange(client) : config.activity.range;
+        if (config.activity.enabled) activity.tick(client.level, client.player.chunkPosition(), activityRange);
         else activity.clear();
         if (!config.storage.enabled && !config.spawner.enabled && !config.debris.enabled && !config.activity.enabled) {
             targets = List.of();
@@ -64,9 +68,15 @@ public final class FinderScanner {
         targets = List.copyOf(found.subList(0, Math.min(found.size(), MAX_TARGETS)));
 
         List<ActivityArea> grown = new ArrayList<>();
-        if (config.activity.enabled) activity.collect(origin, config.activity.range, config.activity.minActivity, grown);
+        if (config.activity.enabled) activity.collect(origin, activityRange, config.activity.minActivity, grown);
         grown.sort(Comparator.comparingDouble(area -> area.horizontalDistance(origin)));
         areas = List.copyOf(grown);
+    }
+
+    /** Reaches every corner of the client's chunk cache, which holds the render distance plus a margin. */
+    private static double loadedRange(Minecraft client) {
+        int radius = Math.max(2, client.options.getEffectiveRenderDistance()) + 3;
+        return (radius * Math.sqrt(2) + 1) * 16;
     }
 
     private void collectBlockEntities(Minecraft client, Vec3 origin, List<FoundBlock> found) {

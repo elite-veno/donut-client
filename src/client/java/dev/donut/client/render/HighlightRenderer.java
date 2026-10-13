@@ -143,13 +143,15 @@ public final class HighlightRenderer implements AutoCloseable {
 
     private void addActivity(WorldExtractionContext context, Vec3 camera, List<DrawBox> boxes) {
         FinderSettings settings = config.activity;
+        double range = scanner.activityRange();
+        boolean fades = settings.distanceFade && !settings.allLoadedChunks;
         for (ActivityArea area : scanner.activity()) {
             double distance = area.horizontalDistance(camera);
-            if (distance > settings.range || area.score() < settings.minActivity) continue;
+            if (distance > range || area.score() < settings.minActivity) continue;
             // Chunks just past the threshold stay faint; fully grown geodes draw at the configured opacity.
             double headroom = 1.0 - settings.minActivity;
             double emphasis = headroom <= 0 ? 1.0 : 0.35 + 0.65 * (area.score() - settings.minActivity) / headroom;
-            double strength = emphasis * (settings.distanceFade ? fade(distance, settings.range) : 1.0);
+            double strength = emphasis * (fades ? fade(distance, range) : 1.0);
             int fill = settings.mode != RenderMode.OUTLINE ? argb(settings.color, settings.fillOpacity * strength) : 0;
             int outline = settings.mode != RenderMode.FILL ? argb(settings.color, settings.outlineOpacity * strength) : 0;
             float width = (float) Math.clamp(settings.lineWidth, 0.5, 8.0);

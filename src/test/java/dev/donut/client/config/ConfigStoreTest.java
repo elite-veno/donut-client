@@ -62,6 +62,7 @@ class ConfigStoreTest {
         config.activity.minActivity = 0.72;
         config.activity.color = 0x33AA55;
         config.activity.surfaceMarker = false;
+        config.activity.allLoadedChunks = false;
 
         store.save(config);
         ClientConfig loaded = new ConfigStore(path).load();
@@ -100,6 +101,7 @@ class ConfigStoreTest {
         assertEquals(0.72, loaded.activity.minActivity);
         assertEquals(0x33AA55, loaded.activity.color);
         assertFalse(loaded.activity.surfaceMarker);
+        assertFalse(loaded.activity.allLoadedChunks);
         assertFalse(Files.exists(path.resolveSibling("donut.json.tmp")));
         assertTrue(backups(path.getParent()).isEmpty());
     }
@@ -161,6 +163,7 @@ class ConfigStoreTest {
         assertEquals(0xFFB347, loaded.activity.color);
         assertEquals(0.5, loaded.activity.minActivity);
         assertTrue(loaded.activity.surfaceMarker);
+        assertTrue(loaded.activity.allLoadedChunks);
         assertTrue(backups(directory).isEmpty());
     }
 

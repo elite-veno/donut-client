@@ -17,18 +17,21 @@ import net.minecraft.world.level.chunk.status.ChunkStatus;
  * Scans are spread over ticks, nearest chunks first.
  */
 final class ChunkIndex<T> {
-    private static final int CHUNKS_PER_TICK = 8;
     /** Indexed chunks are rescanned so block updates appear without reloading. */
     private static final int REFRESH_TICKS = 40;
 
     private final Function<LevelChunk, T> scanner;
+    private final int chunksPerTick;
     private final Map<Long, Scan<T>> scans = new HashMap<>();
     private int[] offsets = new int[0];
     private double offsetsRange = -1;
     private long tick;
 
     /** The scanner may return null for chunks without a result. */
-    ChunkIndex(Function<LevelChunk, T> scanner) { this.scanner = scanner; }
+    ChunkIndex(Function<LevelChunk, T> scanner, int chunksPerTick) {
+        this.scanner = scanner;
+        this.chunksPerTick = chunksPerTick;
+    }
 
     void clear() {
         scans.clear();
@@ -42,7 +45,7 @@ final class ChunkIndex<T> {
             offsetsRange = range;
         }
         // Newly loaded chunks take priority over refreshing chunks that are already indexed.
-        int budget = scan(level, center, CHUNKS_PER_TICK, false);
+        int budget = scan(level, center, chunksPerTick, false);
         if (budget > 0) scan(level, center, budget, true);
         if (tick % 20 == 0) prune(level, center, range);
     }

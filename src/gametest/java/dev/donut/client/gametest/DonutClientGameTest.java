@@ -172,6 +172,23 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             context.runOnClient(client -> config.activity.surfaceMarker = false);
             context.waitTicks(2);
             screenshot(context, "donut-06-activity-geode-only");
+            context.runOnClient(client -> config.activity.surfaceMarker = true);
+
+            // All loaded chunks reaches past the detection range, which only applies once it is turned off.
+            createGeode(world.getServer(), 52, -42, true);
+            ChunkPos distant = new ChunkPos(3, -3);
+            context.runOnClient(client -> config.activity.range = 48);
+            context.waitFor(client -> scanner.activity().size() == 2
+                    && scanner.activity().stream().anyMatch(area -> area.chunk().equals(distant)));
+            context.runOnClient(client -> require(scanner.activityRange() > 150,
+                    "All loaded chunks should cover the render distance, not " + scanner.activityRange()));
+            screenshot(context, "donut-07-activity-all-loaded");
+            context.runOnClient(client -> config.activity.allLoadedChunks = false);
+            context.waitFor(client -> scanner.activity().size() == 1 && scanner.activity().getFirst().chunk().equals(grown));
+            context.runOnClient(client -> {
+                config.activity.allLoadedChunks = true;
+                config.activity.range = 96;
+            });
 
             context.runOnClient(client -> {
                 config.storage.enabled = false;

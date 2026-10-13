@@ -20,6 +20,8 @@ public final class FinderSettings {
     public double minActivity = 0.5;
     /** ActivityFinder only: draw squares on the surface with a guide down to the geode. */
     public boolean surfaceMarker = true;
+    /** ActivityFinder only: scan every loaded chunk without distance fade, ignoring the range. */
+    public boolean allLoadedChunks = true;
     public boolean perTypeColors = true;
     public int color = 0x4C86FF;
     public int chestColor = 0xFFC66B;
