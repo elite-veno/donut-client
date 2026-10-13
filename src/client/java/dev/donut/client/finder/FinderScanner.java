@@ -77,7 +77,7 @@ public final class FinderScanner {
         grown.sort(Comparator.comparingDouble(area -> area.horizontalDistance(origin)));
         areas = List.copyOf(grown);
         activityStats = config.activity.enabled
-                ? activity.stats(client.level.dimension() == Level.OVERWORLD) : ActivityStats.EMPTY;
+                ? activity.stats(client.level.dimension() == Level.OVERWORLD, origin, activityRange) : ActivityStats.EMPTY;
     }
 
     /** Reaches every corner of the client's chunk cache, which holds the render distance plus a margin. */

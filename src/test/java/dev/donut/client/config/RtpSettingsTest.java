@@ -21,6 +21,7 @@ class RtpSettingsTest {
         config.rtp.command = "rtp world";
         config.rtp.menuItem = "Wild";
         config.rtp.intervalSeconds = 45;
+        config.rtp.stopAtGrowth = 0.7;
         config.rtp.scanSeconds = 12;
         config.rtp.maxAttempts = 7;
         config.rtp.stopWhenHurt = false;
@@ -34,6 +35,7 @@ class RtpSettingsTest {
         assertEquals("rtp world", loaded.rtp.command);
         assertEquals("Wild", loaded.rtp.menuItem);
         assertEquals(45, loaded.rtp.intervalSeconds);
+        assertEquals(0.7, loaded.rtp.stopAtGrowth);
         assertEquals(12, loaded.rtp.scanSeconds);
         assertEquals(7, loaded.rtp.maxAttempts);
         assertFalse(loaded.rtp.stopWhenHurt);
@@ -56,6 +58,7 @@ class RtpSettingsTest {
             assertEquals("rtp", loaded.command);
             assertEquals("Overworld", loaded.menuItem);
             assertEquals(20, loaded.intervalSeconds);
+            assertEquals(0.55, loaded.stopAtGrowth);
             assertEquals(8, loaded.scanSeconds);
             assertEquals(25, loaded.maxAttempts);
             assertTrue(loaded.stopWhenHurt);
@@ -84,13 +87,16 @@ class RtpSettingsTest {
         low.intervalSeconds = 0;
         low.scanSeconds = 0;
         low.maxAttempts = -5;
+        low.stopAtGrowth = -1;
         RtpSettings high = new RtpSettings();
         high.intervalSeconds = 10_000;
         high.scanSeconds = 1_000;
         high.maxAttempts = 10_000;
+        high.stopAtGrowth = 3;
         RtpSettings broken = new RtpSettings();
         broken.intervalSeconds = Double.NaN;
         broken.scanSeconds = Double.POSITIVE_INFINITY;
+        broken.stopAtGrowth = Double.NaN;
 
         low.sanitize();
         high.sanitize();
@@ -99,6 +105,9 @@ class RtpSettingsTest {
         assertEquals(5, low.intervalSeconds);
         assertEquals(2, low.scanSeconds);
         assertEquals(1, low.maxAttempts);
+        assertEquals(0, low.stopAtGrowth);
+        assertEquals(1, high.stopAtGrowth);
+        assertEquals(0.55, broken.stopAtGrowth);
         assertEquals(600, high.intervalSeconds);
         assertEquals(30, high.scanSeconds);
         assertEquals(200, high.maxAttempts);

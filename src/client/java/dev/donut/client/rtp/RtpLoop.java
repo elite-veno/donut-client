@@ -28,8 +28,8 @@ public final class RtpLoop {
 
     public enum Action { NONE, SEND, STOP }
 
-    /** Long enough for "teleporting in 5 seconds, don't move" countdowns. */
-    static final int TELEPORT_TIMEOUT = 30 * 20;
+    /** DonutSMP can take well over half a minute between /rtp and the teleport. */
+    static final int TELEPORT_TIMEOUT = 60 * 20;
     /** New chunks need a moment to arrive before an early hit is trusted. */
     static final int MIN_SCAN = 2 * 20;
     private static final int GIVE_UP_AFTER = 3;

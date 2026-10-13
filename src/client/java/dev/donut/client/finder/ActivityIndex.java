@@ -34,10 +34,12 @@ final class ActivityIndex {
         });
     }
 
-    ActivityStats stats(boolean overworld) {
+    /** Chunks beyond the range, such as the area a teleport just left, are not counted. */
+    ActivityStats stats(boolean overworld, Vec3 origin, double range) {
         int[] amethyst = new int[2];
         ActivityArea[] best = new ActivityArea[1];
         chunks.forEach(area -> {
+            if (area.horizontalDistance(origin) > range) return;
             amethyst[0]++;
             amethyst[1] += area.budding();
             if (best[0] == null || area.score() > best[0].score()) best[0] = area;

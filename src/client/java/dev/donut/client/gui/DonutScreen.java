@@ -332,12 +332,14 @@ public final class DonutScreen extends Screen {
         rtp(g, CX + 28, y + 25, alpha(config.accentColor, 1));
         text(g, font, "STATUS", CX + 76, y + 15, DIM);
         text(g, font, ellipsize(rtpStatus.get(), CW - 100), CX + 76, y + 32, TEXT);
-        text(g, font, "Stops once a chunk reaches " + Math.round(config.activity.minActivity * 100)
-                + "% growth in ActivityFinder.", CX + 76, y + 49, MUTED);
+        text(g, font, "Stops once a chunk reaches " + Math.round(s.stopAtGrowth * 100) + "% amethyst growth.",
+                CX + 76, y + 49, MUTED);
         y += 84;
         section(g, "COMMAND", y); y += 18;
         textRow(g, "rtpCommand", "Command", "Sent without the slash", y, () -> s.command, v -> s.command = v); y += 43;
         textRow(g, "rtpMenu", "Menu item", "Clicked when the command opens a menu", y, () -> s.menuItem, v -> s.menuItem = v); y += 51;
+        section(g, "TARGET", y); y += 18;
+        slider(g, "rtpStopAt", "Stop at growth", y, () -> s.stopAtGrowth, v -> s.stopAtGrowth = v, 0, 1, .01, "%"); y += 51;
         section(g, "TIMING", y); y += 18;
         slider(g, "rtpInterval", "Time between attempts", y, () -> s.intervalSeconds, v -> s.intervalSeconds = v, 5, 600, 5, " s"); y += 47;
         slider(g, "rtpScan", "Scan time after teleport", y, () -> s.scanSeconds, v -> s.scanSeconds = v, 2, 30, 1, " s"); y += 47;
@@ -345,7 +347,7 @@ public final class DonutScreen extends Screen {
         section(g, "SAFETY", y); y += 18;
         settingToggle(g, "rtpHurt", "Stop when hurt", "Stop as soon as you lose health", y, () -> s.stopWhenHurt, () -> s.stopWhenHurt = !s.stopWhenHurt); y += 51;
         text(g, font, "Waits longer whenever the server reports a cooldown.", CX + 3, y, MUTED); y += 17;
-        text(g, font, "Turns on ActivityFinder and uses its Minimum growth.", CX + 3, y, MUTED); y += 17;
+        text(g, font, "Turns on ActivityFinder to scan; its squares keep their own threshold.", CX + 3, y, MUTED); y += 17;
         text(g, font, "Check the server's rules before automating commands.", CX + 3, y, DIM); y += 25;
         endContent(g, y);
     }

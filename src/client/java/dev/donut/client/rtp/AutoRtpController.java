@@ -99,8 +99,8 @@ public final class AutoRtpController {
 
         ActivityStats stats = scanner.activityStats();
         boolean blind = stats.overworld() && stats.scannedChunks() >= BLIND_CHUNKS && stats.amethystChunks() == 0;
-        RtpLoop.Action action = loop.tick(tick, teleported(client), hurt, scanner.activity().size(), blind,
-                settings().stopWhenHurt);
+        int hits = stats.best() != null && stats.best().score() >= settings().stopAtGrowth ? 1 : 0;
+        RtpLoop.Action action = loop.tick(tick, teleported(client), hurt, hits, blind, settings().stopWhenHurt);
         if (action == RtpLoop.Action.SEND) send(client);
         else if (action == RtpLoop.Action.STOP) finish(client, loop.result());
     }
@@ -116,7 +116,8 @@ public final class AutoRtpController {
             save.run();
         }
         message(client, "started. Sending /" + s.command + " every " + Math.round(s.intervalSeconds)
-                + " s, up to " + s.maxAttempts + (s.maxAttempts == 1 ? " time." : " times."), ChatFormatting.GRAY);
+                + " s, up to " + s.maxAttempts + (s.maxAttempts == 1 ? " time" : " times") + ", until a chunk reaches "
+                + Math.round(s.stopAtGrowth * 100) + "% growth.", ChatFormatting.GRAY);
     }
 
     private void send(Minecraft client) {
@@ -124,7 +125,10 @@ public final class AutoRtpController {
         sentLevel = client.level;
         sentTick = tick;
         menuHandled = false;
+        // Sent exactly as if typed in chat; the local line shows it, since chat does not echo commands.
         client.player.connection.sendCommand(settings().command);
+        message(client, "/" + settings().command + " (attempt " + loop.attempts() + " of " + loop.maxAttempts() + ")",
+                ChatFormatting.DARK_GRAY);
     }
 
     private boolean teleported(Minecraft client) {
@@ -170,14 +174,11 @@ public final class AutoRtpController {
         settings().enabled = false;
         if (client.player == null || result == null) return;
         if (result == RtpLoop.Result.FOUND) {
-            ActivityArea best = scanner.activity().stream()
-                    .max((a, b) -> Double.compare(a.score(), b.score())).orElse(null);
-            String where = best == null ? "" : " Highest " + Math.round(best.score() * 100) + "% at x "
-                    + (best.chunk().getMinBlockX() + 8) + ", z " + (best.chunk().getMinBlockZ() + 8) + ".";
-            int chunks = scanner.activity().size();
+            ActivityArea best = scanner.activityStats().best();
+            String where = best == null ? "" : ": " + Math.round(best.score() * 100) + "% growth at x "
+                    + (best.chunk().getMinBlockX() + 8) + ", z " + (best.chunk().getMinBlockZ() + 8);
             message(client, "found likely player activity after " + loop.attempts() + " "
-                    + (loop.attempts() == 1 ? "attempt" : "attempts") + ": " + chunks
-                    + (chunks == 1 ? " chunk." : " chunks.") + where, ChatFormatting.GREEN);
+                    + (loop.attempts() == 1 ? "attempt" : "attempts") + where + ".", ChatFormatting.GREEN);
             client.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.PLAYER_LEVELUP, 1.0f));
         } else if (result == RtpLoop.Result.STOPPED) {
             message(client, "stopped.", ChatFormatting.GRAY);

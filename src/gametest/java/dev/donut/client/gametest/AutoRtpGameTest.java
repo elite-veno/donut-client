@@ -7,6 +7,7 @@ import dev.donut.client.render.HighlightRenderer;
 import dev.donut.client.rtp.AutoRtpController;
 import dev.donut.client.rtp.RtpLoop;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
@@ -43,6 +44,8 @@ public final class AutoRtpGameTest implements FabricClientGameTest {
         config.rtp.maxAttempts = 4;
         FinderScanner scanner = new FinderScanner(config);
         AtomicBoolean active = new AtomicBoolean(true);
+        // The best growth seen while the first attempt scanned, to show the 52% geode was seen and passed over.
+        AtomicReference<Double> firstScanBest = new AtomicReference<>(0.0);
         HighlightRenderer renderer = context.computeOnClient(client -> {
             client.options.guiScale().set(1);
             HighlightRenderer created = new HighlightRenderer(config, scanner);
@@ -55,6 +58,10 @@ public final class AutoRtpGameTest implements FabricClientGameTest {
                 if (!active.get()) return;
                 scanner.tick(mc);
                 created.tick(mc);
+                var best = scanner.activityStats().best();
+                if (created.attempts() == 1 && created.phase() == RtpLoop.Phase.SCANNING && best != null) {
+                    firstScanBest.accumulateAndGet(best.score(), Math::max);
+                }
             });
             return created;
         });
@@ -70,6 +77,13 @@ public final class AutoRtpGameTest implements FabricClientGameTest {
             server.runCommand("fill 4 59 -806 7 59 -805 minecraft:budding_amethyst");
             server.runCommand("fill 4 60 -806 7 60 -805 minecraft:amethyst_cluster[facing=up]");
             server.runCommand("forceload remove 0 -816 15 -801");
+            // At the first stop, a geode at 52%: enough for an ActivityFinder square, short of Auto RTP's 55%.
+            server.runCommand("forceload add 0 -416 15 -401");
+            server.runCommand("fill 3 58 -407 12 60 -404 minecraft:calcite");
+            server.runCommand("fill 4 59 -406 11 59 -405 minecraft:budding_amethyst");
+            server.runCommand("fill 4 60 -406 11 60 -405 minecraft:air");
+            server.runCommand("fill 4 60 -406 8 60 -405 minecraft:amethyst_cluster[facing=up]");
+            server.runCommand("forceload remove 0 -416 15 -401");
             server.runCommand("tp @a 0.5 65 0.5 180 30");
             context.waitTicks(5);
             world.getClientWorld().waitForChunksRender();
@@ -79,7 +93,9 @@ public final class AutoRtpGameTest implements FabricClientGameTest {
             context.waitFor(client -> controller.result() != null && !controller.isActive(), 60 * 20);
             context.runOnClient(client -> {
                 require(controller.result() == RtpLoop.Result.FOUND, "Auto RTP ended with " + controller.result());
-                require(controller.attempts() == 2, "Expected two attempts, got " + controller.attempts());
+                require(controller.attempts() == 2, "Expected the 52% geode to be passed over, got "
+                        + controller.attempts() + " attempts");
+                require(Math.abs(firstScanBest.get() - 0.52) < 1e-9, "The first area's best growth was " + firstScanBest.get());
                 require(Math.abs(client.player.getZ() + 799.5) < 1, "The player is at z " + client.player.getZ());
                 require(scanner.activity().stream().anyMatch(area -> area.chunk().equals(GEODE)),
                         "The grown geode's chunk is not highlighted");
