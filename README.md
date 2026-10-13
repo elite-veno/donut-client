@@ -1,15 +1,15 @@
 # Donut Client
 
-A client-side Fabric mod for Minecraft Java 1.21.11 for seeing what is hidden: storage, spawner and ancient debris highlights, X-ray, Fullbright, dug tunnel and hole detection, player and mob ESP with tracers, amethyst-based activity detection with Auto RTP, Freecam, module keybinds, distance labels and an info HUD.
+A client-side Fabric mod for Minecraft Java 26.2 for seeing what is hidden: storage, spawner and ancient debris highlights, X-ray, Fullbright, dug tunnel and hole detection, player and mob ESP with tracers, amethyst-based activity detection with Auto RTP, Freecam, module keybinds, distance labels and an info HUD. It carries the GoNuts auction trading bot inside it.
 
 ## Install
 
-1. Install Fabric Loader for Minecraft 1.21.11.
-2. Install Fabric API 0.141.4 or newer for Minecraft 1.21.11.
-3. Copy `donut-client-1.3.0.jar` into your Minecraft `mods` folder, removing any older Donut Client jar.
+1. Install Fabric Loader 0.19.3 or newer for Minecraft 26.2 (Java 25).
+2. Install Fabric API 0.158.0 or newer for Minecraft 26.2.
+3. Copy `donut-client-2.0.0.jar` into your Minecraft `mods` folder, removing any older Donut Client jar and any separate GoNuts (`doughbay`) jar: GoNuts is already inside, and two copies will not load.
 4. Start Minecraft with the Fabric profile.
 
-Press **Right Shift** to open the menu. The sidebar lists the module categories (Finders, Render, Utility, HUD, and Sniper, Dashboard and Markets for trading) and the Keybinds and Theme pages. A category shows its modules as cards: the switch turns a module on or off, and clicking the card opens its settings, each with a short description; **Back** returns to the list. Settings people rarely change, such as opacity, line width and colors, sit behind **More options** at the end of a module's settings. Keybinds lists every module's key in one place, and Theme sets the accent color and optional snowfall. Type anywhere to search. Freecam defaults to **F6**. Other module keys can be assigned from the Bind row at the top of each module's settings, or under Minecraft's keybind settings.
+Press **Right Shift** to open the menu. The sidebar lists the module categories (Finders, Render, Utility, HUD), the GoNuts pages (Overview and Settings) and the Keybinds and Theme pages. A category shows its modules as cards: the switch turns a module on or off, and clicking the card opens its settings, each with a short description; **Back** returns to the list. Settings people rarely change, such as opacity, line width and colors, sit behind **More options** at the end of a module's settings. Keybinds lists every module's key in one place, and Theme sets the accent color and optional snowfall. Type anywhere to search. Freecam defaults to **F6**. Other module keys can be assigned from the Bind row at the top of each module's settings, or under Minecraft's keybind settings.
 
 ### Seeing underground
 
@@ -40,26 +40,25 @@ ActivityFinder outlines chunks whose amethyst geodes grew well past their genera
 
 Auto RTP sends a random-teleport command (`rtp` by default), clicks the configured item (`Overworld`) when the command opens a world menu, waits for the teleport, lets ActivityFinder scan for a few seconds, and stops with a chat message and a sound once a chunk reaches its Stop at growth (55% by default, separate from ActivityFinder's square threshold). Each command is sent exactly as if typed in chat and echoed as a grey local line, and the teleport may take up to a minute. Otherwise it waits out its interval and tries again, up to its attempt limit. Cooldown messages from the server delay the next attempt instead of being retried. It also stops when you take damage, when three commands in a row do not teleport you, when the menu lacks the configured item, or when three areas in a row hold no budding amethyst at all. It never starts on its own after joining. Check a server's rules before automating commands.
 
-## AH Sniper
+## Trading with GoNuts
 
-**AHSniper**, on the menu's Sniper page, watches DonutSMP's Auction House through the official API (`https://api.donutsmp.net`). Run `/api` in game and paste the key into its API key setting. The Dashboard and Markets pages show profit, trades, activity and the busiest markets.
+Donut Client bundles [GoNuts](https://github.com/cody-raves/GoNuts), an auction-house trading bot for DonutSMP, and does its trading through it; the earlier AH Sniper is gone. GoNuts starts in its observe mode and never trades until you turn live trading on and start a session.
 
-- **Prices:** the last 1,000 real sales are loaded from the transaction history and kept for a week, so the history grows the longer it runs. Items are one market only when type, name, enchantments, trim and lore match. Prices are per item, so stacks compare fairly.
-- **Deals:** a new listing qualifies only when it is at least 2.5 robust standard deviations (median absolute deviation) under the item's value, which is the lower of the week's median and the median of the last ten sales, so a falling market is valued at its new level. It never buys above that value. It must also clear a 15% margin and $5K profit after a 5% tax when resold just under the cheapest competing listing, and the item needs at least eight recorded sales and two a day.
-- **Paper mode (default):** deals are recorded, not bought. A paper trade counts as sold when someone later pays at least its resale price, so the dashboard shows what the rules would have earned.
-- **Live mode:** turned on per session in Settings. It searches the Auction House in game, clicks the listing only when the item, stack size and price in its lore match the API, confirms only when the confirmation shows the same item, and lists it again with `/ah sell <price>`. If it paid more than expected or cannot relist, it keeps the item and switches live mode off. Price and exposure limits and a trade-per-hour cap apply.
+- **GoNuts > Overview** shows the trading session (state, trades started, money committed, open listings, balance) with Start, Resume or Stop; a payroll rule waiting for your approval, with an Approve button (no payroll payment goes out before that); what has been paid out in the last 24 hours against the daily cap; the features that can spend money or act for the account and are on; the update status; and a button for GoNuts's full screen with its markets, charts, payroll rules, presets and web panel.
+- **GoNuts > Settings** has a card for each GoNuts settings group and one for its lists. Settings that move money, data or the server joined are marked in amber, change only on a second click within eight seconds, and are typed rather than dragged. Typed values take their unit: `2h` for minutes, `250k` or `1.5M` for amounts.
+- Auto RTP stops, saying "GoNuts is trading; stop its session first", while a GoNuts session works, so a teleport never lands in the middle of a trade. Trading steps wait while the Donut menu is open; close it to let GoNuts work.
 
-Check the server's rules before automating trades.
+DonutSMP's rules ban scripts and macros, and the ban reaches every account linked to a player. Running the bot is a risk the account owner chooses to take.
 
 ## Build
 
-Install JDK 21, then run:
+Install JDK 25 and clone GoNuts next to this repository (`../Gonuts`, branch `local-hardening`), then run:
 
 ```powershell
 .\gradlew.bat build
 ```
 
-The finished mod is written to `build/libs/donut-client-1.3.0.jar`.
+The finished mod, with GoNuts inside, is written to `build/libs/donut-client-2.0.0.jar`.
 
 ## License
 
