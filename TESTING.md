@@ -2,11 +2,25 @@
 
 Automated Auto RTP tests drive its state machine through hits, quiet areas, missed teleports, server cooldowns, damage and amethyst-free areas, and check cooldown parsing, teleport countdowns that must not count as cooldowns, and menu item matching. Automated amethyst-growth tests check the exact worldgen baseline, reject lucky small chunks, and simulate worldgen plus random ticks: fresh geodes almost never reach the default threshold, an hour nearby averages about half growth, and three hours nearly all. Automated configuration tests cover defaults, JSON persistence and replacement, invalid-file recovery/backups, missing and future fields, unknown modes, numeric boundaries, NaN/infinity, and color sanitization.
 
-Run `./gradlew build` with JDK 21. The installable, remapped artifact is `build/libs/donut-client-1.3.0.jar`.
+Run `./gradlew build` with JDK 25 (Minecraft 26.2). The installable artifact is `build/libs/donut-client-2.0.0.jar`; it carries GoNuts (`../Gonuts`, branch local-hardening) as a nested mod, so that clone must be present.
 
 Run `./gradlew runClientGameTest` for the isolated Minecraft smoke test. It creates a disposable world with all twelve block target types, checks scanner counts and filtering, clicks the GUI controls, and captures screenshots of both depth policies for each render mode. It also seals ancient debris in netherrack in a neighboring chunk after that chunk was first indexed, and checks that mined debris disappears within 15 ticks instead of waiting for its chunk's periodic rescan. For ActivityFinder it builds a worldgen-like geode and a fully grown one in neighboring chunks and checks that only the grown chunk is outlined. The vision checks then mark a spawner with a used timer as activated and leave an untouched one alone; build a chunk full of buried debris out of view so it arrives as chunk data, like anti-xray fakes, and check that none is drawn until a neighbor is mined or the server confirms a block; find a tunnel, a hole and a staircase dug into stone but not a cave room; hide stone with X-ray; outline mobs with tracers and labels; and light midnight with Fullbright. Test code and fixtures are excluded from the installable jar. This requires a working graphics device.
 
 The Freecam runtime test compares both the actual client player and integrated server player before and after camera movement, checks speed/boost/vertical movement and mouse look, verifies action queues are cleared, and checks that disabling restores normal input without undoing a server teleport. It also checks disconnect cleanup and clicks the Freecam GUI controls. Configuration tests cover persistence of speed/favorites and deliberately non-persistent activation.
+
+## Verified on 2026-10-13 (Minecraft 26.2 port, GoNuts inside)
+
+Done on branch `port/26.2` while the user was away. Decisions to review:
+- The 1.21.11 tree was checkpointed as `ef8881c` on `feature/debris-finder`, with the user's OK. The port is `b3fb76e`, GoNuts bundling is `dacd1fb`, and the GoNuts pages are `985d2fa`. All are local, nothing is pushed, and each can be reverted on its own.
+- Build: Loom 1.17.21 (`net.fabricmc.fabric-loom`, unobfuscated, no mappings), Gradle 9.7.1, Java 25, loader 0.19.5. fabric-api is 0.158.0+26.2, the version GoNuts builds against and the one already cached (the profile runs 0.161.0, which also satisfies `>=0.158.0`). Mod version is 2.0.0 because the Minecraft version changed. Mixins use compatibility level JAVA_25.
+- Mixins on the 26.2 API:
+  - Freecam places the camera at the end of `Camera.alignWithEntity`, before the culling frustum is built. The old LevelRenderer spectator-culling hook became `smartCull = false` in `Camera.extractRenderState`, used while the free camera is inside an opaque block.
+  - Picking moved to `Minecraft.pick`, and `pickBlock` became `pickBlockOrEntity`.
+  - Screen effects are hooked at `ScreenEffectRenderer.submit`.
+  - Fullbright reads gamma in `LightmapRenderStateExtractor.extract`, now pinned to the first option read so the Darkness effect scale is no longer raised too.
+  - Distance labels still capture the projection the world is drawn with, bobbing included, from `ProjectionMatrixBuffer.getBuffer` in `GameRenderer.renderLevel`.
+- GoNuts pages: a GoNuts sidebar group (Overview and Settings) built only on `dev.doughbay.fabric.GoNutsApi`. The pending payroll payment shows as an amber note with a Confirm button, guarded settings are marked in amber, and resets and presets stay on the full GoNuts screen.
+- `build` and `runClientGameTest` passed after each step. Screenshots of the GoNuts Overview, the settings list and the Session group were reviewed. The build was installed into the "Donut Client 26.2" Modrinth profile with the game closed.
 
 ## Verified on 2026-10-13 (sidebar menu)
 
