@@ -8,7 +8,8 @@
     "fabric-client-gametest": [
       "dev.donut.client.gametest.DonutClientGameTest",
       "dev.donut.client.gametest.FreecamGameTest",
-      "dev.donut.client.gametest.ModuleKeybindGameTest"
+      "dev.donut.client.gametest.ModuleKeybindGameTest",
+      "dev.donut.client.gametest.AutoRtpGameTest"
     ]
   },
   "depends": {

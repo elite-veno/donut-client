@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
 import java.util.function.DoubleSupplier;
 import java.util.function.IntConsumer;
@@ -42,6 +43,11 @@ public final class DonutScreen extends Screen {
     private final ClientConfig config;
     private final Runnable save;
     private final Supplier<ActivityStats> activityStats;
+    private final Supplier<String> rtpStatus;
+    /** The focused text field, if any; its edits are saved when focus leaves it. */
+    private String textField;
+    private Supplier<String> textGetter;
+    private Consumer<String> textSetter;
     private final List<Hit> hits = new ArrayList<>();
     private final Map<String, Double> animations = new HashMap<>();
     private float scale = 1;
@@ -68,10 +74,15 @@ public final class DonutScreen extends Screen {
     public DonutScreen(ClientConfig config, Runnable save) { this(config, save, () -> ActivityStats.EMPTY); }
 
     public DonutScreen(ClientConfig config, Runnable save, Supplier<ActivityStats> activityStats) {
+        this(config, save, activityStats, () -> "Idle");
+    }
+
+    public DonutScreen(ClientConfig config, Runnable save, Supplier<ActivityStats> activityStats, Supplier<String> rtpStatus) {
         super(Component.literal("Donut Client"));
         this.config = config;
         this.save = save;
         this.activityStats = activityStats;
+        this.rtpStatus = rtpStatus;
     }
 
     @Override
@@ -137,22 +148,26 @@ public final class DonutScreen extends Screen {
             sidebar(g, "Theme & HUD", 99, true, () -> { });
         } else {
             sidebar(g, "Overview", 99, selected == -1, () -> select(-1));
-            sidebar(g, "Storage", 134, selected == 0, () -> select(0));
-            sidebar(g, "Spawners", 169, selected == 1, () -> select(1));
-            sidebar(g, "Freecam", 204, selected == 2, () -> select(2));
-            sidebar(g, "Debris", 239, selected == 3, () -> select(3));
-            sidebar(g, "Activity", 274, selected == 4, () -> select(4));
-            if (config.storage.enabled) round(g, 117, 146, 4, 4, 2, alpha(config.accentColor, 1));
-            if (config.spawner.enabled) round(g, 117, 181, 4, 4, 2, alpha(config.accentColor, 1));
-            if (config.freecam.enabled) round(g, 117, 216, 4, 4, 2, alpha(config.accentColor, 1));
-            if (config.debris.enabled) round(g, 117, 251, 4, 4, 2, alpha(config.accentColor, 1));
-            if (config.activity.enabled) round(g, 117, 286, 4, 4, 2, alpha(config.accentColor, 1));
+            // Six modules fit above the footer text at 32-pixel spacing.
+            sidebar(g, "Storage", 131, selected == 0, () -> select(0));
+            sidebar(g, "Spawners", 163, selected == 1, () -> select(1));
+            sidebar(g, "Freecam", 195, selected == 2, () -> select(2));
+            sidebar(g, "Debris", 227, selected == 3, () -> select(3));
+            sidebar(g, "Activity", 259, selected == 4, () -> select(4));
+            sidebar(g, "Auto RTP", 291, selected == 5, () -> select(5));
+            if (config.storage.enabled) round(g, 117, 143, 4, 4, 2, alpha(config.accentColor, 1));
+            if (config.spawner.enabled) round(g, 117, 175, 4, 4, 2, alpha(config.accentColor, 1));
+            if (config.freecam.enabled) round(g, 117, 207, 4, 4, 2, alpha(config.accentColor, 1));
+            if (config.debris.enabled) round(g, 117, 239, 4, 4, 2, alpha(config.accentColor, 1));
+            if (config.activity.enabled) round(g, 117, 271, 4, 4, 2, alpha(config.accentColor, 1));
+            if (config.rtp.enabled) round(g, 117, 303, 4, 4, 2, alpha(config.accentColor, 1));
         }
         text(g, font, "DONUT CLIENT", 22, H - 81, DIM);
         text(g, font, "Fabric 1.21.11", 22, H - 65, MUTED);
         int enabled = (config.storage.enabled ? 1 : 0) + (config.spawner.enabled ? 1 : 0)
-                + (config.freecam.enabled ? 1 : 0) + (config.debris.enabled ? 1 : 0) + (config.activity.enabled ? 1 : 0);
-        text(g, font, enabled + " / 5 active", 22, H - 49, DIM);
+                + (config.freecam.enabled ? 1 : 0) + (config.debris.enabled ? 1 : 0) + (config.activity.enabled ? 1 : 0)
+                + (config.rtp.enabled ? 1 : 0);
+        text(g, font, enabled + " / 6 active", 22, H - 49, DIM);
     }
 
     private void nav(GuiGraphics g, String label, int x, int w, int target) {
@@ -195,7 +210,7 @@ public final class DonutScreen extends Screen {
         beginContent(g);
         int top = TOP + 8 - (int) scroll;
         int y = top;
-        for (int index = 0; index < 5; index++) {
+        for (int index = 0; index < 6; index++) {
             if (matches(index)) { moduleCard(g, index, y); y += 77; }
         }
         if (y == top) {
@@ -214,7 +229,8 @@ public final class DonutScreen extends Screen {
             case 1 -> "spawnerfinder spawners trial";
             case 2 -> "freecam free camera fly perspective spectator";
             case 3 -> "debrisfinder ancient debris netherite nether ores";
-            default -> "activityfinder activity base basefinder players amethyst geode crystals clusters";
+            case 4 -> "activityfinder activity base basefinder players amethyst geode crystals clusters";
+            default -> "autortp auto rtp random teleport wild activity base basefinder";
         };
         return words.contains(query.toLowerCase(Locale.ROOT).trim());
     }
@@ -231,22 +247,26 @@ public final class DonutScreen extends Screen {
         else if (index == 1) spawner(g, CX + 23, y + 23, TEXT);
         else if (index == 2) camera(g, CX + 23, y + 23, TEXT);
         else if (index == 3) debris(g, CX + 23, y + 23, TEXT);
-        else amethyst(g, CX + 23, y + 23, TEXT);
+        else if (index == 4) amethyst(g, CX + 23, y + 23, TEXT);
+        else rtp(g, CX + 23, y + 23, TEXT);
         strong(g, font, name(index), CX + 64, y + 16, TEXT);
         String description = switch (index) {
             case 0 -> "Chests, shulkers & droppers";
             case 1 -> "Monster & trial spawners";
             case 2 -> "Explore with a detached camera";
             case 3 -> "Ancient debris in loaded chunks";
-            default -> "Long-loaded chunks from amethyst growth";
+            case 4 -> "Long-loaded chunks from amethyst growth";
+            default -> "/rtp until ActivityFinder sees activity";
         };
         text(g, font, description, CX + 64, y + 34, MUTED);
-        text(g, font, index == 2 && !canUseFreecam() ? "Join a world to enable" : "Configure  >", CX + 64, y + 49, enabled ? 0xFFAFCAFF : DIM);
+        boolean needsWorld = (index == 2 || index == 5) && !canUseFreecam();
+        text(g, font, needsWorld ? "Join a world to enable" : "Configure  >", CX + 64, y + 49, enabled ? 0xFFAFCAFF : DIM);
         hit("module" + index, CX, y, CW - 94, 66, () -> select(index));
         keybindButton(g, index, 434, y + 43, 92, 19);
         star(g, CX + CW - 87, y + 25, favorite(index) ? 0xFFFFC66B : DIM);
         hit("favorite" + index, CX + CW - 95, y + 15, 30, 36, () -> change(() -> toggleFavorite(index)));
         if (index == 2) freecamToggle(g, "enable2", CX + CW - 51, y + 25);
+        else if (index == 5) rtpToggle(g, "enable5", CX + CW - 51, y + 25);
         else toggle(g, "enable" + index, CX + CW - 51, y + 25, enabled,
                 () -> change(() -> settings(index).enabled = !settings(index).enabled));
     }
@@ -254,15 +274,21 @@ public final class DonutScreen extends Screen {
     private FinderSettings settings(int index) {
         return switch (index) { case 0 -> config.storage; case 1 -> config.spawner; case 3 -> config.debris; default -> config.activity; };
     }
-    private boolean enabled(int index) { return index == 2 ? config.freecam.enabled : settings(index).enabled; }
-    private boolean favorite(int index) { return index == 2 ? config.freecam.favorite : settings(index).favorite; }
+    private boolean enabled(int index) {
+        return index == 2 ? config.freecam.enabled : index == 5 ? config.rtp.enabled : settings(index).enabled;
+    }
+    private boolean favorite(int index) {
+        return index == 2 ? config.freecam.favorite : index == 5 ? config.rtp.favorite : settings(index).favorite;
+    }
     private void toggleFavorite(int index) {
         if (index == 2) config.freecam.favorite = !config.freecam.favorite;
+        else if (index == 5) config.rtp.favorite = !config.rtp.favorite;
         else settings(index).favorite = !settings(index).favorite;
     }
     private String name(int index) {
         return switch (index) {
-            case 0 -> "StorageFinder"; case 1 -> "SpawnerFinder"; case 2 -> "Freecam"; case 3 -> "DebrisFinder"; default -> "ActivityFinder";
+            case 0 -> "StorageFinder"; case 1 -> "SpawnerFinder"; case 2 -> "Freecam"; case 3 -> "DebrisFinder";
+            case 4 -> "ActivityFinder"; default -> "AutoRTP";
         };
     }
 
@@ -279,8 +305,82 @@ public final class DonutScreen extends Screen {
         });
     }
 
+    /** Auto RTP sends commands, so like Freecam it can only start inside a world. */
+    private void rtpToggle(GuiGraphics g, String id, int x, int y) {
+        if (!config.rtp.enabled && !canUseFreecam()) {
+            round(g, x, y, 31, 17, 8, 0xFF262D39);
+            round(g, x + 3, y + 3, 11, 11, 5, DIM);
+            return;
+        }
+        toggle(g, id, x, y, config.rtp.enabled, () -> {
+            if (config.rtp.enabled || canUseFreecam()) config.rtp.enabled = !config.rtp.enabled;
+        });
+    }
+
+    private void drawRtpSettings(GuiGraphics g) {
+        var s = config.rtp;
+        strong(g, font, "AutoRTP", CX, 73, TEXT);
+        text(g, font, "Random-teleport until activity shows up.", CX, 91, MUTED);
+        keybindButton(g, 5, 386, 69, 111, 27);
+        String state = s.enabled ? "Running" : canUseFreecam() ? "Stopped" : "Join a world";
+        text(g, font, state, CX + CW - 111, 81, s.enabled ? 0xFF92BAFF : MUTED);
+        rtpToggle(g, "detailEnabled", CX + CW - 33, 78);
+        beginContent(g);
+        int y = TOP + 3 - (int) scroll;
+        round(g, CX, y, CW - 10, 68, 9, 0xFF161D2B);
+        round(g, CX + 18, y + 15, 37, 37, 9, alpha(config.accentColor, .2));
+        rtp(g, CX + 28, y + 25, alpha(config.accentColor, 1));
+        text(g, font, "STATUS", CX + 76, y + 15, DIM);
+        text(g, font, ellipsize(rtpStatus.get(), CW - 100), CX + 76, y + 32, TEXT);
+        text(g, font, "Stops once a chunk reaches " + Math.round(config.activity.minActivity * 100)
+                + "% growth in ActivityFinder.", CX + 76, y + 49, MUTED);
+        y += 84;
+        section(g, "COMMAND", y); y += 18;
+        textRow(g, "rtpCommand", "Command", "Sent without the slash", y, () -> s.command, v -> s.command = v); y += 43;
+        textRow(g, "rtpMenu", "Menu item", "Clicked when the command opens a menu", y, () -> s.menuItem, v -> s.menuItem = v); y += 51;
+        section(g, "TIMING", y); y += 18;
+        slider(g, "rtpInterval", "Time between attempts", y, () -> s.intervalSeconds, v -> s.intervalSeconds = v, 5, 600, 5, " s"); y += 47;
+        slider(g, "rtpScan", "Scan time after teleport", y, () -> s.scanSeconds, v -> s.scanSeconds = v, 2, 30, 1, " s"); y += 47;
+        slider(g, "rtpAttempts", "Maximum attempts", y, () -> s.maxAttempts, v -> s.maxAttempts = (int) Math.round(v), 1, 200, 1, ""); y += 51;
+        section(g, "SAFETY", y); y += 18;
+        settingToggle(g, "rtpHurt", "Stop when hurt", "Stop as soon as you lose health", y, () -> s.stopWhenHurt, () -> s.stopWhenHurt = !s.stopWhenHurt); y += 51;
+        text(g, font, "Waits longer whenever the server reports a cooldown.", CX + 3, y, MUTED); y += 17;
+        text(g, font, "Turns on ActivityFinder and uses its Minimum growth.", CX + 3, y, MUTED); y += 17;
+        text(g, font, "Check the server's rules before automating commands.", CX + 3, y, DIM); y += 25;
+        endContent(g, y);
+    }
+
+    private void textRow(GuiGraphics g, String id, String label, String description, int y,
+                         Supplier<String> getter, Consumer<String> setter) {
+        text(g, font, label, CX + 3, y + 3, TEXT);
+        text(g, font, description, CX + 3, y + 19, MUTED);
+        boolean focused = id.equals(textField);
+        int fx = CX + CW - 216, fw = 202;
+        round(g, fx, y + 2, fw, 27, 6, focused ? BORDER : CARD);
+        String value = getter.get();
+        String shown = value + (focused && System.currentTimeMillis() % 1000 < 500 ? "|" : "");
+        // Keep the end in view while typing.
+        while (!shown.isEmpty() && UiPaint.width(font, shown) > fw - 20) shown = removeFirstCharacter(shown);
+        text(g, font, shown, fx + 10, y + 12, focused ? TEXT : MUTED);
+        hit("text" + id, fx, y + 2, fw, 27, () -> {
+            textField = id;
+            textGetter = getter;
+            textSetter = setter;
+            keyboardFocus = null;
+        });
+    }
+
+    private void commitText() {
+        if (textField == null) return;
+        textField = null;
+        config.rtp.sanitize();
+        dirty = true;
+        flush();
+    }
+
     private void drawSettings(GuiGraphics g) {
         if (selected == 2) { drawFreecamSettings(g); return; }
+        if (selected == 5) { drawRtpSettings(g); return; }
         FinderSettings s = settings(selected);
         strong(g, font, name(selected), CX, 73, TEXT);
         text(g, font, "Fine-tune every highlight.", CX, 91, MUTED);
@@ -677,6 +777,7 @@ public final class DonutScreen extends Screen {
         double x = (event.x() - originX) / scale, y = (event.y() - originY) / scale;
         keyboardFocus = null;
         searchFocused = false;
+        commitText();
         if (colorEditor != null) colorEditor.hexFocused = false;
         for (int i = hits.size() - 1; i >= 0; i--) {
             Hit h = hits.get(i);
@@ -731,6 +832,7 @@ public final class DonutScreen extends Screen {
         if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
             if (colorEditor != null) closeColor();
             else if (searchFocused) { searchFocused = false; query = ""; }
+            else if (textField != null) commitText();
             else onClose();
             return true;
         }
@@ -761,6 +863,17 @@ public final class DonutScreen extends Screen {
             if (event.key() == GLFW.GLFW_KEY_BACKSPACE) { query = removeLastCharacter(query); return true; }
             if (event.key() == GLFW.GLFW_KEY_ENTER) { searchFocused = false; return true; }
             if (event.key() == GLFW.GLFW_KEY_A && (event.modifiers() & GLFW.GLFW_MOD_CONTROL) != 0) { query = ""; return true; }
+        }
+        if (textField != null) {
+            String value = textGetter.get();
+            if (event.key() == GLFW.GLFW_KEY_V && event.hasControlDown()) {
+                String pasted = minecraft.keyboardHandler.getClipboard().replaceAll("[\\p{Cntrl}]", "");
+                textSetter.accept((value + pasted).substring(0, Math.min(64, value.length() + pasted.length()))); return true;
+            }
+            if (event.key() == GLFW.GLFW_KEY_BACKSPACE) { textSetter.accept(removeLastCharacter(value)); return true; }
+            if (event.key() == GLFW.GLFW_KEY_ENTER) { commitText(); return true; }
+            if (event.key() == GLFW.GLFW_KEY_A && (event.modifiers() & GLFW.GLFW_MOD_CONTROL) != 0) { textSetter.accept(""); return true; }
+            if (event.key() == GLFW.GLFW_KEY_TAB) commitText();
         }
         if (event.key() == GLFW.GLFW_KEY_TAB && !hits.isEmpty()) {
             int index = -1;
@@ -817,6 +930,10 @@ public final class DonutScreen extends Screen {
             query += event.codepointAsString();
             return true;
         }
+        if (textField != null && event.isAllowedChatCharacter() && textGetter.get().length() < 64) {
+            textSetter.accept(textGetter.get() + event.codepointAsString());
+            return true;
+        }
         return false;
     }
 
@@ -830,6 +947,7 @@ public final class DonutScreen extends Screen {
 
     @Override
     public void removed() {
+        commitText();
         binding = -1;
         capturedKey = null;
         ModuleKeybinds.suppressUntilReleased(minecraft);

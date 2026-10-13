@@ -6,6 +6,7 @@ import dev.donut.client.config.ConfigStore;
 import dev.donut.client.freecam.FreecamController;
 import dev.donut.client.gui.DonutScreen;
 import dev.donut.client.input.ModuleKeybinds;
+import dev.donut.client.rtp.AutoRtpController;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Arrays;
@@ -22,22 +23,23 @@ import org.lwjgl.glfw.GLFW;
 /** Uses the production screen, saved options and keyboard event route in an isolated game-test world. */
 public final class ModuleKeybindGameTest implements FabricClientGameTest {
     private static final int[] TEST_KEYS = {GLFW.GLFW_KEY_F8, GLFW.GLFW_KEY_F9, GLFW.GLFW_KEY_F10, GLFW.GLFW_KEY_F7,
-            GLFW.GLFW_KEY_F12};
+            GLFW.GLFW_KEY_F12, GLFW.GLFW_KEY_F4};
     /** Modules whose overview card fits above the fold; the others are bound from their settings page. */
     private static final int OVERVIEW_CARDS = 3;
-    private static final int DEBRIS = 3, ACTIVITY = 4;
+    private static final int DEBRIS = 3, ACTIVITY = 4, AUTO_RTP = 5;
     /** Sidebar entry heights for the modules bound from their settings page. */
-    private static final int[] SIDEBAR_Y = {0, 0, 0, 253, 288};
+    private static final int[] SIDEBAR_Y = {0, 0, 0, 241, 273, 305};
 
     @Override
     public void runTest(ClientGameTestContext context) {
         ConfigStore store = new ConfigStore(FabricLoader.getInstance().getConfigDir().resolve("donut-client.json"));
         ClientConfig originalConfig = store.load();
         FreecamController freecam = FreecamController.getInstance();
+        AutoRtpController rtp = AutoRtpController.getInstance();
         String[] originalKeys = context.computeOnClient(client -> new String[] {
                 ModuleKeybinds.mapping(0).saveString(), ModuleKeybinds.mapping(1).saveString(),
                 ModuleKeybinds.mapping(2).saveString(), ModuleKeybinds.mapping(3).saveString(),
-                ModuleKeybinds.mapping(4).saveString()});
+                ModuleKeybinds.mapping(4).saveString(), ModuleKeybinds.mapping(5).saveString()});
         int originalGuiScale = context.computeOnClient(client -> client.options.guiScale().get());
         boolean originalHideGui = context.computeOnClient(client -> client.options.hideGui);
         KeyMapping openGui = context.computeOnClient(client -> Arrays.stream(client.options.keyMappings)
@@ -84,6 +86,7 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                                     && store.load().debris.enabled == originalConfig.debris.enabled
                                     && store.load().activity.enabled == originalConfig.activity.enabled,
                             "Assigning keys in the GUI must not toggle finder modules");
+                    context.runOnClient(client -> require(!rtp.isEnabled(), "Assigning the Auto RTP key must not start it"));
                     context.runOnClient(client -> require(!freecam.isActive(), "Assigning the Freecam key must not activate it"));
                     screenshot(context, "donut-keybind-01-assigned-normal");
 
@@ -192,6 +195,11 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                         context.getInput().pressKey(TEST_KEYS[module]);
                         require(finderEnabled(store.load(), module) == before, "A second press did not turn module " + module + " back");
                     }
+                    // Auto RTP sends an unknown command in this world; stopping it straight away is enough here.
+                    context.getInput().pressKey(TEST_KEYS[AUTO_RTP]);
+                    context.runOnClient(client -> require(rtp.isEnabled(), "The Auto RTP binding did not start it"));
+                    context.getInput().pressKey(TEST_KEYS[AUTO_RTP]);
+                    context.runOnClient(client -> require(!rtp.isEnabled() && !rtp.isActive(), "A second press did not stop Auto RTP"));
                     context.getInput().pressKey(TEST_KEYS[2]);
                     context.waitFor(client -> freecam.isActive());
 
@@ -230,6 +238,7 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     context.setScreen(() -> null);
                     context.runOnClient(client -> {
                         freecam.setEnabled(false);
+                        rtp.setEnabled(false);
                         for (int module = 0; module < TEST_KEYS.length; module++) {
                             ModuleKeybinds.setKey(client, module, InputConstants.Type.KEYSYM.getOrCreate(TEST_KEYS[module]));
                         }

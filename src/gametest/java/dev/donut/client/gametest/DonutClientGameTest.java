@@ -67,12 +67,12 @@ public final class DonutClientGameTest implements FabricClientGameTest {
                     "Module toggles did not update the supplied config"));
             require(saves.get() >= 2, "Changing module toggles must invoke the save callback");
             // The DebrisFinder card sits below the fold, so enable it from its own settings page.
-            clickPanel(context, 70, 253); // Debris sidebar entry.
+            clickPanel(context, 70, 241); // Debris sidebar entry.
             context.waitTick();
             clickPanel(context, 610, 86); // Header toggle.
             context.runOnClient(client -> require(config.debris.enabled, "Debris toggle did not update the supplied config"));
             screenshot(context, "donut-01-clickgui-debris-settings");
-            clickPanel(context, 70, 288); // Activity sidebar entry.
+            clickPanel(context, 70, 273); // Activity sidebar entry.
             clickPanel(context, 610, 86); // Header toggle.
             context.runOnClient(client -> require(config.activity.enabled, "Activity toggle did not update the supplied config"));
             screenshot(context, "donut-01-clickgui-activity-settings");
@@ -192,7 +192,7 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             context.setScreen(() -> new DonutScreen(config, saves::incrementAndGet, scanner::activityStats));
             context.waitForScreen(DonutScreen.class);
             context.waitTicks(2);
-            clickPanel(context, 70, 288); // Activity sidebar entry.
+            clickPanel(context, 70, 273); // Activity sidebar entry.
             context.runOnClient(client -> require(client.screen instanceof DonutScreen, "Donut screen closed"));
             context.getInput().pressKey(GLFW.GLFW_KEY_END);
             context.waitTicks(10);

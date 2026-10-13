@@ -7,6 +7,7 @@ public final class ClientConfig {
     public FinderSettings debris = debrisDefaults();
     public FinderSettings activity = activityDefaults();
     public FreecamSettings freecam = new FreecamSettings();
+    public RtpSettings rtp = new RtpSettings();
     public int accentColor = 0x4C86FF;
     public boolean showHud = true;
 
@@ -38,11 +39,13 @@ public final class ClientConfig {
         if (debris == null) debris = debrisDefaults();
         if (activity == null) activity = activityDefaults();
         if (freecam == null) freecam = new FreecamSettings();
+        if (rtp == null) rtp = new RtpSettings();
         storage.sanitize();
         spawner.sanitize();
         debris.sanitize();
         activity.sanitize();
         freecam.sanitize();
+        rtp.sanitize();
         accentColor &= 0xFFFFFF;
     }
 }

@@ -9,10 +9,12 @@ import dev.donut.client.gui.DonutScreen;
 import dev.donut.client.gui.ModuleArrayList;
 import dev.donut.client.input.ModuleKeybinds;
 import dev.donut.client.render.HighlightRenderer;
+import dev.donut.client.rtp.AutoRtpController;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
@@ -41,6 +43,8 @@ public final class DonutClient implements ClientModInitializer {
         ClientTickEvents.START_CLIENT_TICK.register(freecam::tick);
         HighlightRenderer renderer = new HighlightRenderer(config, scanner);
         renderer.register();
+        AutoRtpController rtp = new AutoRtpController(config, scanner, this::save);
+        ClientReceiveMessageEvents.GAME.register((message, overlay) -> rtp.onServerMessage(message.getString()));
 
         KeyMapping.Category category = KeyMapping.Category.register(Identifier.fromNamespaceAndPath(MOD_ID, "client"));
         KeyMapping open = bind("open_gui", GLFW.GLFW_KEY_RIGHT_SHIFT, category);
@@ -49,12 +53,13 @@ public final class DonutClient implements ClientModInitializer {
         KeyMapping camera = bind("toggle_freecam", GLFW.GLFW_KEY_F6, category);
         KeyMapping debris = bind("toggle_debris", InputConstants.UNKNOWN.getValue(), category);
         KeyMapping activity = bind("toggle_activity", InputConstants.UNKNOWN.getValue(), category);
-        ModuleKeybinds.initialize(storage, spawner, camera, debris, activity);
+        KeyMapping autoRtp = bind("toggle_auto_rtp", InputConstants.UNKNOWN.getValue(), category);
+        ModuleKeybinds.initialize(storage, spawner, camera, debris, activity, autoRtp);
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             boolean inputBlocked = ModuleKeybinds.inputBlocked(client);
             while (open.consumeClick()) {
-                if (!inputBlocked && client.screen == null) client.setScreen(new DonutScreen(config, this::save, scanner::activityStats));
+                if (!inputBlocked && client.screen == null) client.setScreen(new DonutScreen(config, this::save, scanner::activityStats, rtp::status));
             }
             if (ModuleKeybinds.consumePress(client, 0)) {
                 if (!inputBlocked && client.screen == null && client.player != null) { config.storage.enabled = !config.storage.enabled; save(); }
@@ -71,13 +76,17 @@ public final class DonutClient implements ClientModInitializer {
             if (ModuleKeybinds.consumePress(client, 4)) {
                 if (!inputBlocked && client.screen == null && client.player != null) { config.activity.enabled = !config.activity.enabled; save(); }
             }
+            if (ModuleKeybinds.consumePress(client, 5)) {
+                if (!inputBlocked && client.screen == null && client.player != null) rtp.setEnabled(!config.rtp.enabled);
+            }
             scanner.tick(client);
+            rtp.tick(client);
         });
 
         ScreenEvents.AFTER_INIT.register((client, screen, width, height) -> {
             if (screen instanceof TitleScreen) {
                 Screens.getButtons(screen).add(Button.builder(Component.literal("Donut"), button ->
-                        client.setScreen(new DonutScreen(config, this::save, scanner::activityStats)))
+                        client.setScreen(new DonutScreen(config, this::save, scanner::activityStats, rtp::status)))
                         .bounds(width - 66, height - 28, 58, 20).build());
             }
         });

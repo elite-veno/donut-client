@@ -5,5 +5,6 @@
   "key.donut.toggle_spawner": "Toggle SpawnerFinder",
   "key.donut.toggle_freecam": "Toggle Freecam",
   "key.donut.toggle_debris": "Toggle DebrisFinder",
-  "key.donut.toggle_activity": "Toggle ActivityFinder"
+  "key.donut.toggle_activity": "Toggle ActivityFinder",
+  "key.donut.toggle_auto_rtp": "Toggle AutoRTP"
 }

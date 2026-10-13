@@ -107,6 +107,13 @@ final class UiPaint {
         line(g, x + 2f, y + 15.5f, x + 15f, y + 15.5f, color);
     }
 
+    /** A compass needle in a ring, for random teleports. */
+    static void rtp(GuiGraphics g, int x, int y, int color) {
+        outline(g, x + 1, y + 1, 15, 15, 7, color);
+        line(g, x + 5f, y + 12f, x + 12f, y + 5f, color);
+        round(g, x + 11, y + 4, 3, 3, 1, color);
+    }
+
     static void camera(GuiGraphics g, int x, int y, int color) {
         outline(g, x, y + 4, 17, 11, 2, color);
         outline(g, x + 5, y + 6, 7, 7, 3, color);
