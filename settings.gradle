@@ -6,3 +6,5 @@ pluginManagement {
     }
 }
 rootProject.name = 'donut-client'
+// GoNuts, built from its own clone (branch local-hardening): dev.doughbay:trader-fabric resolves to that project.
+includeBuild('../Gonuts')
