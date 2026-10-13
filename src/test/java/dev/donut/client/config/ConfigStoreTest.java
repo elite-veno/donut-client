@@ -58,6 +58,9 @@ class ConfigStoreTest {
         config.debris.throughWalls = false;
         config.debris.range = 200;
         config.debris.color = 0x7A1FD0;
+        config.activity.enabled = true;
+        config.activity.minActivity = 0.72;
+        config.activity.color = 0x33AA55;
 
         store.save(config);
         ClientConfig loaded = new ConfigStore(path).load();
@@ -92,6 +95,9 @@ class ConfigStoreTest {
         assertFalse(loaded.debris.throughWalls);
         assertEquals(200, loaded.debris.range);
         assertEquals(0x7A1FD0, loaded.debris.color);
+        assertTrue(loaded.activity.enabled);
+        assertEquals(0.72, loaded.activity.minActivity);
+        assertEquals(0x33AA55, loaded.activity.color);
         assertFalse(Files.exists(path.resolveSibling("donut.json.tmp")));
         assertTrue(backups(path.getParent()).isEmpty());
     }
@@ -149,6 +155,9 @@ class ConfigStoreTest {
         assertEquals(0xFF779C, loaded.spawner.color);
         assertFalse(loaded.debris.enabled);
         assertEquals(0xA855F7, loaded.debris.color);
+        assertFalse(loaded.activity.enabled);
+        assertEquals(0xFFB347, loaded.activity.color);
+        assertEquals(0.5, loaded.activity.minActivity);
         assertTrue(backups(directory).isEmpty());
     }
 
@@ -235,5 +244,8 @@ class ConfigStoreTest {
         assertFalse(config.spawner.perTypeColors);
         assertEquals(0xA855F7, config.debris.color);
         assertFalse(config.debris.perTypeColors);
+        assertNotNull(config.activity);
+        assertFalse(config.activity.enabled);
+        assertEquals(0xFFB347, config.activity.color);
     }
 }

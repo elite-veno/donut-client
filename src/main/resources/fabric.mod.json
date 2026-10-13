@@ -3,7 +3,7 @@
   "id": "donut",
   "version": "${version}",
   "name": "Donut Client",
-  "description": "Customizable storage, spawner and ancient debris highlights with a client-only free camera.",
+  "description": "Customizable storage, spawner and ancient debris highlights, amethyst-based activity detection, and a client-only free camera.",
   "authors": ["Donut Client"],
   "license": "MIT",
   "environment": "client",

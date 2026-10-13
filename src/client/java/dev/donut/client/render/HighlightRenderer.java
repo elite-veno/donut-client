@@ -17,6 +17,7 @@ import com.mojang.blaze3d.vertex.VertexFormat;
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.config.FinderSettings;
 import dev.donut.client.config.RenderMode;
+import dev.donut.client.finder.ActivityArea;
 import dev.donut.client.finder.FinderScanner;
 import dev.donut.client.finder.FoundBlock;
 import dev.donut.client.finder.TargetKind;
@@ -106,7 +107,7 @@ public final class HighlightRenderer implements AutoCloseable {
 
     private void extract(WorldExtractionContext context) {
         FabricRenderState state = (FabricRenderState) context.worldState();
-        if (closed || (!config.storage.enabled && !config.spawner.enabled && !config.debris.enabled)) {
+        if (closed || (!config.storage.enabled && !config.spawner.enabled && !config.debris.enabled && !config.activity.enabled)) {
             state.setData(frame, List.of());
             return;
         }
@@ -136,7 +137,27 @@ public final class HighlightRenderer implements AutoCloseable {
             boxes.add(new DrawBox(bounds.move(-camera.x, -camera.y, -camera.z), fill, outline,
                     (float) Math.clamp(settings.lineWidth, 0.5, 8.0), settings.throughWalls));
         }
+        if (config.activity.enabled) addActivity(context, camera, boxes);
         state.setData(frame, List.copyOf(boxes));
+    }
+
+    private void addActivity(WorldExtractionContext context, Vec3 camera, List<DrawBox> boxes) {
+        FinderSettings settings = config.activity;
+        for (ActivityArea area : scanner.activity()) {
+            double distance = area.horizontalDistance(camera);
+            if (distance > settings.range || area.score() < settings.minActivity) continue;
+            AABB bounds = area.bounds().inflate(0.003);
+            if (!context.frustum().isVisible(bounds)) continue;
+            // Chunks just past the threshold stay faint; fully grown geodes draw at the configured opacity.
+            double headroom = 1.0 - settings.minActivity;
+            double emphasis = headroom <= 0 ? 1.0 : 0.35 + 0.65 * (area.score() - settings.minActivity) / headroom;
+            double strength = emphasis * (settings.distanceFade ? fade(distance, settings.range) : 1.0);
+            int fill = settings.mode != RenderMode.OUTLINE ? argb(settings.color, settings.fillOpacity * strength) : 0;
+            int outline = settings.mode != RenderMode.FILL ? argb(settings.color, settings.outlineOpacity * strength) : 0;
+            if ((fill >>> 24) == 0 && (outline >>> 24) == 0) continue;
+            boxes.add(new DrawBox(bounds.move(-camera.x, -camera.y, -camera.z), fill, outline,
+                    (float) Math.clamp(settings.lineWidth, 0.5, 8.0), settings.throughWalls));
+        }
     }
 
     private static int color(FinderSettings settings, TargetKind kind) {

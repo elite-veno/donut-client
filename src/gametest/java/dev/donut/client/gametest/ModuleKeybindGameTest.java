@@ -21,10 +21,13 @@ import org.lwjgl.glfw.GLFW;
 
 /** Uses the production screen, saved options and keyboard event route in an isolated game-test world. */
 public final class ModuleKeybindGameTest implements FabricClientGameTest {
-    private static final int[] TEST_KEYS = {GLFW.GLFW_KEY_F8, GLFW.GLFW_KEY_F9, GLFW.GLFW_KEY_F10, GLFW.GLFW_KEY_F7};
-    /** Modules whose overview card fits above the fold; DebrisFinder is bound from its settings page. */
+    private static final int[] TEST_KEYS = {GLFW.GLFW_KEY_F8, GLFW.GLFW_KEY_F9, GLFW.GLFW_KEY_F10, GLFW.GLFW_KEY_F7,
+            GLFW.GLFW_KEY_F12};
+    /** Modules whose overview card fits above the fold; the others are bound from their settings page. */
     private static final int OVERVIEW_CARDS = 3;
-    private static final int DEBRIS = 3;
+    private static final int DEBRIS = 3, ACTIVITY = 4;
+    /** Sidebar entry heights for the modules bound from their settings page. */
+    private static final int[] SIDEBAR_Y = {0, 0, 0, 253, 288};
 
     @Override
     public void runTest(ClientGameTestContext context) {
@@ -33,7 +36,8 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
         FreecamController freecam = FreecamController.getInstance();
         String[] originalKeys = context.computeOnClient(client -> new String[] {
                 ModuleKeybinds.mapping(0).saveString(), ModuleKeybinds.mapping(1).saveString(),
-                ModuleKeybinds.mapping(2).saveString(), ModuleKeybinds.mapping(3).saveString()});
+                ModuleKeybinds.mapping(2).saveString(), ModuleKeybinds.mapping(3).saveString(),
+                ModuleKeybinds.mapping(4).saveString()});
         int originalGuiScale = context.computeOnClient(client -> client.options.guiScale().get());
         boolean originalHideGui = context.computeOnClient(client -> client.options.hideGui);
         KeyMapping openGui = context.computeOnClient(client -> Arrays.stream(client.options.keyMappings)
@@ -68,14 +72,17 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                         context.getInput().pressKey(TEST_KEYS[module]);
                         assertKey(context, module, TEST_KEYS[module]);
                     }
-                    clickPanel(context, 70, 253); // Debris sidebar entry.
-                    clickPanel(context, 442, 82); // Settings-header binding.
-                    context.getInput().pressKey(TEST_KEYS[DEBRIS]);
-                    assertKey(context, DEBRIS, TEST_KEYS[DEBRIS]);
+                    for (int module = OVERVIEW_CARDS; module < TEST_KEYS.length; module++) {
+                        clickPanel(context, 70, SIDEBAR_Y[module]);
+                        clickPanel(context, 442, 82); // Settings-header binding.
+                        context.getInput().pressKey(TEST_KEYS[module]);
+                        assertKey(context, module, TEST_KEYS[module]);
+                    }
                     clickPanel(context, 70, 113); // Back to the overview.
                     require(store.load().storage.enabled == originalConfig.storage.enabled
                                     && store.load().spawner.enabled == originalConfig.spawner.enabled
-                                    && store.load().debris.enabled == originalConfig.debris.enabled,
+                                    && store.load().debris.enabled == originalConfig.debris.enabled
+                                    && store.load().activity.enabled == originalConfig.activity.enabled,
                             "Assigning keys in the GUI must not toggle finder modules");
                     context.runOnClient(client -> require(!freecam.isActive(), "Assigning the Freecam key must not activate it"));
                     screenshot(context, "donut-keybind-01-assigned-normal");
@@ -178,11 +185,13 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     boolean spawnerBefore = store.load().spawner.enabled;
                     context.getInput().pressKey(TEST_KEYS[1]);
                     require(store.load().spawner.enabled != spawnerBefore, "The spawner binding did not toggle its module");
-                    boolean debrisBefore = store.load().debris.enabled;
-                    context.getInput().pressKey(TEST_KEYS[DEBRIS]);
-                    require(store.load().debris.enabled != debrisBefore, "The debris binding did not toggle its module");
-                    context.getInput().pressKey(TEST_KEYS[DEBRIS]);
-                    require(store.load().debris.enabled == debrisBefore, "A second press did not turn debris back");
+                    for (int module : new int[] {DEBRIS, ACTIVITY}) {
+                        boolean before = finderEnabled(store.load(), module);
+                        context.getInput().pressKey(TEST_KEYS[module]);
+                        require(finderEnabled(store.load(), module) != before, "The binding of module " + module + " did not toggle it");
+                        context.getInput().pressKey(TEST_KEYS[module]);
+                        require(finderEnabled(store.load(), module) == before, "A second press did not turn module " + module + " back");
+                    }
                     context.getInput().pressKey(TEST_KEYS[2]);
                     context.waitFor(client -> freecam.isActive());
 
@@ -198,6 +207,7 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     setFinder(context, store, 0, true);
                     setFinder(context, store, 1, true);
                     setFinder(context, store, DEBRIS, true);
+                    setFinder(context, store, ACTIVITY, true);
                     screenshot(context, "donut-arraylist-01-active-scaled");
                     context.getInput().pressKey(GLFW.GLFW_KEY_F1);
                     context.runOnClient(client -> require(client.options.hideGui, "F1 did not hide the HUD"));
@@ -214,6 +224,7 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     setFinder(context, store, 0, false);
                     setFinder(context, store, 1, false);
                     setFinder(context, store, DEBRIS, false);
+                    setFinder(context, store, ACTIVITY, false);
                     screenshot(context, "donut-arraylist-04-disabled");
                 } finally {
                     context.setScreen(() -> null);
@@ -229,6 +240,7 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     setFinder(context, store, 0, originalConfig.storage.enabled);
                     setFinder(context, store, 1, originalConfig.spawner.enabled);
                     setFinder(context, store, DEBRIS, originalConfig.debris.enabled);
+                    setFinder(context, store, ACTIVITY, originalConfig.activity.enabled);
                     if (!originalConfig.showHud) {
                         openGui(context, openGui);
                         setHud(context, store, false);
@@ -267,6 +279,7 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
             case 0 -> config.storage.enabled;
             case 1 -> config.spawner.enabled;
             case DEBRIS -> config.debris.enabled;
+            case ACTIVITY -> config.activity.enabled;
             default -> throw new IllegalArgumentException("Not a finder module: " + module);
         };
     }

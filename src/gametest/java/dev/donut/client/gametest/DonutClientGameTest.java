@@ -2,6 +2,7 @@ package dev.donut.client.gametest;
 
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.config.RenderMode;
+import dev.donut.client.finder.ActivityArea;
 import dev.donut.client.finder.FinderScanner;
 import dev.donut.client.finder.FoundBlock;
 import dev.donut.client.finder.TargetKind;
@@ -20,6 +21,7 @@ import net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptio
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.input.MouseButtonInfo;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.ChunkPos;
 import org.lwjgl.glfw.GLFW;
 
 /** Exercises real GUI input, loaded block entities, and every overlay pipeline in a disposable flat world. */
@@ -32,6 +34,7 @@ public final class DonutClientGameTest implements FabricClientGameTest {
         config.storage.distanceFade = false;
         config.spawner.distanceFade = false;
         config.debris.distanceFade = false;
+        config.activity.distanceFade = false;
         FinderScanner scanner = new FinderScanner(config);
         AtomicBoolean active = new AtomicBoolean(true);
         AtomicInteger saves = new AtomicInteger();
@@ -69,6 +72,13 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             clickPanel(context, 610, 86); // Header toggle.
             context.runOnClient(client -> require(config.debris.enabled, "Debris toggle did not update the supplied config"));
             screenshot(context, "donut-01-clickgui-debris-settings");
+            clickPanel(context, 70, 288); // Activity sidebar entry.
+            clickPanel(context, 610, 86); // Header toggle.
+            context.runOnClient(client -> require(config.activity.enabled, "Activity toggle did not update the supplied config"));
+            screenshot(context, "donut-01-clickgui-activity-settings");
+            context.getInput().pressKey(GLFW.GLFW_KEY_END);
+            context.waitTicks(10);
+            screenshot(context, "donut-01-clickgui-activity-detection");
             clickPanel(context, 70, 113); // Back to the overview.
             context.waitTick();
             awaitKinds(context, scanner, ALL_KINDS);
@@ -138,12 +148,31 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             world.getServer().runCommand("setblock 8 65 0 minecraft:air");
             context.waitFor(client -> scanner.debrisCount() == 1, 15);
 
+            // A geode as worldgen leaves it stays unmarked; one with a cluster on every open face marks its chunk.
+            createGeode(world.getServer(), -9, -25, false);
+            createGeode(world.getServer(), 5, -25, true);
+            ChunkPos fresh = new ChunkPos(-1, -2), grown = new ChunkPos(0, -2);
+            context.runOnClient(client -> config.activity.minActivity = 0);
+            context.waitFor(client -> scanner.activity().size() == 2);
+            context.runOnClient(client -> {
+                for (ActivityArea area : scanner.activity()) {
+                    require(area.budding() == 8 && area.minY() == 59 && area.maxY() == 59, "Unexpected geode bounds: " + area);
+                    if (area.chunk().equals(fresh)) require(area.score() < 0.05, "A worldgen-like geode scored " + area.score());
+                    else require(area.chunk().equals(grown) && area.score() == 1, "A fully grown geode scored " + area);
+                }
+            });
+            context.runOnClient(client -> config.activity.minActivity = 0.5);
+            context.waitFor(client -> scanner.activity().size() == 1 && scanner.activity().getFirst().chunk().equals(grown));
+            context.waitTicks(2);
+            screenshot(context, "donut-06-activity-chunk");
+
             context.runOnClient(client -> {
                 config.storage.enabled = false;
                 config.spawner.enabled = false;
                 config.debris.enabled = false;
+                config.activity.enabled = false;
             });
-            context.waitFor(client -> scanner.snapshot().isEmpty());
+            context.waitFor(client -> scanner.snapshot().isEmpty() && scanner.activity().isEmpty());
         } finally {
             active.set(false);
             context.runOnClient(client -> {
@@ -166,6 +195,19 @@ public final class DonutClientGameTest implements FabricClientGameTest {
         server.runCommand("setblock 6 65 0 minecraft:trial_spawner");
         server.runCommand("setblock 8 65 0 minecraft:ancient_debris");
         server.runCommand("tp @a 0.5 65 12.5 180 12");
+    }
+
+    /** Eight budding blocks in calcite, each with one open face upward. */
+    private static void createGeode(TestServerContext server, int x, int z, boolean grown) {
+        server.runCommand("fill %d 58 %d %d 60 %d minecraft:calcite".formatted(x - 1, z - 1, x + 4, z + 2));
+        server.runCommand("fill %d 59 %d %d 59 %d minecraft:budding_amethyst".formatted(x, z, x + 3, z + 1));
+        server.runCommand("fill %d 60 %d %d 60 %d minecraft:%s".formatted(x, z, x + 3, z + 1,
+                grown ? "amethyst_cluster[facing=up]" : "air"));
+        if (grown) return;
+        // Worldgen gives about a third of budding blocks one bud of any size.
+        server.runCommand("setblock %d 60 %d minecraft:small_amethyst_bud[facing=up]".formatted(x, z));
+        server.runCommand("setblock %d 60 %d minecraft:medium_amethyst_bud[facing=up]".formatted(x + 1, z));
+        server.runCommand("setblock %d 60 %d minecraft:amethyst_cluster[facing=up]".formatted(x + 2, z + 1));
     }
 
     private static void awaitKinds(ClientGameTestContext context, FinderScanner scanner, EnumSet<TargetKind> expected) {

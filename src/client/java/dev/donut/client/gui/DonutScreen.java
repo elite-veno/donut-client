@@ -134,16 +134,18 @@ public final class DonutScreen extends Screen {
             sidebar(g, "Spawners", 169, selected == 1, () -> select(1));
             sidebar(g, "Freecam", 204, selected == 2, () -> select(2));
             sidebar(g, "Debris", 239, selected == 3, () -> select(3));
+            sidebar(g, "Activity", 274, selected == 4, () -> select(4));
             if (config.storage.enabled) round(g, 117, 146, 4, 4, 2, alpha(config.accentColor, 1));
             if (config.spawner.enabled) round(g, 117, 181, 4, 4, 2, alpha(config.accentColor, 1));
             if (config.freecam.enabled) round(g, 117, 216, 4, 4, 2, alpha(config.accentColor, 1));
             if (config.debris.enabled) round(g, 117, 251, 4, 4, 2, alpha(config.accentColor, 1));
+            if (config.activity.enabled) round(g, 117, 286, 4, 4, 2, alpha(config.accentColor, 1));
         }
         text(g, font, "DONUT CLIENT", 22, H - 81, DIM);
         text(g, font, "Fabric 1.21.11", 22, H - 65, MUTED);
         int enabled = (config.storage.enabled ? 1 : 0) + (config.spawner.enabled ? 1 : 0)
-                + (config.freecam.enabled ? 1 : 0) + (config.debris.enabled ? 1 : 0);
-        text(g, font, enabled + " / 4 active", 22, H - 49, DIM);
+                + (config.freecam.enabled ? 1 : 0) + (config.debris.enabled ? 1 : 0) + (config.activity.enabled ? 1 : 0);
+        text(g, font, enabled + " / 5 active", 22, H - 49, DIM);
     }
 
     private void nav(GuiGraphics g, String label, int x, int w, int target) {
@@ -182,17 +184,17 @@ public final class DonutScreen extends Screen {
         text(g, font, shown, 450, 79, query.isEmpty() ? DIM : TEXT);
         hit("search", 421, 69, 207, 29, () -> searchFocused = true);
 
-        // Four cards no longer fit, so the list scrolls; full-width cards keep the bar in the margin.
+        // Not every card fits, so the list scrolls; full-width cards keep the bar in the margin.
         beginContent(g);
         int top = TOP + 8 - (int) scroll;
         int y = top;
-        for (int index = 0; index < 4; index++) {
+        for (int index = 0; index < 5; index++) {
             if (matches(index)) { moduleCard(g, index, y); y += 77; }
         }
         if (y == top) {
             round(g, CX, y, CW, 125, 10, 0xFF161B24);
             text(g, font, query.isEmpty() ? "Keep your essentials close." : "No matching modules", CX + 22, y + 34, TEXT);
-            text(g, font, query.isEmpty() ? "Click a star on a module to add it here." : "Try storage, spawner, debris or freecam.", CX + 22, y + 57, MUTED);
+            text(g, font, query.isEmpty() ? "Click a star on a module to add it here." : "Try storage, debris, amethyst or freecam.", CX + 22, y + 57, MUTED);
             y += 136;
         }
         endContent(g, y, CX + CW + 5);
@@ -204,7 +206,8 @@ public final class DonutScreen extends Screen {
             case 0 -> "storagefinder chests trapped ender shulker droppers";
             case 1 -> "spawnerfinder spawners trial";
             case 2 -> "freecam free camera fly perspective spectator";
-            default -> "debrisfinder ancient debris netherite nether ores";
+            case 3 -> "debrisfinder ancient debris netherite nether ores";
+            default -> "activityfinder activity base basefinder players amethyst geode crystals clusters";
         };
         return words.contains(query.toLowerCase(Locale.ROOT).trim());
     }
@@ -220,13 +223,15 @@ public final class DonutScreen extends Screen {
         if (index == 0) chest(g, CX + 23, y + 23, TEXT);
         else if (index == 1) spawner(g, CX + 23, y + 23, TEXT);
         else if (index == 2) camera(g, CX + 23, y + 23, TEXT);
-        else debris(g, CX + 23, y + 23, TEXT);
+        else if (index == 3) debris(g, CX + 23, y + 23, TEXT);
+        else amethyst(g, CX + 23, y + 23, TEXT);
         strong(g, font, name(index), CX + 64, y + 16, TEXT);
         String description = switch (index) {
             case 0 -> "Chests, shulkers & droppers";
             case 1 -> "Monster & trial spawners";
             case 2 -> "Explore with a detached camera";
-            default -> "Ancient debris in loaded chunks";
+            case 3 -> "Ancient debris in loaded chunks";
+            default -> "Long-loaded chunks from amethyst growth";
         };
         text(g, font, description, CX + 64, y + 34, MUTED);
         text(g, font, index == 2 && !canUseFreecam() ? "Join a world to enable" : "Configure  >", CX + 64, y + 49, enabled ? 0xFFAFCAFF : DIM);
@@ -239,7 +244,9 @@ public final class DonutScreen extends Screen {
                 () -> change(() -> settings(index).enabled = !settings(index).enabled));
     }
 
-    private FinderSettings settings(int index) { return index == 0 ? config.storage : index == 1 ? config.spawner : config.debris; }
+    private FinderSettings settings(int index) {
+        return switch (index) { case 0 -> config.storage; case 1 -> config.spawner; case 3 -> config.debris; default -> config.activity; };
+    }
     private boolean enabled(int index) { return index == 2 ? config.freecam.enabled : settings(index).enabled; }
     private boolean favorite(int index) { return index == 2 ? config.freecam.favorite : settings(index).favorite; }
     private void toggleFavorite(int index) {
@@ -247,7 +254,9 @@ public final class DonutScreen extends Screen {
         else settings(index).favorite = !settings(index).favorite;
     }
     private String name(int index) {
-        return switch (index) { case 0 -> "StorageFinder"; case 1 -> "SpawnerFinder"; case 2 -> "Freecam"; default -> "DebrisFinder"; };
+        return switch (index) {
+            case 0 -> "StorageFinder"; case 1 -> "SpawnerFinder"; case 2 -> "Freecam"; case 3 -> "DebrisFinder"; default -> "ActivityFinder";
+        };
     }
 
     private boolean canUseFreecam() { return minecraft.level != null && minecraft.player != null; }
@@ -300,7 +309,7 @@ public final class DonutScreen extends Screen {
             }
         }
         y += 9;
-        section(g, selected == 3 ? "DETECTION" : "BLOCK FILTERS", y); y += 18;
+        section(g, selected >= 3 ? "DETECTION" : "BLOCK FILTERS", y); y += 18;
         if (selected == 0) {
             settingToggle(g, "chests", "Chests", "Standard and double chests", y, () -> s.chests, () -> s.chests = !s.chests); y += 43;
             settingToggle(g, "trapped", "Trapped chests", "Redstone-triggering chests", y, () -> s.trappedChests, () -> s.trappedChests = !s.trappedChests); y += 43;
@@ -310,9 +319,14 @@ public final class DonutScreen extends Screen {
         } else if (selected == 1) {
             text(g, font, "Monster spawners are always included.", CX + 3, y + 8, MUTED); y += 31;
             settingToggle(g, "trial", "Trial spawners", "Include trial chamber spawners", y, () -> s.trialSpawners, () -> s.trialSpawners = !s.trialSpawners); y += 43;
-        } else {
+        } else if (selected == 3) {
             text(g, font, "Searches loaded chunk sections for ancient debris.", CX + 3, y + 8, MUTED); y += 23;
             text(g, font, "Anti-xray servers can hide or fake debris until it is exposed.", CX + 3, y + 8, MUTED); y += 31;
+        } else {
+            slider(g, "minActivity", "Minimum growth", y, () -> s.minActivity, v -> s.minActivity = v, 0, 1, .01, "%"); y += 47;
+            text(g, font, "Amethyst only grows while a player is within simulation distance.", CX + 3, y + 2, MUTED); y += 17;
+            text(g, font, "Worldgen buds score near 0%. 50% is roughly an hour of nearby activity.", CX + 3, y + 2, MUTED); y += 17;
+            text(g, font, "Squares mark the geode's chunk; the player was within a few chunks.", CX + 3, y + 2, MUTED); y += 25;
         }
         y += 12;
         text(g, font, "Only blocks in loaded chunks can be highlighted.", CX + 3, y, DIM); y += 23;

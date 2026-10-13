@@ -17,6 +17,8 @@ class FinderSettingsTest {
         high.outlineOpacity = 2;
         high.fillOpacity = 2;
         high.lineWidth = 20;
+        low.minActivity = -0.5;
+        high.minActivity = 1.5;
 
         low.sanitize();
         high.sanitize();
@@ -29,6 +31,8 @@ class FinderSettingsTest {
         assertEquals(1, high.outlineOpacity);
         assertEquals(1, high.fillOpacity);
         assertEquals(5, high.lineWidth);
+        assertEquals(0, low.minActivity);
+        assertEquals(1, high.minActivity);
     }
 
     @Test
@@ -39,6 +43,7 @@ class FinderSettingsTest {
             settings.outlineOpacity = badValue;
             settings.fillOpacity = badValue;
             settings.lineWidth = badValue;
+            settings.minActivity = badValue;
 
             settings.sanitize();
 
@@ -46,6 +51,7 @@ class FinderSettingsTest {
             assertEquals(0.9, settings.outlineOpacity, "outline opacity: " + badValue);
             assertEquals(0.16, settings.fillOpacity, "fill opacity: " + badValue);
             assertEquals(1.5, settings.lineWidth, "line width: " + badValue);
+            assertEquals(0.5, settings.minActivity, "minimum activity: " + badValue);
         }
     }
 
@@ -81,6 +87,7 @@ class FinderSettingsTest {
         config.storage = null;
         config.spawner = null;
         config.debris = null;
+        config.activity = null;
         config.accentColor = 0xAB27ADC9;
 
         config.sanitize();
@@ -90,14 +97,18 @@ class FinderSettingsTest {
         assertNotNull(config.debris);
         assertNotSame(config.storage, config.spawner);
         assertNotSame(config.spawner, config.debris);
+        assertNotSame(config.debris, config.activity);
         assertFalse(config.storage.enabled);
         assertFalse(config.spawner.enabled);
         assertFalse(config.debris.enabled);
+        assertFalse(config.activity.enabled);
         assertTrue(config.storage.perTypeColors);
         assertFalse(config.spawner.perTypeColors);
         assertEquals(0x4C86FF, config.storage.color);
         assertEquals(0xFF779C, config.spawner.color);
         assertEquals(0xA855F7, config.debris.color);
+        assertEquals(0xFFB347, config.activity.color);
+        assertEquals(0.5, config.activity.minActivity);
         assertEquals(0x27ADC9, config.accentColor);
     }
 }

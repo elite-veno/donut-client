@@ -16,6 +16,8 @@ public final class FinderSettings {
     public boolean shulkers = true;
     public boolean droppers = true;
     public boolean trialSpawners = true;
+    /** ActivityFinder only: the amethyst growth a chunk needs before it is highlighted. */
+    public double minActivity = 0.5;
     public boolean perTypeColors = true;
     public int color = 0x4C86FF;
     public int chestColor = 0xFFC66B;
@@ -28,6 +30,7 @@ public final class FinderSettings {
         outlineOpacity = clamp(outlineOpacity, 0, 1, 0.9);
         fillOpacity = clamp(fillOpacity, 0, 1, 0.16);
         lineWidth = clamp(lineWidth, 0.5, 5, 1.5);
+        minActivity = clamp(minActivity, 0, 1, 0.5);
         color &= 0xFFFFFF;
         chestColor &= 0xFFFFFF;
         shulkerColor &= 0xFFFFFF;

@@ -11,18 +11,20 @@ import java.util.Set;
 
 /** The click GUI edits the same mappings exposed in Minecraft's Controls screen. */
 public final class ModuleKeybinds {
-    private static final KeyMapping[] MODULES = new KeyMapping[4];
-    private static final boolean[] pressed = new boolean[4];
+    private static final KeyMapping[] MODULES = new KeyMapping[5];
+    private static final boolean[] pressed = new boolean[5];
     private static final Set<InputConstants.Key> heldInputs = new HashSet<>();
     private static boolean discardNextTick;
 
     private ModuleKeybinds() { }
 
-    public static void initialize(KeyMapping storage, KeyMapping spawner, KeyMapping freecam, KeyMapping debris) {
+    public static void initialize(KeyMapping storage, KeyMapping spawner, KeyMapping freecam, KeyMapping debris,
+                                  KeyMapping activity) {
         MODULES[0] = storage;
         MODULES[1] = spawner;
         MODULES[2] = freecam;
         MODULES[3] = debris;
+        MODULES[4] = activity;
         Arrays.fill(pressed, false);
         heldInputs.clear();
         discardNextTick = false;

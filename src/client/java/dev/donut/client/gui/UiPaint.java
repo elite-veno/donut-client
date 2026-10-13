@@ -99,6 +99,14 @@ final class UiPaint {
         round(g, x + 7, y + 7, 3, 3, 1, color);
     }
 
+    /** A cluster of three amethyst crystals. */
+    static void amethyst(GuiGraphics g, int x, int y, int color) {
+        line(g, x + 8.5f, y + 1f, x + 8.5f, y + 15f, color);
+        line(g, x + 3f, y + 6f, x + 7f, y + 15f, color);
+        line(g, x + 14f, y + 6f, x + 10f, y + 15f, color);
+        line(g, x + 2f, y + 15.5f, x + 15f, y + 15.5f, color);
+    }
+
     static void camera(GuiGraphics g, int x, int y, int color) {
         outline(g, x, y + 4, 17, 11, 2, color);
         outline(g, x + 5, y + 6, 7, 7, 3, color);

@@ -15,7 +15,9 @@ public final class FinderScanner {
     public static final int MAX_TARGETS = 4096;
     private final ClientConfig config;
     private final DebrisIndex debris = new DebrisIndex();
+    private final ActivityIndex activity = new ActivityIndex();
     private List<FoundBlock> targets = List.of();
+    private List<ActivityArea> areas = List.of();
     private ClientLevel lastLevel;
     private int ticks;
 
@@ -24,12 +26,16 @@ public final class FinderScanner {
     public long storageCount() { return targets.stream().filter(t -> t.kind().isStorage()).count(); }
     public long spawnerCount() { return targets.stream().filter(t -> t.kind().isSpawner()).count(); }
     public long debrisCount() { return targets.stream().filter(t -> t.kind().isDebris()).count(); }
+    /** Chunks whose amethyst growth reaches the ActivityFinder threshold, nearest first. */
+    public List<ActivityArea> activity() { return areas; }
 
     public void clear() {
         targets = List.of();
+        areas = List.of();
         lastLevel = null;
         ticks = 0;
         debris.clear();
+        activity.clear();
     }
 
     public void tick(Minecraft client) {
@@ -38,10 +44,17 @@ public final class FinderScanner {
             clear();
             lastLevel = client.level;
         }
-        // The debris index spreads its block scans over every tick, so it runs before the cadence check.
+        // The chunk indexes spread their block scans over every tick, so they run before the cadence check.
         if (config.debris.enabled) debris.tick(client.level, client.player.chunkPosition(), config.debris.range);
         else debris.clear();
-        if (!config.storage.enabled && !config.spawner.enabled && !config.debris.enabled) { targets = List.of(); ticks = 0; return; }
+        if (config.activity.enabled) activity.tick(client.level, client.player.chunkPosition(), config.activity.range);
+        else activity.clear();
+        if (!config.storage.enabled && !config.spawner.enabled && !config.debris.enabled && !config.activity.enabled) {
+            targets = List.of();
+            areas = List.of();
+            ticks = 0;
+            return;
+        }
         if (ticks++ % 10 != 0) return;
         var origin = client.player.position();
         List<FoundBlock> found = new ArrayList<>();
@@ -49,6 +62,11 @@ public final class FinderScanner {
         if (config.debris.enabled) debris.collect(client.level, origin, config.debris.range, found);
         found.sort(Comparator.comparingDouble(target -> target.pos().distToCenterSqr(origin)));
         targets = List.copyOf(found.subList(0, Math.min(found.size(), MAX_TARGETS)));
+
+        List<ActivityArea> grown = new ArrayList<>();
+        if (config.activity.enabled) activity.collect(origin, config.activity.range, config.activity.minActivity, grown);
+        grown.sort(Comparator.comparingDouble(area -> area.horizontalDistance(origin)));
+        areas = List.copyOf(grown);
     }
 
     private void collectBlockEntities(Minecraft client, Vec3 origin, List<FoundBlock> found) {
