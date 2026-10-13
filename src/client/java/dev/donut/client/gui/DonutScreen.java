@@ -4,6 +4,8 @@ import com.mojang.blaze3d.platform.InputConstants;
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.config.FinderSettings;
 import dev.donut.client.config.RenderMode;
+import dev.donut.client.finder.ActivityArea;
+import dev.donut.client.finder.ActivityStats;
 import dev.donut.client.input.ModuleKeybinds;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.gui.GuiGraphics;
@@ -24,6 +26,7 @@ import java.util.function.DoubleConsumer;
 import java.util.function.DoubleSupplier;
 import java.util.function.IntConsumer;
 import java.util.function.IntSupplier;
+import java.util.function.Supplier;
 
 import static dev.donut.client.gui.UiPaint.*;
 
@@ -38,6 +41,7 @@ public final class DonutScreen extends Screen {
 
     private final ClientConfig config;
     private final Runnable save;
+    private final Supplier<ActivityStats> activityStats;
     private final List<Hit> hits = new ArrayList<>();
     private final Map<String, Double> animations = new HashMap<>();
     private float scale = 1;
@@ -61,10 +65,13 @@ public final class DonutScreen extends Screen {
     private int hoveredBinding = -1;
     private InputConstants.Key capturedKey;
 
-    public DonutScreen(ClientConfig config, Runnable save) {
+    public DonutScreen(ClientConfig config, Runnable save) { this(config, save, () -> ActivityStats.EMPTY); }
+
+    public DonutScreen(ClientConfig config, Runnable save, Supplier<ActivityStats> activityStats) {
         super(Component.literal("Donut Client"));
         this.config = config;
         this.save = save;
+        this.activityStats = activityStats;
     }
 
     @Override
@@ -337,10 +344,34 @@ public final class DonutScreen extends Screen {
             text(g, font, "Amethyst only grows while a player is within simulation distance.", CX + 3, y + 2, MUTED); y += 17;
             text(g, font, "Worldgen buds score near 0%. 50% is roughly an hour of nearby activity.", CX + 3, y + 2, MUTED); y += 17;
             text(g, font, "Squares mark the geode's chunk; the player was within a few chunks.", CX + 3, y + 2, MUTED); y += 25;
+            y = drawActivityScan(g, s, y);
         }
         y += 12;
         text(g, font, "Only blocks in loaded chunks can be highlighted.", CX + 3, y, DIM); y += 23;
         endContent(g, y);
+    }
+
+    /** Live counts, including chunks below the threshold, so an empty world view can be explained. */
+    private int drawActivityScan(GuiGraphics g, FinderSettings s, int y) {
+        section(g, "LIVE SCAN", y); y += 19;
+        ActivityStats stats = activityStats.get();
+        if (!s.enabled) {
+            text(g, font, "Enable ActivityFinder to scan loaded chunks.", CX + 3, y, MUTED); return y + 25;
+        }
+        controlHint(g, "Chunks scanned", Integer.toString(stats.scannedChunks()), y); y += 19;
+        controlHint(g, "With budding amethyst", stats.amethystChunks() + " chunks, " + stats.budding() + " blocks", y); y += 19;
+        ActivityArea best = stats.best();
+        controlHint(g, "Highest growth", best == null ? "None" : Math.round(best.score() * 100) + "% at x "
+                + (best.chunk().getMinBlockX() + 8) + ", z " + (best.chunk().getMinBlockZ() + 8), y); y += 23;
+        if (!stats.overworld()) {
+            text(g, font, "Amethyst geodes only generate in the Overworld.", CX + 3, y, 0xFFFFC66B); y += 23;
+        } else if (stats.scannedChunks() >= 100 && stats.amethystChunks() == 0) {
+            text(g, font, "No budding amethyst in any loaded chunk. Geodes are common,", CX + 3, y, 0xFFFFC66B); y += 15;
+            text(g, font, "so this server may hide amethyst from clients (anti-xray).", CX + 3, y, 0xFFFFC66B); y += 23;
+        } else if (best != null && best.score() < s.minActivity) {
+            text(g, font, "Nothing reaches Minimum growth; lower it to see weaker chunks.", CX + 3, y, MUTED); y += 23;
+        }
+        return y;
     }
 
     private void drawFreecamSettings(GuiGraphics g) {

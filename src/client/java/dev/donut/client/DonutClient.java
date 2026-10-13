@@ -54,7 +54,7 @@ public final class DonutClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             boolean inputBlocked = ModuleKeybinds.inputBlocked(client);
             while (open.consumeClick()) {
-                if (!inputBlocked && client.screen == null) client.setScreen(new DonutScreen(config, this::save));
+                if (!inputBlocked && client.screen == null) client.setScreen(new DonutScreen(config, this::save, scanner::activityStats));
             }
             if (ModuleKeybinds.consumePress(client, 0)) {
                 if (!inputBlocked && client.screen == null && client.player != null) { config.storage.enabled = !config.storage.enabled; save(); }
@@ -77,7 +77,7 @@ public final class DonutClient implements ClientModInitializer {
         ScreenEvents.AFTER_INIT.register((client, screen, width, height) -> {
             if (screen instanceof TitleScreen) {
                 Screens.getButtons(screen).add(Button.builder(Component.literal("Donut"), button ->
-                        client.setScreen(new DonutScreen(config, this::save)))
+                        client.setScreen(new DonutScreen(config, this::save, scanner::activityStats)))
                         .bounds(width - 66, height - 28, 58, 20).build());
             }
         });

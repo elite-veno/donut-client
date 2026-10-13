@@ -58,7 +58,7 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             screenshot(context, "donut-00-fixtures-disabled");
 
             // Use the production screen and mouse event path; all changes stay in the test's config.
-            context.setScreen(() -> new DonutScreen(config, saves::incrementAndGet));
+            context.setScreen(() -> new DonutScreen(config, saves::incrementAndGet, scanner::activityStats));
             context.waitForScreen(DonutScreen.class);
             context.waitTicks(2);
             clickPanel(context, 592, 152); // StorageFinder toggle.
@@ -182,6 +182,22 @@ public final class DonutClientGameTest implements FabricClientGameTest {
                     && scanner.activity().stream().anyMatch(area -> area.chunk().equals(distant)));
             context.runOnClient(client -> require(scanner.activityRange() > 150,
                     "All loaded chunks should cover the render distance, not " + scanner.activityRange()));
+            context.waitFor(client -> scanner.activityStats().amethystChunks() == 3);
+            context.runOnClient(client -> {
+                var stats = scanner.activityStats();
+                require(stats.overworld() && stats.budding() == 24 && stats.scannedChunks() > 50
+                        && stats.best() != null && stats.best().score() == 1, "Unexpected live scan: " + stats);
+            });
+            // The live scan on the settings page explains what the world view shows.
+            context.setScreen(() -> new DonutScreen(config, saves::incrementAndGet, scanner::activityStats));
+            context.waitForScreen(DonutScreen.class);
+            context.waitTicks(2);
+            clickPanel(context, 70, 288); // Activity sidebar entry.
+            context.runOnClient(client -> require(client.screen instanceof DonutScreen, "Donut screen closed"));
+            context.getInput().pressKey(GLFW.GLFW_KEY_END);
+            context.waitTicks(10);
+            screenshot(context, "donut-07-activity-live-scan");
+            context.setScreen(() -> null);
             screenshot(context, "donut-07-activity-all-loaded");
             context.runOnClient(client -> config.activity.allLoadedChunks = false);
             context.waitFor(client -> scanner.activity().size() == 1 && scanner.activity().getFirst().chunk().equals(grown));

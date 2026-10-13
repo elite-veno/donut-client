@@ -34,6 +34,17 @@ final class ActivityIndex {
         });
     }
 
+    ActivityStats stats(boolean overworld) {
+        int[] amethyst = new int[2];
+        ActivityArea[] best = new ActivityArea[1];
+        chunks.forEach(area -> {
+            amethyst[0]++;
+            amethyst[1] += area.budding();
+            if (best[0] == null || area.score() > best[0].score()) best[0] = area;
+        });
+        return new ActivityStats(overworld, chunks.size(), amethyst[0], amethyst[1], best[0]);
+    }
+
     private static ActivityArea scan(LevelChunk chunk) {
         Level level = chunk.getLevel();
         LevelChunkSection[] sections = chunk.getSections();

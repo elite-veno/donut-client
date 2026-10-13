@@ -50,6 +50,9 @@ final class ChunkIndex<T> {
         if (tick % 20 == 0) prune(level, center, range);
     }
 
+    /** Indexed chunks, with or without a result. */
+    int size() { return scans.size(); }
+
     void forEach(Consumer<T> action) {
         for (Scan<T> scan : scans.values()) {
             if (scan.result != null) action.accept(scan.result);

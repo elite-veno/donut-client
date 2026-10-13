@@ -7,6 +7,7 @@ import java.util.Comparator;
 import java.util.List;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.phys.Vec3;
 
@@ -19,6 +20,7 @@ public final class FinderScanner {
     private List<FoundBlock> targets = List.of();
     private List<ActivityArea> areas = List.of();
     private double activityRange;
+    private ActivityStats activityStats = ActivityStats.EMPTY;
     private ClientLevel lastLevel;
     private int ticks;
 
@@ -31,10 +33,12 @@ public final class FinderScanner {
     public List<ActivityArea> activity() { return areas; }
     /** The horizontal reach ActivityFinder used for its last scan, in blocks. */
     public double activityRange() { return activityRange; }
+    public ActivityStats activityStats() { return activityStats; }
 
     public void clear() {
         targets = List.of();
         areas = List.of();
+        activityStats = ActivityStats.EMPTY;
         lastLevel = null;
         ticks = 0;
         debris.clear();
@@ -56,6 +60,7 @@ public final class FinderScanner {
         if (!config.storage.enabled && !config.spawner.enabled && !config.debris.enabled && !config.activity.enabled) {
             targets = List.of();
             areas = List.of();
+            activityStats = ActivityStats.EMPTY;
             ticks = 0;
             return;
         }
@@ -71,6 +76,8 @@ public final class FinderScanner {
         if (config.activity.enabled) activity.collect(origin, activityRange, config.activity.minActivity, grown);
         grown.sort(Comparator.comparingDouble(area -> area.horizontalDistance(origin)));
         areas = List.copyOf(grown);
+        activityStats = config.activity.enabled
+                ? activity.stats(client.level.dimension() == Level.OVERWORLD) : ActivityStats.EMPTY;
     }
 
     /** Reaches every corner of the client's chunk cache, which holds the render distance plus a margin. */
