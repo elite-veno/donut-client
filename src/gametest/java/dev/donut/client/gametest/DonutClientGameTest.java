@@ -19,6 +19,7 @@ import net.fabricmc.fabric.api.client.gametest.v1.context.TestServerContext;
 import net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.input.MouseButtonInfo;
+import net.minecraft.core.BlockPos;
 import org.lwjgl.glfw.GLFW;
 
 /** Exercises real GUI input, loaded block entities, and every overlay pipeline in a disposable flat world. */
@@ -67,6 +68,7 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             context.waitTick();
             clickPanel(context, 610, 86); // Header toggle.
             context.runOnClient(client -> require(config.debris.enabled, "Debris toggle did not update the supplied config"));
+            screenshot(context, "donut-01-clickgui-debris-settings");
             clickPanel(context, 70, 113); // Back to the overview.
             context.waitTick();
             awaitKinds(context, scanner, ALL_KINDS);
@@ -123,6 +125,18 @@ public final class DonutClientGameTest implements FabricClientGameTest {
                             + (throughWalls ? "-through-walls" : "-visible-only"));
                 }
             }
+
+            // Natural debris is sealed in netherrack, often in another chunk, and is placed after that chunk was indexed.
+            world.getServer().runCommand("fill 16 63 -15 18 65 -13 minecraft:netherrack");
+            world.getServer().runCommand("setblock 17 64 -14 minecraft:ancient_debris");
+            context.waitFor(client -> scanner.debrisCount() == 2);
+            context.runOnClient(client -> require(scanner.snapshot().stream()
+                            .anyMatch(target -> target.kind().isDebris() && target.pos().equals(new BlockPos(17, 64, -14))),
+                    "Buried debris in a neighboring chunk was not found"));
+            screenshot(context, "donut-05-debris-buried");
+            // Mined debris must not wait for its chunk's periodic rescan.
+            world.getServer().runCommand("setblock 8 65 0 minecraft:air");
+            context.waitFor(client -> scanner.debrisCount() == 1, 15);
 
             context.runOnClient(client -> {
                 config.storage.enabled = false;

@@ -49,11 +49,14 @@ final class DebrisIndex {
         if (tick % 20 == 0) prune(level, center, range);
     }
 
-    void collect(Vec3 origin, double range, List<FoundBlock> found) {
+    void collect(ClientLevel level, Vec3 origin, double range, List<FoundBlock> found) {
         double rangeSqr = range * range;
         for (Scan scan : scans.values()) {
             for (FoundBlock block : scan.debris) {
-                if (block.pos().distToCenterSqr(origin) <= rangeSqr) found.add(block);
+                // Cached hits are rechecked so mined debris disappears before its chunk is rescanned.
+                if (block.pos().distToCenterSqr(origin) <= rangeSqr && DEBRIS.test(level.getBlockState(block.pos()))) {
+                    found.add(block);
+                }
             }
         }
     }

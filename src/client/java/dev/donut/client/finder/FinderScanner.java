@@ -46,7 +46,7 @@ public final class FinderScanner {
         var origin = client.player.position();
         List<FoundBlock> found = new ArrayList<>();
         if (config.storage.enabled || config.spawner.enabled) collectBlockEntities(client, origin, found);
-        if (config.debris.enabled) debris.collect(origin, config.debris.range, found);
+        if (config.debris.enabled) debris.collect(client.level, origin, config.debris.range, found);
         found.sort(Comparator.comparingDouble(target -> target.pos().distToCenterSqr(origin)));
         targets = List.copyOf(found.subList(0, Math.min(found.size(), MAX_TARGETS)));
     }

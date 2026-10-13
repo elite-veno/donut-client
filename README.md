@@ -1,6 +1,6 @@
 # Donut Client
 
-A client-side Fabric mod for Minecraft Java 1.21.11 with storage and spawner highlights, Freecam, module keybinds, and a minimal HUD.
+A client-side Fabric mod for Minecraft Java 1.21.11 with storage, spawner and ancient debris highlights, Freecam, module keybinds, and a minimal HUD.
 
 ## Install
 
@@ -10,6 +10,8 @@ A client-side Fabric mod for Minecraft Java 1.21.11 with storage and spawner hig
 4. Start Minecraft with the Fabric profile.
 
 Press **Right Shift** to open the click GUI. Freecam defaults to **F6**. Other module keys can be assigned in the click GUI or under Minecraft's keybind settings.
+
+DebrisFinder only sees blocks the server has sent to your client. On servers with anti-xray, buried debris may be hidden or replaced with fake ores until it is exposed.
 
 ## Build
 
