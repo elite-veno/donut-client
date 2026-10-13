@@ -83,7 +83,7 @@ public final class AutoRtpGameTest implements FabricClientGameTest {
             server.runCommand("forceload remove 0 -416 15 -401");
             server.runCommand("tp @a 0.5 65 0.5 180 30");
             context.waitTicks(5);
-            world.getClientWorld().waitForChunksRender();
+            world.getConnection().waitForChunksRender();
 
             // The first teleport finds nothing, waits out the interval, and the second lands by the geode.
             context.runOnClient(client -> controller.setEnabled(true));

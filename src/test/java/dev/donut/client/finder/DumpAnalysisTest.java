@@ -39,12 +39,12 @@ class DumpAnalysisTest {
     private record Dump(String name, BlockPos player, String[] palette, Map<Long, Chunk> chunks) {
         String block(int x, int y, int z) {
             if (y < 0 || y >= 128) return null;
-            Chunk chunk = chunks.get(ChunkPos.asLong(x >> 4, z >> 4));
+            Chunk chunk = chunks.get(ChunkPos.pack(x >> 4, z >> 4));
             return chunk == null ? null : palette[chunk.blocks()[(y * 16 + (z & 15)) * 16 + (x & 15)]];
         }
 
         String biome(int x, int y, int z) {
-            Chunk chunk = chunks.get(ChunkPos.asLong(x >> 4, z >> 4));
+            Chunk chunk = chunks.get(ChunkPos.pack(x >> 4, z >> 4));
             return palette[chunk.biomes()[((y >> 2) * 4 + ((z & 15) >> 2)) * 4 + ((x & 15) >> 2)]];
         }
 
@@ -82,7 +82,7 @@ class DumpAnalysisTest {
                 short[] blocks = new short[16 * 128 * 16], biomes = new short[4 * 32 * 4];
                 for (int i = 0; i < blocks.length; i++) blocks[i] = in.readShort();
                 for (int i = 0; i < biomes.length; i++) biomes[i] = in.readShort();
-                chunks.put(ChunkPos.asLong(x, z), new Chunk(x, z, blocks, biomes));
+                chunks.put(ChunkPos.pack(x, z), new Chunk(x, z, blocks, biomes));
             }
             return new Dump(file.getFileName().toString(), player, palette, chunks);
         }
@@ -125,7 +125,7 @@ class DumpAnalysisTest {
             int own = ore(dump, chunk, random, SEED, 17, 5, 41, "gravel", total, 0) + ore(dump, chunk, random, SEED, 18, 5, 31, "blackstone", total, 0);
             ore(dump, chunk, random, SEED + 1, 17, 5, 41, "gravel", total, 2);
             ore(dump, chunk, random, SEED + 1, 18, 5, 31, "blackstone", total, 2);
-            hits.put(ChunkPos.asLong(chunk.x(), chunk.z()), own);
+            hits.put(ChunkPos.pack(chunk.x(), chunk.z()), own);
         }
         System.out.printf("gravel+blackstone centers: seed %d of %d, wrong seed %d of %d%n", total[1], total[0], total[3], total[2]);
         int minX = dump.chunks().values().stream().mapToInt(Chunk::x).min().orElse(0);
@@ -136,7 +136,7 @@ class DumpAnalysisTest {
         for (int z = minZ; z <= maxZ; z++) {
             StringBuilder row = new StringBuilder("  ");
             for (int x = minX; x <= maxX; x++) {
-                Integer h = hits.get(ChunkPos.asLong(x, z));
+                Integer h = hits.get(ChunkPos.pack(x, z));
                 row.append(h == null ? ' ' : (char) ('0' + h));
             }
             System.out.println(row);
@@ -180,7 +180,7 @@ class DumpAnalysisTest {
         Map<String, Integer> seeded = new TreeMap<>(), unseeded = new TreeMap<>();
         DebrisPredictor predictor = new DebrisPredictor();
         for (Chunk chunk : dump.chunks().values()) {
-            boolean follows = oreHits.getOrDefault(ChunkPos.asLong(chunk.x(), chunk.z()), 0) >= 2;
+            boolean follows = oreHits.getOrDefault(ChunkPos.pack(chunk.x(), chunk.z()), 0) >= 2;
             predictor.attempts(SEED, chunk.x(), chunk.z(), packed -> {
                 int x = BlockPos.getX(packed), y = BlockPos.getY(packed), z = BlockPos.getZ(packed);
                 String name = dump.block(x, y, z);

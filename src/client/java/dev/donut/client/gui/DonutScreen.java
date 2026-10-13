@@ -16,7 +16,7 @@ import dev.donut.client.sniper.PriceStats;
 import dev.donut.client.sniper.SniperEngine;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.KeyMapping;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
@@ -82,7 +82,7 @@ public final class DonutScreen extends Screen {
     private final Map<String, Place> places = new HashMap<>();
     private final Map<String, Double> animations = new HashMap<>();
     private final Deque<int[]> clips = new ArrayDeque<>();
-    private GuiGraphics graphics;
+    private GuiGraphicsExtractor graphics;
     private float scale = 1;
     /** Screen pixels per layout unit; whole, so the UI font draws sharp. */
     private int pixels = 1;
@@ -731,7 +731,7 @@ public final class DonutScreen extends Screen {
     // Drawing -----------------------------------------------------------------------------------
 
     @Override
-    public void render(GuiGraphics g, int mx, int my, float delta) {
+    public void extractRenderState(GuiGraphicsExtractor g, int mx, int my, float delta) {
         graphics = g;
         long now = System.nanoTime();
         frameSeconds = lastFrame == 0 ? 1.0 / 60 : Math.min(.1, (now - lastFrame) / 1_000_000_000.0);
@@ -1500,7 +1500,7 @@ public final class DonutScreen extends Screen {
     private String removeLastCharacter(String value) { return value.isEmpty() ? value : value.substring(0, value.offsetByCodePoints(value.length(), -1)); }
 
     @Override
-    public void onClose() { flush(); minecraft.setScreen(null); }
+    public void onClose() { flush(); minecraft.gui.setScreen(null); }
 
     @Override
     public void removed() {

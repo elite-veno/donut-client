@@ -65,7 +65,9 @@ public final class XrayController {
         if (Objects.equals(wanted, applied)) return;
         applied = wanted;
         active = wanted == null ? null : new Filter(blocks(wanted), wanted.exposedOresOnly());
-        if (client.levelRenderer != null && client.level != null) client.levelRenderer.allChanged();
+        if (client.levelRenderer != null && client.level != null) {
+            client.levelRenderer.invalidateCompiledGeometry(client.level, client.options, client.gameRenderer.mainCamera(), client.getBlockColors());
+        }
     }
 
     /** Turns X-ray off immediately, such as when the game closes. */
@@ -75,9 +77,13 @@ public final class XrayController {
     }
 
     static boolean isOre(BlockState state) {
-        return state.is(BlockTags.COAL_ORES) || state.is(BlockTags.IRON_ORES) || state.is(BlockTags.GOLD_ORES)
-                || state.is(BlockTags.COPPER_ORES) || state.is(BlockTags.REDSTONE_ORES) || state.is(BlockTags.LAPIS_ORES)
-                || state.is(BlockTags.DIAMOND_ORES) || state.is(BlockTags.EMERALD_ORES)
+        // 26.2 keeps tags only for the ores that share them with raw blocks; the rest are listed by block.
+        return state.is(BlockTags.IRON_ORES) || state.is(BlockTags.GOLD_ORES) || state.is(BlockTags.COPPER_ORES)
+                || state.is(Blocks.COAL_ORE) || state.is(Blocks.DEEPSLATE_COAL_ORE)
+                || state.is(Blocks.REDSTONE_ORE) || state.is(Blocks.DEEPSLATE_REDSTONE_ORE)
+                || state.is(Blocks.LAPIS_ORE) || state.is(Blocks.DEEPSLATE_LAPIS_ORE)
+                || state.is(Blocks.DIAMOND_ORE) || state.is(Blocks.DEEPSLATE_DIAMOND_ORE)
+                || state.is(Blocks.EMERALD_ORE) || state.is(Blocks.DEEPSLATE_EMERALD_ORE)
                 || state.is(Blocks.NETHER_QUARTZ_ORE) || state.is(Blocks.ANCIENT_DEBRIS);
     }
 

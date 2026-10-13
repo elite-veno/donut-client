@@ -59,7 +59,7 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             });
             // The info panel and labels for this test's own finders.
             HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("donut-gametest", "finder_info"), (graphics, delta) -> {
-                if (active.get() && mc().player != null && mc().screen == null) FinderHud.render(graphics, mc(), config, scanner);
+                if (active.get() && mc().player != null && mc().gui.screen() == null) FinderHud.render(graphics, mc(), config, scanner);
             });
             return created;
         });
@@ -68,7 +68,7 @@ public final class DonutClientGameTest implements FabricClientGameTest {
         try (var world = context.worldBuilder().create()) {
             createFixtures(world.getServer());
             context.waitTicks(5);
-            world.getClientWorld().waitForChunksRender();
+            world.getConnection().waitForChunksRender();
             context.waitFor(client -> client.player != null && Math.abs(client.player.getY() - 65) < 0.1);
             context.runOnClient(client -> require(scanner.snapshot().isEmpty(), "Disabled modules must not find targets"));
             screenshot(context, "donut-00-fixtures-disabled");
@@ -116,7 +116,7 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             GuiClicks.click(context, "nav.theme");
             GuiClicks.settle(context);
             screenshot(context, "donut-02-clickgui-theme");
-            context.runOnClient(client -> client.screen.onClose());
+            context.runOnClient(client -> client.gui.screen().onClose());
             context.waitForScreen(null);
 
             // Confirm a user filter changes the actual loaded-entity results.
@@ -142,7 +142,7 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             // An opaque wall hides the right-hand fixtures, distinguishing both depth policies visually.
             world.getServer().runCommand("fill 1 65 4 8 68 4 minecraft:stone_bricks");
             context.waitTicks(3);
-            world.getClientWorld().waitForChunksRender(false);
+            world.getConnection().waitForChunksRender(false);
             for (RenderMode mode : RenderMode.values()) {
                 for (boolean throughWalls : new boolean[] {false, true}) {
                     context.runOnClient(client -> {
@@ -305,7 +305,7 @@ public final class DonutClientGameTest implements FabricClientGameTest {
         server.runCommand("tp @a 0.5 65 12.5 180 12");
         // The server must load the chunks around spawn again before blocks can be placed there.
         context.waitFor(client -> client.player.position().distanceTo(new net.minecraft.world.phys.Vec3(0.5, 65, 12.5)) < 1);
-        world.getClientWorld().waitForChunksRender();
+        world.getConnection().waitForChunksRender();
 
         // Dug passages inside a block of stone: a 14-long tunnel, a 19-deep hole and a 6-step staircase.
         server.runCommand("fill -40 30 20 -20 56 26 minecraft:stone");
@@ -344,12 +344,12 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             require(!XrayController.filter(client.level, BlockPos.ZERO, sideways).isAir(), "X-ray hid sideways deepslate");
             require(FullbrightController.effectiveGamma(0.5) > 1, "X-ray did not brighten the world");
         });
-        world.getClientWorld().waitForChunksRender(false);
+        world.getConnection().waitForChunksRender(false);
         context.waitTicks(2);
         screenshot(context, "donut-09-tunnels-xray");
         context.runOnClient(client -> config.xray.enabled = false);
         context.waitTicks(3);
-        world.getClientWorld().waitForChunksRender(false);
+        world.getConnection().waitForChunksRender(false);
         context.waitTicks(2);
         screenshot(context, "donut-09-tunnels-tracers");
 

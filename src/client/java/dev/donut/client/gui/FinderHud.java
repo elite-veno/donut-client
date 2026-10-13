@@ -9,7 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 
@@ -20,14 +20,14 @@ public final class FinderHud {
 
     private FinderHud() { }
 
-    public static void render(GuiGraphics g, Minecraft client, ClientConfig config, FinderScanner scanner) {
+    public static void render(GuiGraphicsExtractor g, Minecraft client, ClientConfig config, FinderScanner scanner) {
         Font font = client.font;
         if (config.hud.labels) labels(g, font, client);
         if (config.hud.info) info(g, font, client, scanner.summaries());
     }
 
     /** Rows mirror the array list: a dark strip per finder, edged in that finder's color. */
-    private static void info(GuiGraphics g, Font font, Minecraft client, List<FinderSummary> lines) {
+    private static void info(GuiGraphicsExtractor g, Font font, Minecraft client, List<FinderSummary> lines) {
         if (lines.isEmpty() || client.getDebugOverlay().showDebugScreen()) return;
         Vec3 origin = client.player.position();
         float yaw = client.player.getYRot();
@@ -59,7 +59,7 @@ public final class FinderHud {
         }
     }
 
-    private static void labels(GuiGraphics g, Font font, Minecraft client) {
+    private static void labels(GuiGraphicsExtractor g, Font font, Minecraft client) {
         int width = client.getWindow().getGuiScaledWidth(), height = client.getWindow().getGuiScaledHeight();
         List<int[]> placed = new ArrayList<>();
         // Labels arrive nearest first; a farther label that would cover a nearer one moves up, or is left out.

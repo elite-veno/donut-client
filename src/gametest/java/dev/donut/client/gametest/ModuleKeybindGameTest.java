@@ -33,7 +33,7 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
         String[] originalKeys = context.computeOnClient(client -> java.util.stream.IntStream.range(0, ModuleKeybinds.COUNT)
                 .mapToObj(module -> ModuleKeybinds.mapping(module).saveString()).toArray(String[]::new));
         int originalGuiScale = context.computeOnClient(client -> client.options.guiScale().get());
-        boolean originalHideGui = context.computeOnClient(client -> client.options.hideGui);
+        boolean originalHideGui = context.computeOnClient(client -> client.gui.hud.isHidden());
         KeyMapping openGui = context.computeOnClient(client -> Arrays.stream(client.options.keyMappings)
                 .filter(key -> key.getName().equals("key.donut.open_gui")).findFirst().orElseThrow());
         String originalOpenKey = context.computeOnClient(client -> openGui.saveString());
@@ -41,7 +41,7 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
             openGui.setKey(InputConstants.Type.KEYSYM.getOrCreate(GLFW.GLFW_KEY_RIGHT_SHIFT));
             KeyMapping.resetMapping();
             client.options.guiScale().set(1);
-            client.options.hideGui = false;
+            if (client.gui.hud.isHidden()) client.gui.hud.toggle();
         });
         context.getInput().resizeWindow(1280, 800);
 
@@ -54,7 +54,7 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                 world.getServer().runCommand("setblock 2 65 0 minecraft:spawner");
                 world.getServer().runCommand("tp @a 0.5 65 8.5 180 10");
                 context.waitTicks(5);
-                world.getClientWorld().waitForChunksRender();
+                world.getConnection().waitForChunksRender();
                 context.waitFor(client -> client.player != null && client.player.onGround());
 
                 try {
@@ -84,8 +84,8 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     GuiClicks.click(context, "StorageFinder.bind");
                     screenshot(context, "donut-keybind-02-listening");
                     context.getInput().holdKey(GLFW.GLFW_KEY_ESCAPE);
-                    context.runOnClient(client -> client.screen.keyPressed(new KeyEvent(GLFW.GLFW_KEY_ESCAPE, 0, 0)));
-                    context.runOnClient(client -> require(client.screen instanceof DonutScreen,
+                    context.runOnClient(client -> client.gui.screen().keyPressed(new KeyEvent(GLFW.GLFW_KEY_ESCAPE, 0, 0)));
+                    context.runOnClient(client -> require(client.gui.screen() instanceof DonutScreen,
                             "A repeated Escape should not close the screen after cancelling key capture"));
                     context.getInput().releaseKey(GLFW.GLFW_KEY_ESCAPE);
                     assertKey(context, 0, TEST_KEYS[0]);
@@ -134,7 +134,7 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
 
                     context.runOnClient(client -> {
                         client.options.guiScale().set(2);
-                        client.resizeDisplay();
+                        client.resizeGui();
                     });
                     context.waitTicks(2);
                     screenshot(context, "donut-keybind-03-assigned-scaled");
@@ -212,12 +212,12 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     setFinder(context, store, FULLBRIGHT, true);
                     screenshot(context, "donut-arraylist-01-active-scaled");
                     context.getInput().pressKey(GLFW.GLFW_KEY_F1);
-                    context.runOnClient(client -> require(client.options.hideGui, "F1 did not hide the HUD"));
+                    context.runOnClient(client -> require(client.gui.hud.isHidden(), "F1 did not hide the HUD"));
                     screenshot(context, "donut-arraylist-02-hidden-with-f1");
                     context.getInput().pressKey(GLFW.GLFW_KEY_F1);
                     context.runOnClient(client -> {
                         client.options.guiScale().set(1);
-                        client.resizeDisplay();
+                        client.resizeGui();
                     });
                     context.waitTicks(2);
                     screenshot(context, "donut-arraylist-03-active-normal");
@@ -265,9 +265,9 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                 openGui.setKey(InputConstants.getKey(originalOpenKey));
                 KeyMapping.resetMapping();
                 client.options.guiScale().set(originalGuiScale);
-                client.options.hideGui = originalHideGui;
+                if (client.gui.hud.isHidden() != originalHideGui) client.gui.hud.toggle();
                 client.options.save();
-                client.resizeDisplay();
+                client.resizeGui();
             });
         }
     }

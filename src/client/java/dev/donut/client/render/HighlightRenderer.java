@@ -1,19 +1,18 @@
 package dev.donut.client.render;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
+import com.mojang.blaze3d.PrimitiveTopology;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.pipeline.BlendFunction;
+import com.mojang.blaze3d.pipeline.ColorTargetState;
+import com.mojang.blaze3d.pipeline.DepthStencilState;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.platform.DepthTestFunction;
-import com.mojang.blaze3d.shaders.UniformType;
+import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.platform.CompareOp;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.BufferBuilder;
-import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
-import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.blaze3d.vertex.PoseStack;
-import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.config.FinderSettings;
 import dev.donut.client.config.RenderMode;
@@ -25,12 +24,15 @@ import dev.donut.client.finder.TargetKind;
 import dev.donut.client.finder.TunnelDetector;
 import net.fabricmc.fabric.api.client.rendering.v1.FabricRenderState;
 import net.fabricmc.fabric.api.client.rendering.v1.RenderStateDataKey;
-import net.fabricmc.fabric.api.client.rendering.v1.world.WorldExtractionContext;
-import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderContext;
-import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.level.LevelExtractionContext;
+import net.fabricmc.fabric.api.client.rendering.v1.level.LevelExtractionEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
+import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.MappableRingBuffer;
+import net.minecraft.client.renderer.BindGroupLayouts;
 import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.client.renderer.StagedVertexBuffer;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.core.SectionPos;
@@ -39,18 +41,15 @@ import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
-import org.joml.Vector3f;
 import org.joml.Vector3fc;
 import org.joml.Vector4f;
-import org.lwjgl.system.MemoryUtil;
-
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.OptionalDouble;
-import java.util.OptionalInt;
 
-/** Batches finder overlays using the 1.21.11 render pipeline and render-state APIs. */
+/** Batches finder overlays using the 26.2 render pipeline and render-state APIs. */
 public final class HighlightRenderer implements AutoCloseable {
     /** Tracers beyond this many nearest targets add clutter rather than direction. */
     private static final int MAX_TRACERS = 256;
@@ -62,9 +61,6 @@ public final class HighlightRenderer implements AutoCloseable {
     private static final RenderPipeline FILL_THROUGH = pipeline("fill_through", false, true);
     private static final RenderPipeline LINE_VISIBLE = pipeline("line_visible", true, false);
     private static final RenderPipeline LINE_THROUGH = pipeline("line_through", true, true);
-    private static final Vector4f WHITE = new Vector4f(1, 1, 1, 1);
-    private static final Vector3f ZERO = new Vector3f();
-    private static final Matrix4f IDENTITY = new Matrix4f();
 
     // Corner bits are X=1, Y=2, Z=4. Winding is outward for all six faces.
     private static final int[][] FACES = {
@@ -74,10 +70,7 @@ public final class HighlightRenderer implements AutoCloseable {
 
     private final ClientConfig config;
     private final FinderScanner scanner;
-    private final Batch fillVisible = new Batch(FILL_VISIBLE);
-    private final Batch fillThrough = new Batch(FILL_THROUGH);
-    private final Batch lineVisible = new Batch(LINE_VISIBLE);
-    private final Batch lineThrough = new Batch(LINE_THROUGH);
+    private final StagedVertexBuffer vertices = new StagedVertexBuffer(() -> "Donut finder highlights", 64 * 1024);
     private boolean registered;
     private boolean closed;
 
@@ -92,28 +85,31 @@ public final class HighlightRenderer implements AutoCloseable {
     public void register() {
         if (registered) return;
         registered = true;
-        WorldRenderEvents.END_EXTRACTION.register(this::extract);
-        WorldRenderEvents.END_MAIN.register(this::draw);
+        LevelExtractionEvents.END_EXTRACTION.register(this::extract);
+        LevelRenderEvents.END_MAIN.register(this::draw);
     }
 
     private static RenderPipeline pipeline(String name, boolean lines, boolean throughWalls) {
+        // Depth is reversed in 26.2: a nearer fragment has the greater depth.
         RenderPipeline.Builder builder = RenderPipeline.builder()
                 .withLocation(Identifier.fromNamespaceAndPath("donut", "pipeline/" + name))
-                .withVertexShader(lines ? "core/rendertype_lines" : "core/position_color")
-                .withFragmentShader("core/position_color")
-                .withUniform("DynamicTransforms", UniformType.UNIFORM_BUFFER)
-                .withUniform("Projection", UniformType.UNIFORM_BUFFER)
-                .withVertexFormat(lines ? DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH
-                        : DefaultVertexFormat.POSITION_COLOR, lines ? VertexFormat.Mode.LINES : VertexFormat.Mode.QUADS)
-                .withBlend(BlendFunction.TRANSLUCENT)
+                .withBindGroupLayout(BindGroupLayouts.GLOBALS)
+                .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
+                .withColorTargetState(new ColorTargetState(BlendFunction.TRANSLUCENT))
                 .withCull(!lines)
-                .withDepthWrite(false)
-                .withDepthTestFunction(throughWalls ? DepthTestFunction.NO_DEPTH_TEST : DepthTestFunction.LEQUAL_DEPTH_TEST);
+                .withDepthStencilState(new DepthStencilState(throughWalls ? CompareOp.ALWAYS_PASS : CompareOp.GREATER_THAN_OR_EQUAL, false));
         if (lines) {
-            // The vanilla line vertex shader expands each segment in screen space.
-            // The position-color fragment shader keeps these overlays independent of fog.
-            builder.withUniform("Globals", UniformType.UNIFORM_BUFFER)
-                    .withUniform("Fog", UniformType.UNIFORM_BUFFER);
+            // The vanilla line shaders expand each segment in screen space.
+            builder.withBindGroupLayout(BindGroupLayouts.FOG)
+                    .withVertexShader("core/rendertype_lines")
+                    .withFragmentShader("core/rendertype_lines")
+                    .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH)
+                    .withPrimitiveTopology(PrimitiveTopology.LINES);
+        } else {
+            builder.withVertexShader("core/position_color")
+                    .withFragmentShader("core/position_color")
+                    .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR)
+                    .withPrimitiveTopology(PrimitiveTopology.QUADS);
         }
         return RenderPipelines.register(builder.build());
     }
@@ -123,8 +119,10 @@ public final class HighlightRenderer implements AutoCloseable {
                 || config.tunnels.enabled || config.entities.enabled;
     }
 
-    private void extract(WorldExtractionContext context) {
-        FabricRenderState state = (FabricRenderState) context.worldState();
+    private void extract(LevelExtractionContext context) {
+        CameraRenderState cameraState = context.levelState().cameraRenderState;
+        WorldProjection.capture(cameraState.projectionMatrix);
+        FabricRenderState state = (FabricRenderState) context.levelState();
         if (closed || !anyEnabled()) {
             state.setData(frame, Frame.EMPTY);
             // A closed renderer leaves the labels to the one still drawing.
@@ -132,7 +130,7 @@ public final class HighlightRenderer implements AutoCloseable {
             return;
         }
 
-        Vec3 camera = context.worldState().cameraRenderState.pos;
+        Vec3 camera = cameraState.pos;
         Vector3fc forward = context.camera().forwardVector();
         Extraction out = new Extraction(context, camera, new Vec3(forward.x(), forward.y(), forward.z()));
         for (FoundBlock block : scanner.snapshot()) {
@@ -141,12 +139,12 @@ public final class HighlightRenderer implements AutoCloseable {
             double distance = Vec3.atCenterOf(block.pos()).distanceTo(camera);
             if (distance > settings.range) continue;
 
-            if (!context.world().hasChunkAt(block.pos())) continue;
-            var currentState = context.world().getBlockState(block.pos());
+            if (!context.level().hasChunkAt(block.pos())) continue;
+            var currentState = context.level().getBlockState(block.pos());
             // A seed estimate marks the netherrack the server shows in place of hidden debris.
             boolean estimate = block.flagged() && block.kind().isDebris();
             if (!estimate && TargetKind.from(currentState) != block.kind()) continue;
-            VoxelShape shape = currentState.getShape(context.world(), block.pos());
+            VoxelShape shape = currentState.getShape(context.level(), block.pos());
             if (shape.isEmpty()) continue;
             AABB bounds = shape.bounds().move(block.pos()).inflate(0.003);
             boolean flagged = estimate || block.flagged() && block.kind().isSpawner() && settings.activatedSpawners;
@@ -239,8 +237,8 @@ public final class HighlightRenderer implements AutoCloseable {
     }
 
     private void addEntities(Extraction out) {
-        float partialTick = out.context.tickCounter().getGameTimeDeltaPartialTick(false);
-        for (Entity entity : out.context.world().entitiesForRendering()) {
+        float partialTick = out.context.deltaTracker().getGameTimeDeltaPartialTick(false);
+        for (Entity entity : out.context.level().entitiesForRendering()) {
             EntityKind kind = EntityKind.of(entity);
             if (kind == null) continue;
             FinderSettings settings = kind.settings(config);
@@ -277,14 +275,14 @@ public final class HighlightRenderer implements AutoCloseable {
 
     /** Collects one frame's boxes, tracers and label candidates in camera-relative coordinates. */
     private static final class Extraction {
-        final WorldExtractionContext context;
+        final LevelExtractionContext context;
         final Vec3 camera;
         final Vec3 forward;
         final List<DrawBox> boxes = new ArrayList<>();
         final List<DrawLine> tracerCandidates = new ArrayList<>();
         final List<Candidate> labelCandidates = new ArrayList<>();
 
-        Extraction(WorldExtractionContext context, Vec3 camera, Vec3 forward) {
+        Extraction(LevelExtractionContext context, Vec3 camera, Vec3 forward) {
             this.context = context;
             this.camera = camera;
             this.forward = forward;
@@ -315,7 +313,7 @@ public final class HighlightRenderer implements AutoCloseable {
         void box(AABB box, int fill, int outline, float width, boolean throughWalls) {
             if ((fill >>> 24) == 0 && (outline >>> 24) == 0) return;
             AABB bounds = box.inflate(0.003);
-            if (!context.frustum().isVisible(bounds)) return;
+            if (!context.levelState().cameraRenderState.cullFrustum.isVisible(bounds)) return;
             // Subtract in double precision before making vertices, including near the world border.
             boxes.add(new DrawBox(bounds.move(-camera.x, -camera.y, -camera.z), fill, outline, width, throughWalls));
         }
@@ -330,7 +328,7 @@ public final class HighlightRenderer implements AutoCloseable {
             Matrix4fc projection = WorldProjection.projection();
             if (projection == null || labelCandidates.isEmpty()) return List.of();
             labelCandidates.sort(Comparator.comparingDouble(Candidate::distance));
-            Matrix4f transform = new Matrix4f(projection).mul(context.viewMatrix());
+            Matrix4f transform = new Matrix4f(projection).mul(context.levelState().cameraRenderState.viewRotationMatrix);
             List<ScreenLabel> result = new ArrayList<>();
             Vector4f point = new Vector4f();
             for (Candidate candidate : labelCandidates) {
@@ -349,28 +347,63 @@ public final class HighlightRenderer implements AutoCloseable {
         }
     }
 
-    private void draw(WorldRenderContext context) {
+    private void draw(LevelRenderContext context) {
         if (closed) return;
-        Frame boxes = ((FabricRenderState) context.worldState()).getData(frame);
+        Frame boxes = ((FabricRenderState) context.levelState()).getData(frame);
         if (boxes == null || boxes.isEmpty()) return;
-        PoseStack.Pose pose = context.matrices().last();
-        for (DrawBox box : boxes.boxes) {
-            if ((box.fill >>> 24) != 0) {
-                filled((box.throughWalls ? fillThrough : fillVisible).begin(), pose.pose(), box.bounds, box.fill);
-            }
-            if ((box.outline >>> 24) != 0) {
-                outlined((box.throughWalls ? lineThrough : lineVisible).begin(), pose, box.bounds, box.outline, box.width);
+        PoseStack.Pose pose = context.poseStack().last();
+        var sorting = RenderSystem.getProjectionType().vertexSorting();
+        StagedVertexBuffer.Draw fillVisible = vertices.appendDraw(DefaultVertexFormat.POSITION_COLOR, PrimitiveTopology.QUADS, sorting);
+        StagedVertexBuffer.Draw fillThrough = vertices.appendDraw(DefaultVertexFormat.POSITION_COLOR, PrimitiveTopology.QUADS, sorting);
+        StagedVertexBuffer.Draw lineVisible = vertices.appendDraw(DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH, PrimitiveTopology.LINES);
+        StagedVertexBuffer.Draw lineThrough = vertices.appendDraw(DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH, PrimitiveTopology.LINES);
+        // One builder at a time: each draw is written whole before the next.
+        for (boolean through : new boolean[] {false, true}) {
+            VertexConsumer buffer = null;
+            for (DrawBox box : boxes.boxes) {
+                if (box.throughWalls != through || (box.fill >>> 24) == 0) continue;
+                if (buffer == null) buffer = vertices.getVertexBuilder(through ? fillThrough : fillVisible);
+                filled(buffer, pose.pose(), box.bounds, box.fill);
             }
         }
-        for (DrawLine line : boxes.tracers) segment(lineThrough.begin(), pose, line);
-        // Drawing all fills before lines keeps translucent surfaces from dimming their own outlines.
-        fillVisible.flush();
-        fillThrough.flush();
-        lineVisible.flush();
-        lineThrough.flush();
+        for (boolean through : new boolean[] {false, true}) {
+            VertexConsumer buffer = null;
+            for (DrawBox box : boxes.boxes) {
+                if (box.throughWalls != through || (box.outline >>> 24) == 0) continue;
+                if (buffer == null) buffer = vertices.getVertexBuilder(through ? lineThrough : lineVisible);
+                outlined(buffer, pose, box.bounds, box.outline, box.width);
+            }
+            if (through && !boxes.tracers.isEmpty()) {
+                if (buffer == null) buffer = vertices.getVertexBuilder(lineThrough);
+                for (DrawLine line : boxes.tracers) segment(buffer, pose, line);
+            }
+        }
+        vertices.upload();
+        GpuBufferSlice transform = RenderSystem.getDynamicUniforms().writeTransform(RenderSystem.getModelViewMatrixCopy());
+        drawPass(FILL_VISIBLE, fillVisible, transform);
+        drawPass(FILL_THROUGH, fillThrough, transform);
+        drawPass(LINE_VISIBLE, lineVisible, transform);
+        drawPass(LINE_THROUGH, lineThrough, transform);
+        vertices.endFrame();
     }
 
-    private static void filled(BufferBuilder buffer, Matrix4fc pose, AABB bounds, int color) {
+    /** Draws one staged batch onto the main target, the way vanilla's prepared render types do. */
+    private void drawPass(RenderPipeline pipeline, StagedVertexBuffer.Draw draw, GpuBufferSlice transform) {
+        StagedVertexBuffer.ExecuteInfo info = vertices.getExecuteInfo(draw);
+        if (info == null) return;
+        RenderTarget target = Minecraft.getInstance().gameRenderer.mainRenderTarget();
+        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(() -> "Donut finder overlay",
+                target.getColorTextureView(), Optional.empty(), target.useDepth ? target.getDepthTextureView() : null, OptionalDouble.empty())) {
+            pass.setPipeline(pipeline);
+            RenderSystem.bindDefaultUniforms(pass);
+            pass.setUniform("DynamicTransforms", transform);
+            pass.setVertexBuffer(0, info.vertexBuffer().slice());
+            pass.setIndexBuffer(info.indexBuffer(), info.indexType());
+            pass.drawIndexed(info.indexCount(), 1, info.firstIndex(), info.baseVertex(), 0);
+        }
+    }
+
+    private static void filled(VertexConsumer buffer, Matrix4fc pose, AABB bounds, int color) {
         for (int[] face : FACES) {
             for (int corner : face) {
                 buffer.addVertex(pose, x(bounds, corner), y(bounds, corner), z(bounds, corner)).setColor(color);
@@ -378,7 +411,7 @@ public final class HighlightRenderer implements AutoCloseable {
         }
     }
 
-    private static void outlined(BufferBuilder buffer, PoseStack.Pose pose, AABB bounds, int color, float width) {
+    private static void outlined(VertexConsumer buffer, PoseStack.Pose pose, AABB bounds, int color, float width) {
         for (int corner = 0; corner < 8; corner++) {
             for (int axis = 1; axis <= 4; axis *= 2) {
                 if ((corner & axis) != 0) continue;
@@ -395,7 +428,7 @@ public final class HighlightRenderer implements AutoCloseable {
     }
 
     /** The line shader expands each segment across its direction, which it reads from the normal. */
-    private static void segment(BufferBuilder buffer, PoseStack.Pose pose, DrawLine line) {
+    private static void segment(VertexConsumer buffer, PoseStack.Pose pose, DrawLine line) {
         Vec3 direction = line.to.subtract(line.from);
         if (direction.lengthSqr() < 1.0e-6) return;
         direction = direction.normalize();
@@ -415,10 +448,7 @@ public final class HighlightRenderer implements AutoCloseable {
         if (closed) return;
         closed = true;
         labels = List.of();
-        fillVisible.close();
-        fillThrough.close();
-        lineVisible.close();
-        lineThrough.close();
+        vertices.close();
     }
 
     private record Frame(List<DrawBox> boxes, List<DrawLine> tracers) {
@@ -432,76 +462,4 @@ public final class HighlightRenderer implements AutoCloseable {
     private record DrawLine(Vec3 from, Vec3 to, int color, float width, double distance) { }
 
     private record Candidate(AABB bounds, String label, int color, double distance) { }
-
-    /** A persistent CPU allocator and rotating GPU vertex buffer for one pipeline. */
-    private static final class Batch implements AutoCloseable {
-        private final RenderPipeline pipeline;
-        private final ByteBufferBuilder allocator = new ByteBufferBuilder(64 * 1024);
-        private BufferBuilder builder;
-        private MappableRingBuffer vertices;
-
-        private Batch(RenderPipeline pipeline) {
-            this.pipeline = pipeline;
-        }
-
-        private BufferBuilder begin() {
-            if (builder == null) builder = new BufferBuilder(allocator, pipeline.getVertexFormatMode(), pipeline.getVertexFormat());
-            return builder;
-        }
-
-        private void flush() {
-            if (builder == null) return;
-            MeshData mesh = builder.build();
-            builder = null;
-            if (mesh == null) return;
-            try (mesh) {
-                int bytes = mesh.vertexBuffer().remaining();
-                if (vertices == null || vertices.size() < bytes) {
-                    if (vertices != null) vertices.close();
-                    vertices = new MappableRingBuffer(() -> "Donut highlights", GpuBuffer.USAGE_VERTEX | GpuBuffer.USAGE_MAP_WRITE, bytes);
-                }
-                try (GpuBuffer.MappedView mapped = RenderSystem.getDevice().createCommandEncoder()
-                        .mapBuffer(vertices.currentBuffer().slice(0, bytes), false, true)) {
-                    MemoryUtil.memCopy(mesh.vertexBuffer(), mapped.data());
-                }
-
-                GpuBuffer indices;
-                VertexFormat.IndexType indexType;
-                if (pipeline.getVertexFormatMode() == VertexFormat.Mode.QUADS) {
-                    mesh.sortQuads(allocator, RenderSystem.getProjectionType().vertexSorting());
-                    indices = pipeline.getVertexFormat().uploadImmediateIndexBuffer(mesh.indexBuffer());
-                    indexType = mesh.drawState().indexType();
-                } else {
-                    RenderSystem.AutoStorageIndexBuffer sequential = RenderSystem.getSequentialBuffer(pipeline.getVertexFormatMode());
-                    indices = sequential.getBuffer(mesh.drawState().indexCount());
-                    indexType = sequential.type();
-                }
-
-                GpuBufferSlice transform = RenderSystem.getDynamicUniforms()
-                        .writeTransform(RenderSystem.getModelViewMatrix(), WHITE, ZERO, IDENTITY);
-                var target = Minecraft.getInstance().getMainRenderTarget();
-                try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                        () -> "Donut finder overlay", target.getColorTextureView(), OptionalInt.empty(),
-                        target.getDepthTextureView(), OptionalDouble.empty())) {
-                    pass.setPipeline(pipeline);
-                    RenderSystem.bindDefaultUniforms(pass);
-                    pass.setUniform("DynamicTransforms", transform);
-                    pass.setVertexBuffer(0, vertices.currentBuffer());
-                    pass.setIndexBuffer(indices, indexType);
-                    pass.drawIndexed(0, 0, mesh.drawState().indexCount(), 1);
-                }
-                vertices.rotate();
-            }
-        }
-
-        @Override
-        public void close() {
-            builder = null;
-            allocator.close();
-            if (vertices != null) {
-                vertices.close();
-                vertices = null;
-            }
-        }
-    }
 }

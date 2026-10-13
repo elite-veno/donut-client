@@ -20,6 +20,6 @@ abstract class MouseHandlerMixin {
 
     @Inject(method = "onScroll", at = @At("HEAD"), cancellable = true)
     private void donut$preventHotbarScroll(long window, double horizontal, double vertical, CallbackInfo ci) {
-        if (FreecamController.enabled() && Minecraft.getInstance().screen == null) ci.cancel();
+        if (FreecamController.enabled() && Minecraft.getInstance().gui.screen() == null) ci.cancel();
     }
 }

@@ -78,7 +78,7 @@ public final class ModuleKeybinds {
 
     /** Call once each client tick, and consume queued mapping clicks even when blocked. */
     public static boolean inputBlocked(Minecraft client) {
-        boolean blocked = client.screen != null || discardNextTick || !heldInputs.isEmpty();
+        boolean blocked = client.gui.screen() != null || discardNextTick || !heldInputs.isEmpty();
         discardNextTick = false;
         heldInputs.removeIf(key -> !isHeld(client, key));
         return blocked;

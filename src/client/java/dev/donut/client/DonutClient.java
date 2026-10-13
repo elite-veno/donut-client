@@ -19,7 +19,7 @@ import dev.donut.client.xray.XrayController;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -77,37 +77,37 @@ public final class DonutClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             boolean inputBlocked = ModuleKeybinds.inputBlocked(client);
             while (open.consumeClick()) {
-                if (!inputBlocked && client.screen == null) client.setScreen(new DonutScreen(config, this::save, scanner::activityStats, rtp::status, sniper));
+                if (!inputBlocked && client.gui.screen() == null) client.gui.setScreen(new DonutScreen(config, this::save, scanner::activityStats, rtp::status, sniper));
             }
             if (ModuleKeybinds.consumePress(client, 0)) {
-                if (!inputBlocked && client.screen == null && client.player != null) { config.storage.enabled = !config.storage.enabled; save(); }
+                if (!inputBlocked && client.gui.screen() == null && client.player != null) { config.storage.enabled = !config.storage.enabled; save(); }
             }
             if (ModuleKeybinds.consumePress(client, 1)) {
-                if (!inputBlocked && client.screen == null && client.player != null) { config.spawner.enabled = !config.spawner.enabled; save(); }
+                if (!inputBlocked && client.gui.screen() == null && client.player != null) { config.spawner.enabled = !config.spawner.enabled; save(); }
             }
             if (ModuleKeybinds.consumePress(client, 2)) {
-                if (!inputBlocked && client.screen == null && client.player != null) freecam.setEnabled(!freecam.isActive());
+                if (!inputBlocked && client.gui.screen() == null && client.player != null) freecam.setEnabled(!freecam.isActive());
             }
             if (ModuleKeybinds.consumePress(client, 3)) {
-                if (!inputBlocked && client.screen == null && client.player != null) { config.debris.enabled = !config.debris.enabled; save(); }
+                if (!inputBlocked && client.gui.screen() == null && client.player != null) { config.debris.enabled = !config.debris.enabled; save(); }
             }
             if (ModuleKeybinds.consumePress(client, 4)) {
-                if (!inputBlocked && client.screen == null && client.player != null) { config.activity.enabled = !config.activity.enabled; save(); }
+                if (!inputBlocked && client.gui.screen() == null && client.player != null) { config.activity.enabled = !config.activity.enabled; save(); }
             }
             if (ModuleKeybinds.consumePress(client, 5)) {
-                if (!inputBlocked && client.screen == null && client.player != null) rtp.setEnabled(!config.rtp.enabled);
+                if (!inputBlocked && client.gui.screen() == null && client.player != null) rtp.setEnabled(!config.rtp.enabled);
             }
             if (ModuleKeybinds.consumePress(client, 6)) {
-                if (!inputBlocked && client.screen == null && client.player != null) { config.xray.enabled = !config.xray.enabled; save(); }
+                if (!inputBlocked && client.gui.screen() == null && client.player != null) { config.xray.enabled = !config.xray.enabled; save(); }
             }
             if (ModuleKeybinds.consumePress(client, 7)) {
-                if (!inputBlocked && client.screen == null && client.player != null) { config.fullbright.enabled = !config.fullbright.enabled; save(); }
+                if (!inputBlocked && client.gui.screen() == null && client.player != null) { config.fullbright.enabled = !config.fullbright.enabled; save(); }
             }
             if (ModuleKeybinds.consumePress(client, 8)) {
-                if (!inputBlocked && client.screen == null && client.player != null) { config.entities.enabled = !config.entities.enabled; save(); }
+                if (!inputBlocked && client.gui.screen() == null && client.player != null) { config.entities.enabled = !config.entities.enabled; save(); }
             }
             if (ModuleKeybinds.consumePress(client, 9)) {
-                if (!inputBlocked && client.screen == null && client.player != null) { config.tunnels.enabled = !config.tunnels.enabled; save(); }
+                if (!inputBlocked && client.gui.screen() == null && client.player != null) { config.tunnels.enabled = !config.tunnels.enabled; save(); }
             }
             xray.tick(client);
             fullbright.tick();
@@ -118,20 +118,20 @@ public final class DonutClient implements ClientModInitializer {
 
         ScreenEvents.AFTER_INIT.register((client, screen, width, height) -> {
             if (screen instanceof TitleScreen) {
-                Screens.getButtons(screen).add(Button.builder(Component.literal("Donut"), button ->
-                        client.setScreen(new DonutScreen(config, this::save, scanner::activityStats, rtp::status, sniper)))
+                Screens.getWidgets(screen).add(Button.builder(Component.literal("Donut"), button ->
+                        client.gui.setScreen(new DonutScreen(config, this::save, scanner::activityStats, rtp::status, sniper)))
                         .bounds(width - 66, height - 28, 58, 20).build());
             }
         });
 
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath(MOD_ID, "status"), (graphics, delta) -> {
             Minecraft client = Minecraft.getInstance();
-            if (!config.showHud || client.player == null || client.screen != null || client.options.hideGui) return;
+            if (!config.showHud || client.player == null || client.gui.screen() != null || client.gui.hud.isHidden()) return;
             ModuleArrayList.render(graphics, client.font, client.getWindow().getGuiScaledWidth(), config, freecam.isActive());
         });
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath(MOD_ID, "finder_info"), (graphics, delta) -> {
             Minecraft client = Minecraft.getInstance();
-            if (client.player == null || client.screen != null || client.options.hideGui) return;
+            if (client.player == null || client.gui.screen() != null || client.gui.hud.isHidden()) return;
             FinderHud.render(graphics, client, config, scanner);
         });
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> xray.close());
@@ -152,7 +152,7 @@ public final class DonutClient implements ClientModInitializer {
     }
 
     private KeyMapping bind(String name, int key, KeyMapping.Category category) {
-        return KeyBindingHelper.registerKeyBinding(new KeyMapping("key.donut." + name, InputConstants.Type.KEYSYM, key, category));
+        return KeyMappingHelper.registerKeyMapping(new KeyMapping("key.donut." + name, InputConstants.Type.KEYSYM, key, category));
     }
 
     private void save() { store.save(config); }

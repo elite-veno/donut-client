@@ -67,8 +67,8 @@ final class GuiClicks {
     }
 
     private static DonutScreen screen(Minecraft client) {
-        require(client.screen instanceof DonutScreen, "Donut screen is not open");
-        return (DonutScreen) client.screen;
+        require(client.gui.screen() instanceof DonutScreen, "Donut screen is not open");
+        return (DonutScreen) client.gui.screen();
     }
 
     private static void require(boolean condition, String message) {

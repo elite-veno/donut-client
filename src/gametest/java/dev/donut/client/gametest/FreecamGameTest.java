@@ -43,7 +43,7 @@ public final class FreecamGameTest implements FabricClientGameTest {
             server.runCommand("setblock 2 65 0 minecraft:spawner");
             server.runCommand("tp @a 0.5 65 8.5 180 10");
             context.waitTicks(10);
-            world.getClientWorld().waitForChunksRender();
+            world.getConnection().waitForChunksRender();
             context.waitFor(client -> client.player != null && client.player.onGround()
                     && Math.abs(client.player.getY() - 65) < 0.001);
             context.waitTicks(3);
@@ -75,7 +75,7 @@ public final class FreecamGameTest implements FabricClientGameTest {
             context.runOnClient(client -> {
                 controller.settings().speed = 1;
                 controller.settings().boostMultiplier = 3;
-                client.screen.onClose();
+                client.gui.screen().onClose();
             });
             context.waitForScreen(null);
             context.waitTicks(2);
@@ -83,8 +83,8 @@ public final class FreecamGameTest implements FabricClientGameTest {
                 require(client.player.input != originalInput, "Freecam did not install neutral player input");
                 require(client.player.input.keyPresses.equals(Input.EMPTY), "Player movement input is not neutral");
                 require(client.getCameraEntity() == client.player, "Freecam replaced the real camera entity");
-                require(client.gameRenderer.getMainCamera().isDetached(), "Freecam camera was not detached");
-                require(client.gameRenderer.getMainCamera().position().distanceTo(controller.position()) < 0.001,
+                require(client.gameRenderer.mainCamera().isDetached(), "Freecam camera was not detached");
+                require(client.gameRenderer.mainCamera().position().distanceTo(controller.position()) < 0.001,
                         "Rendered camera did not use the controller position");
             });
 
@@ -166,8 +166,8 @@ public final class FreecamGameTest implements FabricClientGameTest {
                 require(!controller.settings().enabled, "Freecam enabled flag was not reset");
                 require(client.player.input == originalInput, "Disabling Freecam did not restore the original input");
                 require(client.getCameraEntity() == client.player, "Disabling Freecam changed the camera entity");
-                require(!client.gameRenderer.getMainCamera().isDetached(), "Camera remained detached after disabling");
-                require(client.gameRenderer.getMainCamera().position().distanceTo(client.player.getEyePosition()) < 0.15,
+                require(!client.gameRenderer.mainCamera().isDetached(), "Camera remained detached after disabling");
+                require(client.gameRenderer.mainCamera().position().distanceTo(client.player.getEyePosition()) < 0.15,
                         "Camera did not return to the player");
             });
             assertBodyUnchanged(context, server, clientBody, serverBody);

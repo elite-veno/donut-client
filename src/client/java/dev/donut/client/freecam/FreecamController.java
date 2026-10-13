@@ -58,7 +58,7 @@ public final class FreecamController {
                 || client.getCameraEntity() != client.player) return;
         // Releasing a charged bow/trident would be a gameplay action. Let the user finish first.
         if (client.player.isUsingItem()) {
-            client.player.displayClientMessage(Component.literal("Release the item before enabling Freecam."), true);
+            client.player.sendOverlayMessage(Component.literal("Release the item before enabling Freecam."));
             return;
         }
         settings().sanitize();
@@ -93,7 +93,7 @@ public final class FreecamController {
         if (!isActive()) return;
         suppressActions(client);
         previousPosition = position;
-        if (client.screen != null || client.isPaused()) return;
+        if (client.gui.screen() != null || client.isPaused()) return;
         var options = client.options;
         double forward = axis(options.keyUp, options.keyDown);
         double strafe = axis(options.keyRight, options.keyLeft);
@@ -116,7 +116,7 @@ public final class FreecamController {
 
     /** Arguments have already been sensitivity-scaled by Minecraft's mouse handler. */
     public void turn(double dx, double dy) {
-        if (!isActive() || Minecraft.getInstance().screen != null) return;
+        if (!isActive() || Minecraft.getInstance().gui.screen() != null) return;
         yaw = net.minecraft.util.Mth.wrapDegrees(yaw + (float) (dx * 0.15));
         pitch = Math.clamp(pitch + (float) (dy * 0.15), -90, 90);
     }

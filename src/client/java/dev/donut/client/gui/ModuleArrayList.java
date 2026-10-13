@@ -5,13 +5,13 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 
 /** Active module names at the top right, longest first, each on a dark strip with an accent edge. */
 public final class ModuleArrayList {
     private ModuleArrayList() { }
 
-    public static void render(GuiGraphics graphics, Font font, int screenWidth,
+    public static void render(GuiGraphicsExtractor graphics, Font font, int screenWidth,
                               ClientConfig config, boolean freecamActive) {
         if (!config.showHud) return;
         List<String> names = new ArrayList<>(11);

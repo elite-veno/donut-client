@@ -48,7 +48,7 @@ final class TunnelIndex {
         chunks.markDirty(x, z + 1);
     }
 
-    void markDirty(ChunkPos pos) { chunks.markDirty(pos.x, pos.z); }
+    void markDirty(ChunkPos pos) { chunks.markDirty(pos.x(), pos.z()); }
 
     void collect(Vec3 origin, double range, List<TunnelDetector.Segment> found) {
         double rangeSqr = range * range;
@@ -103,8 +103,8 @@ final class TunnelIndex {
 
         ChunkGrid(LevelChunk chunk) {
             level = chunk.getLevel();
-            chunkX = chunk.getPos().x;
-            chunkZ = chunk.getPos().z;
+            chunkX = chunk.getPos().x();
+            chunkZ = chunk.getPos().z();
             minY = chunk.getMinY();
             maxY = chunk.getMaxY() + 1;
             int words = ((maxY - minY) * 256 + 63) / 64;

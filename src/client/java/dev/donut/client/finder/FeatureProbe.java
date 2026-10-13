@@ -60,8 +60,8 @@ public final class FeatureProbe {
 
     public static Result run(ClientLevel level, ChunkPos center, int radius, long seed) {
         List<LevelChunk> chunks = new ArrayList<>();
-        for (int x = center.x - radius; x <= center.x + radius; x++) {
-            for (int z = center.z - radius; z <= center.z + radius; z++) {
+        for (int x = center.x() - radius; x <= center.x() + radius; x++) {
+            for (int z = center.z() - radius; z <= center.z() + radius; z++) {
                 LevelChunk chunk = level.getChunkSource().getChunk(x, z, ChunkStatus.FULL, false);
                 if (chunk != null) chunks.add(chunk);
             }

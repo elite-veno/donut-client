@@ -3,10 +3,10 @@ package dev.donut.client.gui;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.navigation.ScreenRectangle;
 import net.minecraft.client.gui.render.TextureSetup;
-import net.minecraft.client.gui.render.state.GuiElementRenderState;
+import net.minecraft.client.renderer.state.gui.GuiElementRenderState;
 import net.minecraft.client.renderer.RenderPipelines;
 import org.joml.Matrix3x2f;
 import org.joml.Matrix3x2fc;
@@ -21,7 +21,7 @@ import java.util.Arrays;
 final class SmoothGeometry {
     private SmoothGeometry() { }
 
-    static void rounded(GuiGraphics g, float x, float y, float w, float h, float radius,
+    static void rounded(GuiGraphicsExtractor g, float x, float y, float w, float h, float radius,
                         float stroke, int color) {
         if (w <= 0 || h <= 0 || (color >>> 24) == 0) return;
         Mesh mesh = new Mesh(g);
@@ -46,7 +46,7 @@ final class SmoothGeometry {
         mesh.submit(g);
     }
 
-    static void shadow(GuiGraphics g, float x, float y, float w, float h, float radius, int color) {
+    static void shadow(GuiGraphicsExtractor g, float x, float y, float w, float h, float radius, int color) {
         if (w <= 0 || h <= 0 || (color >>> 24) == 0) return;
         Mesh mesh = new Mesh(g);
         float blur = Math.max(6, radius * 1.5f);
@@ -69,7 +69,7 @@ final class SmoothGeometry {
         mesh.submit(g);
     }
 
-    static void line(GuiGraphics g, float x1, float y1, float x2, float y2, float width, int color) {
+    static void line(GuiGraphicsExtractor g, float x1, float y1, float x2, float y2, float width, int color) {
         if (width <= 0 || (color >>> 24) == 0) return;
         Mesh mesh = new Mesh(g);
         float radius = width / 2;
@@ -84,7 +84,7 @@ final class SmoothGeometry {
         mesh.submit(g);
     }
 
-    static void closedStroke(GuiGraphics g, float[] path, float width, int color) {
+    static void closedStroke(GuiGraphicsExtractor g, float[] path, float width, int color) {
         if (path.length < 6 || width <= 0 || (color >>> 24) == 0) return;
         Mesh mesh = new Mesh(g);
         float half = width / 2;
@@ -168,7 +168,7 @@ final class SmoothGeometry {
         private float maxX = Float.NEGATIVE_INFINITY, maxY = Float.NEGATIVE_INFINITY;
         private ScreenRectangle bounds;
 
-        private Mesh(GuiGraphics g) {
+        private Mesh(GuiGraphicsExtractor g) {
             pose = new Matrix3x2f(g.pose());
             scissor = g.scissorStack.peek();
             double scaleX = Math.hypot(pose.m00(), pose.m01());
@@ -210,12 +210,12 @@ final class SmoothGeometry {
             }
         }
 
-        private void submit(GuiGraphics g) {
+        private void submit(GuiGraphicsExtractor g) {
             int x = (int) Math.floor(minX), y = (int) Math.floor(minY);
             bounds = new ScreenRectangle(x, y, (int) Math.ceil(maxX) - x, (int) Math.ceil(maxY) - y)
                     .transformMaxBounds(pose);
             if (scissor != null) bounds = scissor.intersection(bounds);
-            if (bounds != null && bounds.width() > 0 && bounds.height() > 0) g.guiRenderState.submitGuiElement(this);
+            if (bounds != null && bounds.width() > 0 && bounds.height() > 0) g.guiRenderState.addGuiElement(this);
         }
 
         @Override

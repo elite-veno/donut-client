@@ -10,7 +10,7 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.inventory.ChestMenu;
-import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.ItemLore;
@@ -80,7 +80,7 @@ public final class LiveTrader {
         long waited = tick - phaseStart;
         switch (phase) {
             case FIND_LISTING -> {
-                if (!(client.screen instanceof ContainerScreen screen)) {
+                if (!(client.gui.screen() instanceof ContainerScreen screen)) {
                     if (waited > MENU_TIMEOUT) fail(client, "the Auction House did not open", false);
                     return;
                 }
@@ -102,7 +102,7 @@ public final class LiveTrader {
                 fail(client, "listing not found in the menu; it may have sold", false);
             }
             case AWAIT_CONFIRM -> {
-                if (client.screen instanceof ContainerScreen screen && tick - lastClick >= PAGE_SETTLE) {
+                if (client.gui.screen() instanceof ContainerScreen screen && tick - lastClick >= PAGE_SETTLE) {
                     Slot confirm = findNamed(screen.getMenu(), settings.confirmText);
                     if (confirm != null) {
                         if (findItem(screen.getMenu()) == null) {
@@ -131,7 +131,7 @@ public final class LiveTrader {
                 enter(Phase.AWAIT_LISTING);
             }
             case AWAIT_LISTING -> {
-                if (client.screen instanceof ContainerScreen screen && tick - phaseStart >= PAGE_SETTLE) {
+                if (client.gui.screen() instanceof ContainerScreen screen && tick - phaseStart >= PAGE_SETTLE) {
                     Slot confirm = findNamed(screen.getMenu(), settings.confirmText);
                     if (confirm != null && tick - lastClick > 20) click(client, screen.getMenu(), confirm);
                 }
@@ -237,7 +237,7 @@ public final class LiveTrader {
                 // One swap, then wait for it to apply; the server may take a moment to confirm.
                 swappedAt = tick;
                 var menu = client.player.inventoryMenu;
-                client.gameMode.handleInventoryMouseClick(menu.containerId, index, inventory.getSelectedSlot(), ClickType.SWAP, client.player);
+                client.gameMode.handleContainerInput(menu.containerId, index, inventory.getSelectedSlot(), ContainerInput.SWAP, client.player);
             }
             return false; // Checked again next tick, once the change has applied.
         }
@@ -246,7 +246,7 @@ public final class LiveTrader {
 
     private void click(Minecraft client, ChestMenu menu, Slot slot) {
         lastClick = tick;
-        client.gameMode.handleInventoryMouseClick(menu.containerId, slot.index, 0, ClickType.PICKUP, client.player);
+        client.gameMode.handleContainerInput(menu.containerId, slot.index, 0, ContainerInput.PICKUP, client.player);
     }
 
     private void enter(Phase next) {
@@ -256,7 +256,7 @@ public final class LiveTrader {
 
     /** Closing through the player tells the server and resets the open menu, so later clicks are not ignored. */
     private static void closeMenu(Minecraft client) {
-        if (client.player != null && client.screen instanceof ContainerScreen) client.player.closeContainer();
+        if (client.player != null && client.gui.screen() instanceof ContainerScreen) client.player.closeContainer();
     }
 
     private void fail(Minecraft client, String reason, boolean holding) {

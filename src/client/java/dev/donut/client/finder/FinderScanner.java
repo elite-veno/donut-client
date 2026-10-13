@@ -151,7 +151,7 @@ public final class FinderScanner implements ChunkEvents.Listener {
     private OptionalLong debrisSeed(Minecraft client) {
         if (!config.debris.seedEstimates) return OptionalLong.empty();
         var server = client.getSingleplayerServer();
-        return server != null ? OptionalLong.of(server.getWorldData().worldGenOptions().seed()) : DebrisPredictor.parseSeed(config.debris.seed);
+        return server != null ? OptionalLong.of(server.overworld().getSeed()) : DebrisPredictor.parseSeed(config.debris.seed);
     }
 
     /** Reaches every corner of the client's chunk cache, which holds the render distance plus a margin. */
@@ -164,8 +164,8 @@ public final class FinderScanner implements ChunkEvents.Listener {
         double range = Math.max(config.storage.enabled ? config.storage.range : 0,
                 config.spawner.enabled ? config.spawner.range : 0);
         int radius = (int) Math.ceil(range / 16.0);
-        int centerX = client.player.chunkPosition().x;
-        int centerZ = client.player.chunkPosition().z;
+        int centerX = client.player.chunkPosition().x();
+        int centerZ = client.player.chunkPosition().z();
         for (int x = centerX - radius; x <= centerX + radius; x++) {
             for (int z = centerZ - radius; z <= centerZ + radius; z++) {
                 var chunk = client.level.getChunkSource().getChunk(x, z, ChunkStatus.FULL, false);
@@ -323,7 +323,7 @@ public final class FinderScanner implements ChunkEvents.Listener {
             clear();
             lastLevel = level;
         }
-        LevelChunk chunk = level.getChunkSource().getChunk(pos.x, pos.z, ChunkStatus.FULL, false);
+        LevelChunk chunk = level.getChunkSource().getChunk(pos.x(), pos.z(), ChunkStatus.FULL, false);
         if (chunk != null) recordSpawners(chunk);
         // Chunk data can be resent in place, which keeps the same chunk object.
         if (config.debris.enabled) debris.markDirty(pos);
@@ -350,8 +350,8 @@ public final class FinderScanner implements ChunkEvents.Listener {
             lastNotice = now;
         }
         int distance = (int) Math.round(Math.sqrt(nearest.distToCenterSqr(origin)));
-        client.player.displayClientMessage(Component.literal((count == 1 ? "Ancient debris" : count + " ancient debris")
+        client.player.sendOverlayMessage(Component.literal((count == 1 ? "Ancient debris" : count + " ancient debris")
                 + " revealed " + distance + " blocks away (" + nearest.getX() + ", " + nearest.getY() + ", " + nearest.getZ() + ")")
-                .withStyle(ChatFormatting.LIGHT_PURPLE), true);
+                .withStyle(ChatFormatting.LIGHT_PURPLE));
     }
 }

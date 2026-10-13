@@ -50,7 +50,7 @@ final class ChunkIndex<T> {
 
     /** Rescan this chunk on the next tick, if it is loaded and within range. */
     void markDirty(int chunkX, int chunkZ) {
-        if (dirty.size() < 4096) dirty.add(ChunkPos.asLong(chunkX, chunkZ));
+        if (dirty.size() < 4096) dirty.add(ChunkPos.pack(chunkX, chunkZ));
     }
 
     void tick(ClientLevel level, ChunkPos center, double range) {
@@ -71,7 +71,7 @@ final class ChunkIndex<T> {
 
     /** This chunk's result, or null when it has none or isn't indexed. */
     T get(int chunkX, int chunkZ) {
-        Scan<T> scan = scans.get(ChunkPos.asLong(chunkX, chunkZ));
+        Scan<T> scan = scans.get(ChunkPos.pack(chunkX, chunkZ));
         return scan == null ? null : scan.result;
     }
 
@@ -88,7 +88,7 @@ final class ChunkIndex<T> {
             long key = iterator.nextLong();
             iterator.remove();
             int x = ChunkPos.getX(key), z = ChunkPos.getZ(key);
-            if (!withinRange(x - center.x, z - center.z, range)) continue;
+            if (!withinRange(x - center.x(), z - center.z(), range)) continue;
             LevelChunk chunk = level.getChunkSource().getChunk(x, z, ChunkStatus.FULL, false);
             if (chunk == null) continue;
             scans.put(key, new Scan<>(chunk, tick, scanner.apply(chunk)));
@@ -98,10 +98,10 @@ final class ChunkIndex<T> {
 
     private int scan(ClientLevel level, ChunkPos center, int budget, boolean refresh) {
         for (int i = 0; i < offsets.length && budget > 0; i += 2) {
-            int x = center.x + offsets[i], z = center.z + offsets[i + 1];
+            int x = center.x() + offsets[i], z = center.z() + offsets[i + 1];
             LevelChunk chunk = level.getChunkSource().getChunk(x, z, ChunkStatus.FULL, false);
             if (chunk == null) continue;
-            long key = ChunkPos.asLong(x, z);
+            long key = ChunkPos.pack(x, z);
             Scan<T> previous = scans.get(key);
             // A reloaded chunk is a new object, even when it reuses the same position.
             boolean indexed = previous != null && previous.chunk == chunk;
@@ -115,7 +115,7 @@ final class ChunkIndex<T> {
     private void prune(ClientLevel level, ChunkPos center, double range) {
         scans.entrySet().removeIf(entry -> {
             int x = ChunkPos.getX(entry.getKey()), z = ChunkPos.getZ(entry.getKey());
-            return !withinRange(x - center.x, z - center.z, range)
+            return !withinRange(x - center.x(), z - center.z(), range)
                     || level.getChunkSource().getChunk(x, z, ChunkStatus.FULL, false) != entry.getValue().chunk;
         });
     }

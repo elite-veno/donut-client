@@ -29,10 +29,10 @@ public final class ChunkDump {
     private ChunkDump() { }
 
     public static Path write(Path directory, ClientLevel level, BlockPos player, int radius) throws IOException {
-        ChunkPos center = new ChunkPos(player);
+        ChunkPos center = ChunkPos.containing(player);
         List<LevelChunk> chunks = new ArrayList<>();
-        for (int x = center.x - radius; x <= center.x + radius; x++) {
-            for (int z = center.z - radius; z <= center.z + radius; z++) {
+        for (int x = center.x() - radius; x <= center.x() + radius; x++) {
+            for (int z = center.z() - radius; z <= center.z() + radius; z++) {
                 LevelChunk chunk = level.getChunkSource().getChunk(x, z, ChunkStatus.FULL, false);
                 if (chunk != null) chunks.add(chunk);
             }
@@ -77,8 +77,8 @@ public final class ChunkDump {
             for (String name : palette.keySet()) out.writeUTF(name);
             out.writeInt(chunks.size());
             for (int c = 0; c < chunks.size(); c++) {
-                out.writeInt(chunks.get(c).getPos().x);
-                out.writeInt(chunks.get(c).getPos().z);
+                out.writeInt(chunks.get(c).getPos().x());
+                out.writeInt(chunks.get(c).getPos().z());
                 for (short value : blocks.get(c)) out.writeShort(value);
                 for (short value : biomes.get(c)) out.writeShort(value);
             }

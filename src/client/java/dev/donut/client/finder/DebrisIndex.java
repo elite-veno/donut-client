@@ -104,7 +104,7 @@ final class DebrisIndex {
 
     void markDirty(BlockPos pos) { chunks.markDirty(SectionPos.blockToSectionCoord(pos.getX()), SectionPos.blockToSectionCoord(pos.getZ())); }
 
-    void markDirty(ChunkPos pos) { chunks.markDirty(pos.x, pos.z); }
+    void markDirty(ChunkPos pos) { chunks.markDirty(pos.x(), pos.z()); }
 
     /** @return true the first time the server confirms debris at this position */
     boolean confirm(BlockPos pos, boolean debris) {
@@ -286,7 +286,7 @@ final class DebrisIndex {
             }
             // Listed but nowhere in the blocks: hidden, unless this palette is the global one that lists every type.
             if (exposed.size() + buried.size() == found && !section.maybeHas(NEVER_SENT)) {
-                clues.add(SectionPos.asLong(chunk.getPos().x, chunk.getSectionYFromSectionIndex(index), chunk.getPos().z));
+                clues.add(SectionPos.asLong(chunk.getPos().x(), chunk.getSectionYFromSectionIndex(index), chunk.getPos().z()));
             }
         }
         LongSet attempts = attempts(chunk);
@@ -302,7 +302,7 @@ final class DebrisIndex {
         int[] bedrockCounts = checkBedrock(chunk);
         int[] ores = attempts.isEmpty() ? new int[2] : FeatureProbe.verify(level, chunk, oreRandom, seed.getAsLong());
         if (exposed.isEmpty() && buried.isEmpty() && attempts.isEmpty() && clues.isEmpty()) return null;
-        return new DebrisChunk(chunk.getPos().x, chunk.getPos().z, List.copyOf(exposed), List.copyOf(buried), List.copyOf(estimates),
+        return new DebrisChunk(chunk.getPos().x(), chunk.getPos().z(), List.copyOf(exposed), List.copyOf(buried), List.copyOf(estimates),
                 attempts, bedrockCounts[0], bedrockCounts[1], bedrockCounts[2], ores[0], ores[1], clues.toLongArray());
     }
 
@@ -332,9 +332,9 @@ final class DebrisIndex {
         LongSet inside = new LongOpenHashSet();
         for (int dx = -1; dx <= 1; dx++) {
             for (int dz = -1; dz <= 1; dz++) {
-                predictor.attempts(seed.getAsLong(), center.x + dx, center.z + dz, packed -> {
-                    if (SectionPos.blockToSectionCoord(BlockPos.getX(packed)) == center.x
-                            && SectionPos.blockToSectionCoord(BlockPos.getZ(packed)) == center.z) inside.add(packed);
+                predictor.attempts(seed.getAsLong(), center.x() + dx, center.z() + dz, packed -> {
+                    if (SectionPos.blockToSectionCoord(BlockPos.getX(packed)) == center.x()
+                            && SectionPos.blockToSectionCoord(BlockPos.getZ(packed)) == center.z()) inside.add(packed);
                 });
             }
         }
@@ -346,8 +346,8 @@ final class DebrisIndex {
         for (Direction direction : DIRECTIONS) {
             neighbor.setWithOffset(pos, direction);
             BlockState state;
-            if (SectionPos.blockToSectionCoord(neighbor.getX()) == chunk.getPos().x
-                    && SectionPos.blockToSectionCoord(neighbor.getZ()) == chunk.getPos().z) {
+            if (SectionPos.blockToSectionCoord(neighbor.getX()) == chunk.getPos().x()
+                    && SectionPos.blockToSectionCoord(neighbor.getZ()) == chunk.getPos().z()) {
                 if (chunk.isOutsideBuildHeight(neighbor)) continue;
                 state = chunk.getBlockState(neighbor);
             } else {

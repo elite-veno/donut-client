@@ -190,9 +190,9 @@ public final class SniperGameTest implements FabricClientGameTest {
     private static void confirmMenu(ClientGameTestContext context, Item shown) {
         SimpleContainer confirm = openMenu(context, 70, 27, "Confirm Purchase");
         context.runOnClient(client -> {
-            confirm.setItem(11, named(Items.LIME_STAINED_GLASS_PANE, "Confirm"));
+            confirm.setItem(11, named(Items.STAINED_GLASS_PANE.lime(), "Confirm"));
             confirm.setItem(13, new ItemStack(shown, 16));
-            confirm.setItem(15, named(Items.RED_STAINED_GLASS_PANE, "Cancel"));
+            confirm.setItem(15, named(Items.STAINED_GLASS_PANE.red(), "Cancel"));
         });
     }
 

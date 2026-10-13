@@ -193,7 +193,7 @@ public final class SniperEngine implements LiveTrader.Listener {
             return;
         }
         if (ledger.tradesSince(true, now - 3_600_000L) >= settings().maxTradesPerHour) { log("Hourly trade limit reached; skipped " + label); return; }
-        if (client == null || client.player == null || client.screen != null) { log("Skipped " + label + ": a menu is open"); return; }
+        if (client == null || client.player == null || client.gui.screen() != null) { log("Skipped " + label + ": a menu is open"); return; }
         pendingResale = decision.resaleUnit();
         log("Buying: " + detail);
         trader.buy(client, listing, (long) Math.floor(decision.resaleUnit() * listing.item().count()));
@@ -252,7 +252,7 @@ public final class SniperEngine implements LiveTrader.Listener {
 
     private void notify(String text, ChatFormatting color) {
         if (client == null || client.player == null) return;
-        client.player.displayClientMessage(Component.literal("[Donut] AH Sniper " + text).withStyle(color), false);
+        client.player.sendSystemMessage(Component.literal("[Donut] AH Sniper " + text).withStyle(color));
         client.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.EXPERIENCE_ORB_PICKUP, 1.0f));
     }
 

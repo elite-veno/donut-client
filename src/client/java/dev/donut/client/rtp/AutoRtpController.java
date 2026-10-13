@@ -15,7 +15,7 @@ import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundEvents;
-import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.ItemLore;
@@ -92,7 +92,7 @@ public final class AutoRtpController {
         lastHealth = health;
 
         if (loop.phase() == RtpLoop.Phase.AWAIT_TELEPORT && !menuHandled && tick - sentTick < MENU_WINDOW
-                && client.screen instanceof ContainerScreen menu) {
+                && client.gui.screen() instanceof ContainerScreen menu) {
             menuHandled = true;
             if (!clickMenuItem(client, menu)) { finish(client, RtpLoop.Result.MENU_MISSING); return; }
         }
@@ -154,7 +154,7 @@ public final class AutoRtpController {
             if (itemLore != null) for (Component line : itemLore.lines()) lore.add(line.getString());
             if (RtpLoop.matchesMenuItem(name, lore, settings().menuItem)) {
                 lastMenuSlot = slot.index;
-                client.gameMode.handleInventoryMouseClick(menu.containerId, slot.index, 0, ClickType.PICKUP, client.player);
+                client.gameMode.handleContainerInput(menu.containerId, slot.index, 0, ContainerInput.PICKUP, client.player);
                 return true;
             }
         }
@@ -190,7 +190,7 @@ public final class AutoRtpController {
 
     private static void message(Minecraft client, String text, ChatFormatting color) {
         if (client.player == null) return;
-        client.player.displayClientMessage(Component.literal("[Donut] Auto RTP " + text).withStyle(color), false);
+        client.player.sendSystemMessage(Component.literal("[Donut] Auto RTP " + text).withStyle(color));
     }
 
     /** A short line for the settings page. */

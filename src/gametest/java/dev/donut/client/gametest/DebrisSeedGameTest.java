@@ -15,7 +15,7 @@ import java.util.stream.Collectors;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
-import net.fabricmc.fabric.api.client.gametest.v1.context.TestClientWorldContext;
+import net.fabricmc.fabric.api.client.gametest.v1.context.TestServerConnection;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestServerContext;
 import net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions;
 import net.fabricmc.loader.api.FabricLoader;
@@ -60,7 +60,7 @@ public final class DebrisSeedGameTest implements FabricClientGameTest {
             context.runOnClient(client -> config.debris.seed = SEED);
             try (var server = context.worldBuilder().adjustSettings(creator -> creator.setSeed(SEED)).createServer();
                  var connection = server.connect()) {
-                verify(context, server, connection.getClientWorld(), scanner, "server");
+                verify(context, server, connection, scanner, "server");
                 // A wrong seed is caught by the debris the server shows.
                 context.runOnClient(client -> config.debris.seed = "12345");
                 context.waitFor(client -> scanner.debrisStats().bedrockMismatch() && scanner.debrisStats().debrisMismatch()
@@ -76,7 +76,7 @@ public final class DebrisSeedGameTest implements FabricClientGameTest {
 
             context.runOnClient(client -> config.debris.seed = "not this world's seed");
             try (var world = context.worldBuilder().adjustSettings(creator -> creator.setSeed(SEED)).create()) {
-                verify(context, world.getServer(), world.getClientWorld(), scanner, "singleplayer");
+                verify(context, world.getServer(), world.getConnection(), scanner, "singleplayer");
             }
         } finally {
             active.set(false);
@@ -88,7 +88,7 @@ public final class DebrisSeedGameTest implements FabricClientGameTest {
         }
     }
 
-    private static void verify(ClientGameTestContext context, TestServerContext server, TestClientWorldContext clientWorld,
+    private static void verify(ClientGameTestContext context, TestServerContext server, TestServerConnection clientWorld,
                                FinderScanner scanner, String name) {
         server.runCommand("gamemode spectator @a");
         server.runCommand("execute in minecraft:the_nether run tp @a 8.5 20 8.5 0 25");
@@ -163,8 +163,8 @@ public final class DebrisSeedGameTest implements FabricClientGameTest {
     private static Set<BlockPos> hideBuriedDebris(ClientLevel level, ChunkPos center) {
         Set<BlockPos> buried = new HashSet<>();
         int radius = 10;
-        for (int cx = center.x - radius; cx <= center.x + radius; cx++) {
-            for (int cz = center.z - radius; cz <= center.z + radius; cz++) {
+        for (int cx = center.x() - radius; cx <= center.x() + radius; cx++) {
+            for (int cz = center.z() - radius; cz <= center.z() + radius; cz++) {
                 if (!level.hasChunk(cx, cz)) continue;
                 for (BlockPos pos : BlockPos.betweenClosed(cx * 16, 0, cz * 16, cx * 16 + 15, 127, cz * 16 + 15)) {
                     if (level.getBlockState(pos).is(Blocks.ANCIENT_DEBRIS) && buried(level, pos)) buried.add(pos.immutable());
