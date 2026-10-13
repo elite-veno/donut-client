@@ -12,7 +12,6 @@ public final class ClientConfig {
     public FullbrightSettings fullbright = new FullbrightSettings();
     public FreecamSettings freecam = new FreecamSettings();
     public RtpSettings rtp = new RtpSettings();
-    public SniperSettings sniper = new SniperSettings();
     public HudSettings hud = new HudSettings();
     public GuiSettings gui = new GuiSettings();
     public int accentColor = 0x5BE3C8;
@@ -76,7 +75,6 @@ public final class ClientConfig {
         if (fullbright == null) fullbright = new FullbrightSettings();
         if (freecam == null) freecam = new FreecamSettings();
         if (rtp == null) rtp = new RtpSettings();
-        if (sniper == null) sniper = new SniperSettings();
         if (hud == null) hud = new HudSettings();
         if (gui == null) gui = new GuiSettings();
         storage.sanitize();
@@ -89,7 +87,6 @@ public final class ClientConfig {
         fullbright.sanitize();
         freecam.sanitize();
         rtp.sanitize();
-        sniper.sanitize();
         hud.sanitize();
         gui.sanitize();
         accentColor &= 0xFFFFFF;

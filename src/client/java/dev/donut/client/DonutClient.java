@@ -13,8 +13,6 @@ import dev.donut.client.gui.ModuleArrayList;
 import dev.donut.client.input.ModuleKeybinds;
 import dev.donut.client.render.HighlightRenderer;
 import dev.donut.client.rtp.AutoRtpController;
-import dev.donut.client.sniper.DonutApi;
-import dev.donut.client.sniper.SniperEngine;
 import dev.donut.client.xray.XrayController;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
@@ -53,12 +51,7 @@ public final class DonutClient implements ClientModInitializer {
         XrayController xray = new XrayController(config);
         FullbrightController fullbright = new FullbrightController(config);
         AutoRtpController rtp = new AutoRtpController(config, scanner, this::save);
-        SniperEngine sniper = new SniperEngine(config, new DonutApi(),
-                FabricLoader.getInstance().getConfigDir().resolve("donut-sniper-market.json"));
-        ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
-            rtp.onServerMessage(message.getString());
-            sniper.onServerMessage(message.getString());
-        });
+        ClientReceiveMessageEvents.GAME.register((message, overlay) -> rtp.onServerMessage(message.getString()));
 
         KeyMapping.Category category = KeyMapping.Category.register(Identifier.fromNamespaceAndPath(MOD_ID, "client"));
         KeyMapping open = bind("open_gui", GLFW.GLFW_KEY_RIGHT_SHIFT, category);
@@ -77,7 +70,7 @@ public final class DonutClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             boolean inputBlocked = ModuleKeybinds.inputBlocked(client);
             while (open.consumeClick()) {
-                if (!inputBlocked && client.gui.screen() == null) client.gui.setScreen(new DonutScreen(config, this::save, scanner::activityStats, rtp::status, sniper));
+                if (!inputBlocked && client.gui.screen() == null) client.gui.setScreen(new DonutScreen(config, this::save, scanner::activityStats, rtp::status));
             }
             if (ModuleKeybinds.consumePress(client, 0)) {
                 if (!inputBlocked && client.gui.screen() == null && client.player != null) { config.storage.enabled = !config.storage.enabled; save(); }
@@ -113,13 +106,12 @@ public final class DonutClient implements ClientModInitializer {
             fullbright.tick();
             scanner.tick(client);
             rtp.tick(client);
-            sniper.tick(client);
         });
 
         ScreenEvents.AFTER_INIT.register((client, screen, width, height) -> {
             if (screen instanceof TitleScreen) {
                 Screens.getWidgets(screen).add(Button.builder(Component.literal("Donut"), button ->
-                        client.gui.setScreen(new DonutScreen(config, this::save, scanner::activityStats, rtp::status, sniper)))
+                        client.gui.setScreen(new DonutScreen(config, this::save, scanner::activityStats, rtp::status)))
                         .bounds(width - 66, height - 28, 58, 20).build());
             }
         });
@@ -139,14 +131,10 @@ public final class DonutClient implements ClientModInitializer {
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
             scanner.clear();
             freecam.disable();
-            config.sniper.enabled = false;
-            config.sniper.live = false;
-            sniper.save();
         });
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
             freecam.disable();
             save();
-            sniper.save();
             renderer.close();
         });
     }

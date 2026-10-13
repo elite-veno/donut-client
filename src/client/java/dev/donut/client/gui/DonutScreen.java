@@ -9,11 +9,6 @@ import dev.donut.client.finder.ActivityStats;
 import dev.donut.client.finder.DebrisStats;
 import dev.donut.client.finder.FinderScanner;
 import dev.donut.client.input.ModuleKeybinds;
-import dev.donut.client.sniper.Ledger;
-import dev.donut.client.sniper.LiveTrader;
-import dev.donut.client.sniper.Money;
-import dev.donut.client.sniper.PriceStats;
-import dev.donut.client.sniper.SniperEngine;
 import dev.doughbay.fabric.GoNutsApi;
 import dev.doughbay.fabric.Payroll;
 import dev.doughbay.fabric.Tuning;
@@ -75,7 +70,6 @@ public final class DonutScreen extends Screen {
     private final Runnable save;
     private final Supplier<ActivityStats> activityStats;
     private final Supplier<String> rtpStatus;
-    private final SniperEngine sniper;
     private final String version;
     private final List<NavGroup> groups = new ArrayList<>();
     private final Map<String, Page> pages = new LinkedHashMap<>();
@@ -128,17 +122,11 @@ public final class DonutScreen extends Screen {
     }
 
     public DonutScreen(ClientConfig config, Runnable save, Supplier<ActivityStats> activityStats, Supplier<String> rtpStatus) {
-        this(config, save, activityStats, rtpStatus, null);
-    }
-
-    public DonutScreen(ClientConfig config, Runnable save, Supplier<ActivityStats> activityStats, Supplier<String> rtpStatus,
-                       SniperEngine sniper) {
         super(Component.literal("Donut Client"));
         this.config = config;
         this.save = save;
         this.activityStats = activityStats;
         this.rtpStatus = rtpStatus;
-        this.sniper = sniper;
         version = FabricLoader.getInstance().getModContainer("donut")
                 .map(mod -> "VERSION " + mod.getMetadata().getVersion().getFriendlyString().toUpperCase(Locale.ROOT)).orElse("");
         group("Modules",
@@ -154,13 +142,8 @@ public final class DonutScreen extends Screen {
                                 () -> config.hud.labels, () -> change(() -> config.hud.labels = !config.hud.labels), c ->
                                         c.slider("count", "Labels shown", "How many of the nearest highlights get a label",
                                                 () -> config.hud.maxLabels, v -> config.hud.maxLabels = (int) Math.round(v), 1, 32, 1, "")))));
-        if (sniper != null) {
-            group("Trading",
-                    page("sniper", "Sniper", "chart", List.of(ahSniper())),
-                    page("dashboard", "Dashboard", "grid", "Profit, open trades and the sniper's activity", this::drawDashboard),
-                    page("markets", "Markets", "list", "The busiest items in the saved sale history", this::drawMarkets));
-        }
-        // GoNuts ships inside Donut Client; these pages drive it through GoNutsApi, its one stable entry point.
+        // GoNuts ships inside Donut Client and does its trading; these pages drive it through GoNutsApi, its one stable
+        // entry point.
         group("GoNuts",
                 page("gonuts", "Overview", "donut", "Trading session, safety and updates", this::drawGoNuts).heading("GoNuts"),
                 new Page("gonuts-settings", "Settings", "sliders", "Every GoNuts setting, by group; changes save at once",
@@ -472,52 +455,6 @@ public final class DonutScreen extends Screen {
         }).key(5);
     }
 
-    private Module ahSniper() {
-        var s = config.sniper;
-        return new Module("AHSniper", "Watches the Auction House for listings far under their usual price",
-                "sniper ah auction house trading deals flip", () -> s.enabled, () -> {
-            if (s.enabled || canUseWorld()) s.enabled = !s.enabled;
-        }, () -> s.enabled || canUseWorld(), "Join a server to start the sniper", c -> {
-            c.note(sniper.status(), s.enabled ? TEXT : MUTED);
-            c.info("Mode", s.live ? "Live" : "Paper", s.live ? DANGER : LABEL);
-            c.info("Checked", sniper.listingsChecked() + " listings", LABEL);
-            c.info("Deals", Integer.toString(sniper.deals()), LABEL);
-            if (sniper.traderPhase() != LiveTrader.Phase.IDLE) {
-                c.info("Trader", sniper.traderPhase().name().toLowerCase(Locale.ROOT).replace('_', ' '), TEXT);
-            }
-            c.section("Account");
-            c.field("key", "API key", "Run /api in game to get one", () -> s.apiKey, v -> s.apiKey = v, true);
-            c.toggle("live", "Live trading", "Real purchases with your money; resets every session", () -> s.live, () -> s.live = !s.live);
-            if (s.live) c.note("Live: buys with your money.", DANGER);
-            c.section("Limits");
-            c.money("max", "Max price", "Never pay more per trade", () -> s.maxPrice, v -> s.maxPrice = v);
-            c.money("exposure", "Max exposure", "Total in items not yet sold back", () -> s.maxExposure, v -> s.maxExposure = v);
-            c.more(m -> {
-                m.section("Deal rules");
-                m.slider("deviation", "Min deviation", "Robust standard deviations under the item's value", () -> s.minDeviation,
-                        v -> s.minDeviation = v, 1, 6, .1, "σ");
-                m.slider("margin", "Min margin", "Margin after tax when resold", () -> s.minMargin, v -> s.minMargin = v, .02, 1, .01, "%");
-                m.money("profit", "Min profit", "Per trade, after tax; type 250k, 1.5M or 12000", () -> s.minProfit, v -> s.minProfit = v);
-                m.slider("tax", "AH tax", "The Auction House's cut of each sale", () -> s.taxPercent, v -> s.taxPercent = v, 0, 20, .5, " %");
-                m.slider("undercut", "Undercut", "Relist this far under the cheapest competitor", () -> s.undercutPercent,
-                        v -> s.undercutPercent = v, 0, 10, .5, " %");
-                m.slider("sales", "Min sales", "Sales on record before an item is traded", () -> s.minSales,
-                        v -> s.minSales = (int) Math.round(v), 3, 50, 1, "");
-                m.slider("perDay", "Min sales / day", "How often the item must sell", () -> s.minSalesPerDay, v -> s.minSalesPerDay = v, 0, 50, .5, "");
-                m.section("Pace");
-                m.slider("rate", "Trades / hour", "Maximum live trades per hour", () -> s.maxTradesPerHour,
-                        v -> s.maxTradesPerHour = (int) Math.round(v), 1, 100, 1, "");
-                m.slider("poll", "Poll every", "Check new listings this often", () -> s.pollSeconds, v -> s.pollSeconds = v, 2, 30, 1, " s");
-                m.slider("history", "History", "Sale history to keep", () -> s.historyDays, v -> s.historyDays = v, 1, 30, 1, " days");
-                m.section("Commands");
-                m.field("search", "Search command", "{item} becomes the item name", () -> s.searchCommand, v -> s.searchCommand = v, false);
-                m.field("sell", "Sell command", "{price} becomes the stack price", () -> s.sellCommand, v -> s.sellCommand = v, false);
-                m.field("confirm", "Confirm button", "Text on the confirm item", () -> s.confirmText, v -> s.confirmText = v, false);
-            });
-            c.note("Try paper mode first. Check the server's rules before automating trades.", DIM);
-        }, -1);
-    }
-
     private Module module(String name, String description, String keywords, BooleanSupplier enabled, Runnable toggle,
                           Consumer<Column> settings) {
         return new Module(name, description, keywords, enabled, toggle, () -> true, "", settings, -1);
@@ -538,78 +475,6 @@ public final class DonutScreen extends Screen {
     }
 
     // Pages -------------------------------------------------------------------------------------
-
-    private void drawDashboard(Column c) {
-        Ledger ledger = sniper.ledger();
-        c.label(sniper.status(), TEXT);
-        String trader = sniper.traderPhase() == LiveTrader.Phase.IDLE ? ""
-                : "  ·  trading: " + sniper.traderPhase().name().toLowerCase(Locale.ROOT).replace('_', ' ');
-        c.note(sniper.listingsChecked() + " listings checked  ·  " + sniper.deals() + " deals" + trader, MUTED);
-        c.y += 4;
-        boolean wide = c.w >= 440;
-        int columns = wide ? 4 : 2, gap = 8, w = (c.w - gap * (columns - 1)) / columns;
-        String[][] stats = {
-                {"Paper profit", Money.format(ledger.realized(false)), ledger.count(false, Ledger.State.SOLD) + " sold"},
-                {"Paper open", Money.format(ledger.exposure(false)), ledger.count(false, Ledger.State.OPEN) + " trades"},
-                {"Live profit", Money.format(ledger.realized(true)), ledger.count(true, Ledger.State.SOLD) + " sold"},
-                {"Live listed", Money.format(ledger.exposure(true)), ledger.count(true, Ledger.State.LISTED) + " listed"}};
-        for (int i = 0; i < stats.length; i++) {
-            stat(c.x + (i % columns) * (w + gap), c.y + (i / columns) * 48, w, stats[i][0], stats[i][1], stats[i][2]);
-        }
-        c.y += (stats.length / columns) * 48;
-        c.section("Trades");
-        var trades = ledger.recent(6);
-        if (trades.isEmpty()) c.note("No trades yet.", MUTED);
-        for (Ledger.Position trade : trades) {
-            String result = trade.state == Ledger.State.SOLD ? "+" + Money.format(trade.realized)
-                    : trade.state == Ledger.State.UNSOLD ? "unsold" : trade.state == Ledger.State.LISTED ? "listed" : "open";
-            String price = Money.format(trade.cost) + "  →  " + result;
-            int priceWidth = width(price, Size.BASE);
-            draw(fit((trade.live ? "" : "[paper] ") + trade.label + " x" + trade.count, Size.BASE, c.w - priceWidth - 10),
-                    Size.BASE, c.x, c.y + 3, LABEL);
-            draw(price, Size.BASE, c.x + c.w - priceWidth, c.y + 3, trade.state == Ledger.State.SOLD ? GOOD : MUTED);
-            c.y += 16;
-        }
-        c.section("Activity");
-        var lines = sniper.log();
-        if (lines.isEmpty()) c.note("Start the sniper to watch the Auction House.", MUTED);
-        for (String line : lines.subList(0, Math.min(lines.size(), 25))) {
-            draw(fit(line, Size.SMALL, c.w), Size.SMALL, c.x, c.y + 2, MUTED);
-            c.y += 12;
-        }
-    }
-
-    private void stat(int x, int y, int w, String label, String value, String detail) {
-        round(graphics, x, y, w, 40, 6, CARD_HOVER);
-        outline(graphics, x, y, w, 40, 6, EDGE);
-        draw(fit(label.toUpperCase(Locale.ROOT), Size.SMALL, w - 20), Size.SMALL, x + 10, y + 5, DIM);
-        bold(fit(value, Size.BASE, w - 20), x + 10, y + 16, TEXT);
-        draw(fit(detail, Size.SMALL, w - 20), Size.SMALL, x + 10, y + 28, MUTED);
-    }
-
-    private void drawMarkets(Column c) {
-        c.note("Busiest items in the last " + Math.round(config.sniper.historyDays) + " days of saved sales.", MUTED);
-        int count = c.x + c.w, perDay = count - 48, spread = perDay - 52, median = spread - 62;
-        draw("ITEM", Size.SMALL, c.x, c.y + 2, DIM);
-        String[] heads = {"MEDIAN", "SPREAD", "/ DAY", "SALES"};
-        int[] rights = {median, spread, perDay, count};
-        for (int i = 0; i < heads.length; i++) draw(heads[i], Size.SMALL, rights[i] - width(heads[i], Size.SMALL), c.y + 2, DIM);
-        round(graphics, c.x, c.y + 13, c.w, 1, 0, EDGE);
-        c.y += 18;
-        var rows = sniper.busiest(60);
-        if (rows.isEmpty()) c.note("No sales yet. Start the sniper with an API key.", MUTED);
-        for (SniperEngine.MarketRow row : rows) {
-            PriceStats stats = row.stats();
-            String[] cells = {Money.format(stats.median()),
-                    stats.sales() == 0 || stats.median() <= 0 ? "-" : Math.round(stats.sigma() / stats.median() * 100) + "%",
-                    String.format(Locale.ROOT, "%.1f", stats.salesPerDay()), Integer.toString(stats.sales())};
-            draw(fit(row.name(), Size.BASE, median - 70 - c.x), Size.BASE, c.x, c.y + 3, LABEL);
-            for (int i = 0; i < cells.length; i++) {
-                draw(cells[i], Size.BASE, rights[i] - width(cells[i], Size.BASE), c.y + 3, i == 0 ? TEXT : MUTED);
-            }
-            c.y += 16;
-        }
-    }
 
     private void drawKeybinds(Column c) {
         for (Page p : pages.values()) {
@@ -660,10 +525,10 @@ public final class DonutScreen extends Screen {
             // "Automation session is stopped" only says the state again.
             if (!detail.isBlank() && !(stopped && detail.toLowerCase(Locale.ROOT).contains("stopped"))) c.note(detail, MUTED);
             c.info("Trades started", Integer.toString(session.tradesStarted()), TEXT);
-            c.info("Committed", Money.format(session.committedSpend()), TEXT);
+            c.info("Committed", money(session.committedSpend()), TEXT);
             c.info("Open listings", Integer.toString(session.openListings()), TEXT);
             long balance = GoNutsApi.balance();
-            c.info("Balance", balance < 0 ? "Not read yet" : Money.format(balance), balance < 0 ? MUTED : TEXT);
+            c.info("Balance", balance < 0 ? "Not read yet" : money(balance), balance < 0 ? MUTED : TEXT);
             boolean resumable = session.resumable() || session.recoveredSession();
             if (stopped) {
                 c.button("session", "Trading", "Starts trading on this client, within the limits in Settings", "Start", this::goNutsStart);
@@ -683,16 +548,18 @@ public final class DonutScreen extends Screen {
         // No payroll payment goes out until the rule is approved, so the request comes first and stands out.
         var pending = GoNutsApi.pendingPayment();
         if (pending != null) {
-            c.note("A payroll rule waits for your approval before its first payment: " + Money.format(pending.amount()) + " to "
-                    + pending.name() + ", from " + Money.format(pending.profit()) + " profit. Approving lets the rule pay on its own "
-                    + "from now on, so check it on the full GoNuts screen if unsure.", WARN);
+            // An amount of -1 is a rule this client has not worked a payment out for yet.
+            String payment = pending.amount() < 0 ? "Its first payment has not been worked out on this client yet."
+                    : "Its first payment: " + money(pending.amount()) + " to " + pending.name() + ", from " + money(pending.profit()) + " profit.";
+            c.note("The payroll rule for " + pending.name() + " waits for your approval. " + payment + " Approving lets the rule pay "
+                    + "on its own from now on, so check it on the full GoNuts screen if unsure.", WARN);
             c.warnNext();
-            c.button("confirmPay", "Payroll rule for " + pending.name(), "Nothing is paid until you approve", "Approve",
+            c.button("confirmPay", "Approve rule " + pending.name(), "Nothing is paid until you approve", "Approve",
                     () -> goNutsApprove(pending));
         }
         long paid = GoNutsApi.paidToday(), cap = Math.round(GoNutsApi.get("pay.daily_cap"));
         // A cap of 0 means no limit at all.
-        c.info("Paid out, last 24 h", Money.format(paid) + (cap > 0 ? " of " + Money.format(cap) : "  ·  no limit"),
+        c.info("Paid out, last 24 h", money(paid) + (cap > 0 ? " of " + money(cap) : "  ·  no limit"),
                 cap <= 0 || paid >= cap ? WARN : TEXT);
         List<String> risky = GoNutsApi.riskyFeaturesOn();
         if (risky.isEmpty()) c.note("Nothing that spends money or acts for this account is on.", MUTED);
@@ -739,7 +606,9 @@ public final class DonutScreen extends Screen {
     /** Approves the payroll rule only if the request on screen is still the one waiting. */
     private void goNutsApprove(Payroll.PendingConfirmation shown) {
         var now = GoNutsApi.pendingPayment();
-        if (now == null || now.ruleId() != shown.ruleId() || !now.name().equals(shown.name()) || now.amount() != shown.amount()) {
+        // The same rule and name, and the same amount whenever one was shown.
+        if (now == null || now.ruleId() != shown.ruleId() || !now.name().equals(shown.name())
+                || shown.amount() >= 0 && now.amount() != shown.amount()) {
             reply("The payment waiting for approval changed; look again before approving.", true);
             return;
         }
@@ -939,6 +808,23 @@ public final class DonutScreen extends Screen {
     /** GoNuts descriptions end on-off settings with "(1 on, 0 off)", which a switch already says. */
     private static String clean(String description) {
         return description == null ? "" : description.replaceAll("\\s*\\(1 on, 0 off\\)", "");
+    }
+
+    /** An amount as DonutSMP writes it: $950, $12.5K, $1.25M. */
+    private static String money(double amount) {
+        String sign = amount < 0 ? "-" : "";
+        double value = Math.abs(amount);
+        if (value < 1000) return sign + "$" + Math.round(value);
+        String[] units = {"K", "M", "B", "T"};
+        int unit = 0;
+        value /= 1000;
+        while (value >= 1000 && unit < units.length - 1) {
+            value /= 1000;
+            unit++;
+        }
+        String number = String.format(Locale.ROOT, value >= 100 ? "%.0f" : value >= 10 ? "%.1f" : "%.2f", value);
+        if (number.contains(".")) number = number.replaceAll("0+$", "").replaceAll("\\.$", "");
+        return sign + "$" + number + units[unit];
     }
 
     /** "WAITING_FOR_ORDER" as "Waiting for order". */
@@ -2116,13 +2002,6 @@ public final class DonutScreen extends Screen {
             y += h + 2;
         }
 
-        /** Amounts are typed as 250k, 1.5M or 12000. */
-        void money(String key, String label, String description, DoubleSupplier getter, DoubleConsumer setter) {
-            field(key, label, description, () -> Money.format(getter.getAsDouble()), text -> {
-                double value = Money.parse(text);
-                if (Double.isFinite(value)) setter.accept(value);
-            }, false);
-        }
 
         void info(String label, String value, int color) {
             flushChips();
