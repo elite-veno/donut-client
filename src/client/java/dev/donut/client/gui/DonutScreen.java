@@ -15,6 +15,7 @@ import dev.donut.client.sniper.Money;
 import dev.donut.client.sniper.PriceStats;
 import dev.donut.client.sniper.SniperEngine;
 import dev.doughbay.fabric.GoNutsApi;
+import dev.doughbay.fabric.Payroll;
 import dev.doughbay.fabric.Tuning;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.KeyMapping;
@@ -85,6 +86,9 @@ public final class DonutScreen extends Screen {
     private final Map<String, Place> places = new HashMap<>();
     private final Map<String, Double> animations = new HashMap<>();
     private final Deque<int[]> clips = new ArrayDeque<>();
+    /** Values deferred sliders hold while dragged, and where each goes on release. */
+    private final Map<String, Double> drafts = new HashMap<>();
+    private final Map<String, DoubleConsumer> commits = new HashMap<>();
     private GuiGraphicsExtractor graphics;
     private float scale = 1;
     /** Screen pixels per layout unit; whole, so the UI font draws sharp. */
@@ -107,6 +111,8 @@ public final class DonutScreen extends Screen {
     private String textField;
     /** The focused field's text; it is only applied, and checked, when focus leaves the field. */
     private String textBuffer = "";
+    /** The focused field's character limit; never below what it already held. */
+    private int textLimit = 128;
     private Consumer<String> textSetter;
     private boolean dirty;
     private Hit dragging;
@@ -622,10 +628,24 @@ public final class DonutScreen extends Screen {
 
     // GoNuts ------------------------------------------------------------------------------------
 
-    private static final java.util.regex.Pattern NUMBER = java.util.regex.Pattern.compile("(-?\\d+(?:\\.\\d+)?)(?:\\s*([kmbKMB])(?![a-zA-Z]))?");
+    /** A number, optionally after an x, then an optional unit: "720", "12h", "250k", "x1.5", "3/h", "25 %". */
+    private static final java.util.regex.Pattern NUMBER =
+            java.util.regex.Pattern.compile("^\\s*x?\\s*(-?(?:\\d+(?:\\.\\d+)?|\\.\\d+))\\s*([a-z%/]*)\\s*$");
+    /** GoNuts settings that pick one of a few modes, with the names their descriptions give the numbers. */
+    private static final Map<String, String[]> GONUTS_OPTIONS = Map.of(
+            "hud.corner", new String[]{"Top left", "Top right", "Bottom left", "Bottom right"},
+            "feed.keyless", new String[]{"API only", "Keyless", "API, else keyless"},
+            "evasion.escape", new String[]{"Nothing", "/rtp away", "Leave server"},
+            "restart.hop_way", new String[]{"/leave, then /rtp", "Rejoin elsewhere"});
+    private static final String WEBHOOK = "https://discord.com/api/webhooks/", OLD_WEBHOOK = "https://discordapp.com/api/webhooks/";
+    private static final long ARM_MILLIS = 8_000, REPLY_MILLIS = 15_000;
 
-    /** What the last Start, Stop or confirm click on the GoNuts page answered. */
+    /** What the last click on a GoNuts page answered, and when; it fades after a while. */
     private String goNutsReply = "";
+    private long goNutsReplyAt;
+    private boolean goNutsReplyBad;
+    /** Guarded settings armed by a first click, until when; a second click before then changes them. */
+    private final Map<String, Long> armed = new HashMap<>();
 
     private void drawGoNuts(Column c) {
         var session = GoNutsApi.session();
@@ -633,44 +653,130 @@ public final class DonutScreen extends Screen {
         if (session == null) {
             c.note("GoNuts is still starting.", MUTED);
         } else {
-            boolean stopped = session.state().name().equals("STOPPED");
-            c.info("State", words(session.state().name()), stopped ? MUTED : GOOD);
-            if (session.detail() != null && !session.detail().isBlank()) c.note(session.detail(), MUTED);
+            String state = session.state().name();
+            boolean stopped = state.equals("STOPPED"), paused = state.equals("PAUSED");
+            c.info("State", words(state), stopped ? MUTED : paused ? WARN : GOOD);
+            String detail = session.detail() == null ? "" : session.detail();
+            // "Automation session is stopped" only says the state again.
+            if (!detail.isBlank() && !(stopped && detail.toLowerCase(Locale.ROOT).contains("stopped"))) c.note(detail, MUTED);
             c.info("Trades started", Integer.toString(session.tradesStarted()), TEXT);
             c.info("Committed", Money.format(session.committedSpend()), TEXT);
             c.info("Open listings", Integer.toString(session.openListings()), TEXT);
             long balance = GoNutsApi.balance();
             c.info("Balance", balance < 0 ? "Not read yet" : Money.format(balance), balance < 0 ? MUTED : TEXT);
-            c.button("session", "Trading", stopped ? "Starts trading on this client, within the limits in Settings"
-                    : "Stops trading on this client", stopped ? "Start" : "Stop",
-                    () -> goNutsReply = stopped ? GoNutsApi.start() : GoNutsApi.stop());
+            boolean resumable = session.resumable() || session.recoveredSession();
+            if (stopped) {
+                c.button("session", "Trading", "Starts trading on this client, within the limits in Settings", "Start", this::goNutsStart);
+            } else if (paused && resumable) {
+                c.button("session", "Trading", "Goes on with the paused session", "Resume", this::goNutsStart);
+                c.button("sessionStop", "Or stop", "Stops trading on this client", "Stop", this::goNutsStop);
+            } else {
+                if (paused) c.note("Paused. What it waits for, and how to go on, is on the full GoNuts screen.", WARN);
+                c.button("session", "Trading", "Stops trading on this client", "Stop", this::goNutsStop);
+                // Steps that need no screen open wait for this menu to close, unlike for GoNuts's own screen.
+                if (!paused) c.note("Trading steps wait while this menu is open; close it to let GoNuts work.", MUTED);
+            }
         }
-        if (!goNutsReply.isBlank()) c.note(goNutsReply, LABEL);
+        replyNote(c);
 
         c.section("Safety");
-        // No payroll payment goes out until this is confirmed, so it comes first and stands out.
+        // No payroll payment goes out until the rule is approved, so the request comes first and stands out.
         var pending = GoNutsApi.pendingPayment();
         if (pending != null) {
-            c.note("Payroll is waiting for your OK: " + Money.format(pending.amount()) + " to " + pending.name()
-                    + ", from " + Money.format(pending.profit()) + " profit. Nothing is paid until you confirm.", WARN);
+            c.note("A payroll rule waits for your approval before its first payment: " + Money.format(pending.amount()) + " to "
+                    + pending.name() + ", from " + Money.format(pending.profit()) + " profit. Approving lets the rule pay on its own "
+                    + "from now on, so check it on the full GoNuts screen if unsure.", WARN);
             c.warnNext();
-            c.button("confirmPay", "First payment", "Pays " + pending.name() + " " + Money.format(pending.amount()), "Confirm",
-                    () -> {
-                        GoNutsApi.confirmPayment(pending.ruleId());
-                        goNutsReply = "Payment to " + pending.name() + " confirmed.";
-                    });
+            c.button("confirmPay", "Payroll rule for " + pending.name(), "Nothing is paid until you approve", "Approve",
+                    () -> goNutsApprove(pending));
         }
         long paid = GoNutsApi.paidToday(), cap = Math.round(GoNutsApi.get("pay.daily_cap"));
-        c.info("Paid out today", Money.format(paid) + " of " + Money.format(cap), cap > 0 && paid >= cap ? WARN : TEXT);
+        // A cap of 0 means no limit at all.
+        c.info("Paid out, last 24 h", Money.format(paid) + (cap > 0 ? " of " + Money.format(cap) : "  ·  no limit"),
+                cap <= 0 || paid >= cap ? WARN : TEXT);
         List<String> risky = GoNutsApi.riskyFeaturesOn();
         if (risky.isEmpty()) c.note("Nothing that spends money or acts for this account is on.", MUTED);
         else c.note("On, and able to spend money or act for this account: " + String.join(", ", risky) + ".", WARN);
 
         c.section("GoNuts");
         var update = GoNutsApi.updateStatus();
-        c.info("Updates", words(update.state().name()), update.state().name().equals("FAILED") ? WARN : LABEL);
-        if (update.detail() != null && !update.detail().isBlank()) c.note(update.detail(), MUTED);
-        c.button("full", "Full GoNuts", "Markets, charts, payroll rules and the web panel", "Open", GoNutsApi::openFullScreen);
+        String updateState = update.state().name();
+        String updates = switch (updateState) {
+            case "OFF" -> "Not checked (turned off)";
+            case "UNCHECKED" -> "Not checked yet";
+            case "CURRENT" -> "Up to date";
+            case "NEWER" -> "A newer GoNuts is out";
+            case "READY" -> "Update ready; it installs when the game closes";
+            case "AHEAD" -> "This build is newer than the release";
+            case "FAILED" -> "Could not check";
+            default -> words(updateState);
+        };
+        c.info("Updates", updates, updateState.equals("FAILED") ? WARN
+                : updateState.equals("NEWER") || updateState.equals("READY") ? accent() : LABEL);
+        if (updateState.equals("FAILED") && update.detail() != null && !update.detail().isBlank()) c.note(update.detail(), MUTED);
+        c.button("full", "Full GoNuts", "Markets, charts, payroll rules, presets and the web panel", "Open", () -> {
+            if (GoNutsApi.session() == null) reply("GoNuts has not started yet.", true);
+            else GoNutsApi.openFullScreen();
+        });
+    }
+
+    /** Starts or resumes, only if the session is still stopped or resumable when the click lands. */
+    private void goNutsStart() {
+        var now = GoNutsApi.session();
+        if (now == null) { reply("GoNuts has not started yet.", true); return; }
+        String state = now.state().name();
+        boolean startable = state.equals("STOPPED") || state.equals("PAUSED") && (now.resumable() || now.recoveredSession());
+        if (!startable) { reply("The session changed before the click; look again.", true); return; }
+        String answer = GoNutsApi.start();
+        reply(answer, refused(answer));
+    }
+
+    private void goNutsStop() {
+        String answer = GoNutsApi.stop();
+        reply(answer, refused(answer));
+    }
+
+    /** Approves the payroll rule only if the request on screen is still the one waiting. */
+    private void goNutsApprove(Payroll.PendingConfirmation shown) {
+        var now = GoNutsApi.pendingPayment();
+        if (now == null || now.ruleId() != shown.ruleId() || !now.name().equals(shown.name()) || now.amount() != shown.amount()) {
+            reply("The payment waiting for approval changed; look again before approving.", true);
+            return;
+        }
+        GoNutsApi.confirmPayment(shown.ruleId());
+        reply("Approved the payroll rule for " + shown.name() + ".", false);
+    }
+
+    private static boolean refused(String answer) {
+        return answer.toLowerCase(Locale.ROOT).matches(".*(refus|cannot|can't|not started|not running|fail|error|blocked).*");
+    }
+
+    private void reply(String text, boolean bad) {
+        goNutsReply = text == null ? "" : text;
+        goNutsReplyBad = bad;
+        goNutsReplyAt = System.currentTimeMillis();
+    }
+
+    private void replyNote(Column c) {
+        if (!goNutsReply.isBlank() && System.currentTimeMillis() - goNutsReplyAt < REPLY_MILLIS) c.note(goNutsReply, goNutsReplyBad ? WARN : LABEL);
+    }
+
+    /** Runs a change to a guarded setting on a second click within eight seconds; the first click only arms it. */
+    private void guard(String id, String label, Runnable change) {
+        long now = System.currentTimeMillis();
+        Long until = armed.remove(id);
+        if (until != null && now < until) {
+            change.run();
+            reply(label + " changed.", false);
+        } else {
+            armed.put(id, now + ARM_MILLIS);
+            reply("Click " + label + " again within 8 seconds to change it; it moves money, data or the server joined.", true);
+        }
+    }
+
+    private boolean isArmed(String id) {
+        Long until = armed.get(id);
+        return until != null && System.currentTimeMillis() < until;
     }
 
     /** One card per GoNuts settings group, plus its free-text lists; each opens like a module's settings. */
@@ -680,77 +786,165 @@ public final class DonutScreen extends Screen {
             List<Tuning.Setting> settings = GoNutsApi.settings().stream().filter(s -> s.group().equals(group)).toList();
             StringBuilder keywords = new StringBuilder("gonuts");
             for (Tuning.Setting s : settings) keywords.append(' ').append(s.label());
-            String description = settings.stream().limit(3).map(Tuning.Setting::label).reduce((a, b) -> a + ", " + b).orElse("")
-                    + (settings.size() > 3 ? " and " + (settings.size() - 3) + " more" : "");
+            // The count comes first, so a cut-off list of names never hides it.
+            String description = settings.size() + (settings.size() == 1 ? " setting" : " settings") + "  ·  "
+                    + String.join(", ", settings.stream().map(Tuning.Setting::label).toList());
             cards.add(new Module(group, description, keywords.toString(), () -> false, null, () -> true, "",
                     c -> goNutsSettings(c, settings), -1));
         }
         StringBuilder keywords = new StringBuilder("gonuts lists");
         for (Tuning.ListSetting l : GoNutsApi.lists()) keywords.append(' ').append(l.label());
-        cards.add(new Module("Lists", "Item lists, prices, addresses and the status webhook", keywords.toString(),
-                () -> false, null, () -> true, "", c -> {
-                    for (Tuning.ListSetting l : GoNutsApi.lists()) {
-                        if (GoNutsApi.guarded(l.key())) c.warnNext();
-                        c.field(l.key(), l.label(), l.description(), () -> GoNutsApi.text(l.key()), v -> GoNutsApi.setText(l.key(), v), false);
-                    }
+        cards.add(new Module("Lists", GoNutsApi.lists().size() + " lists  ·  item lists, prices, addresses and the status webhook",
+                keywords.toString(), () -> false, null, () -> true, "", c -> {
+                    for (Tuning.ListSetting l : GoNutsApi.lists()) goNutsList(c, l);
+                    replyNote(c);
+                    c.note("Lists save when you press Enter or click elsewhere.", DIM);
                 }, -1));
         return cards;
     }
 
-    /** A group's first settings up front; the rest behind "More options". */
+    private void goNutsList(Column c, Tuning.ListSetting l) {
+        String key = l.key();
+        boolean webhook = key.equals("webhook.url");
+        if (GoNutsApi.guarded(key)) c.warnNext();
+        // GoNuts's own editor takes up to 2000 characters, and 240 for the webhook; a shorter limit would drop entries.
+        c.field(key, l.label(), clean(l.description()), () -> GoNutsApi.text(key), text -> {
+            String value = text.strip();
+            if (webhook && !value.isEmpty() && !value.startsWith(WEBHOOK) && !value.startsWith(OLD_WEBHOOK)) {
+                reply("That is not a Discord webhook URL (channel settings, Integrations, New Webhook, Copy); nothing was saved.", true);
+                return;
+            }
+            GoNutsApi.setText(key, value);
+        }, webhook, webhook ? 240 : 2000);
+    }
+
+    /** A group's first settings, and every guarded one, up front; the rest behind "More options". */
     private void goNutsSettings(Column c, List<Tuning.Setting> settings) {
-        int shown = Math.min(settings.size(), 6);
-        for (int i = 0; i < shown; i++) goNutsSetting(c, settings.get(i));
-        if (settings.size() > shown) c.more(m -> {
-            for (int i = shown; i < settings.size(); i++) goNutsSetting(m, settings.get(i));
-        });
+        List<Tuning.Setting> front = new ArrayList<>(), folded = new ArrayList<>();
+        for (int i = 0; i < settings.size(); i++) {
+            Tuning.Setting s = settings.get(i);
+            (i < 6 || GoNutsApi.guarded(s.key()) ? front : folded).add(s);
+        }
+        for (Tuning.Setting s : front) goNutsSetting(c, s);
+        if (!folded.isEmpty()) c.more(m -> folded.forEach(s -> goNutsSetting(m, s)));
+        replyNote(c);
         c.note("Changes save at once. Resets and presets are on the full GoNuts screen.", DIM);
     }
 
     private void goNutsSetting(Column c, Tuning.Setting s) {
-        String key = s.key();
-        String description = s.description();
-        if (GoNutsApi.guarded(key)) {
-            description = "Moves money, data or the server joined. " + description;
+        String key = s.key(), id = c.scope.isEmpty() ? key : c.scope + "." + key;
+        boolean guarded = GoNutsApi.guarded(key);
+        String description = clean(s.description());
+        if (guarded) {
+            description = isArmed(id) ? "Click again within 8 seconds to change this" : "Guarded: " + description;
             c.warnNext();
         }
+        String[] options = GONUTS_OPTIONS.get(key);
+        if (options != null && options.length == (int) Math.round(s.max() - s.min()) + 1) {
+            int base = (int) Math.round(s.min());
+            c.choice(key, s.label(), options.length, () -> Math.clamp((int) Math.round(GoNutsApi.get(key)) - base, 0, options.length - 1), v -> {
+                Runnable change = () -> GoNutsApi.set(key, v + base);
+                if (guarded) guard(id + "." + v, s.label(), change);
+                else change.run();
+            }, v -> options[v]);
+            return;
+        }
         if (s.kind() == Tuning.Kind.TOGGLE) {
-            c.toggle(key, s.label(), description, () -> GoNutsApi.get(key) >= .5, () -> GoNutsApi.set(key, GoNutsApi.get(key) >= .5 ? 0 : 1));
+            Runnable flip = () -> GoNutsApi.set(key, GoNutsApi.get(key) >= .5 ? 0 : 1);
+            c.toggle(key, s.label(), description, () -> GoNutsApi.get(key) >= .5, guarded ? () -> guard(id, s.label(), flip) : flip);
             return;
         }
+        double range = s.max() - s.min(), step = stepFor(s);
+        // Guarded numbers are typed, as on the GoNuts screen; so are ranges a slider could not land on precisely.
+        if (guarded || !Double.isFinite(range) || range / step > 200) {
+            c.field(key, s.label(), description, () -> numberText(s, GoNutsApi.get(key)), text -> {
+                double value = parseSetting(s, text);
+                if (Double.isFinite(value)) {
+                    double set = GoNutsApi.set(key, value);
+                    if (Math.abs(set - value) > 1e-9) reply(s.label() + " is held to " + s.format(s.min()) + " to " + s.format(s.max())
+                            + "; it was set to " + s.format(set) + ".", true);
+                } else if (!text.strip().equals(numberText(s, GoNutsApi.get(key)))) {
+                    reply("\"" + text.strip() + "\" is not a value for " + s.label() + "; it was left at " + s.format(GoNutsApi.get(key)) + ".", true);
+                }
+            }, false);
+            return;
+        }
+        // Writing a GoNuts setting rewrites its settings files, so a dragged slider sets its value once, on release.
+        c.slider(key, s.label(), description, () -> GoNutsApi.get(key), v -> GoNutsApi.set(key, v), s.min(), s.max(), step, s::format, true);
+    }
+
+    /** The finest step a setting's default and minimum need, and at least tenths for small non-count ranges. */
+    private static double stepFor(Tuning.Setting s) {
         double range = s.max() - s.min();
-        // Wide ranges, such as amounts of money, are typed; a slider could not land on a value precisely.
-        if (range > 1000 || !Double.isFinite(range)) {
-            c.number(key, s.label(), description, () -> GoNutsApi.get(key), v -> GoNutsApi.set(key, v), s::format);
-            return;
+        int decimals = Math.max(decimals(s.defaultValue()), decimals(s.min()));
+        if (s.kind() != Tuning.Kind.COUNT) {
+            if (range <= 1) decimals = Math.max(decimals, 2);
+            else if (range <= 10) decimals = Math.max(decimals, 1);
         }
-        double step = s.kind() == Tuning.Kind.COUNT || range >= 20 ? 1 : range >= 2 ? .1 : .01;
-        c.slider(key, s.label(), description, () -> GoNutsApi.get(key), v -> {
-            if (v != GoNutsApi.get(key)) GoNutsApi.set(key, v);
-        }, s.min(), s.max(), step, s::format);
+        return decimals == 0 ? 1 : Math.pow(10, -decimals);
+    }
+
+    private static int decimals(double value) {
+        for (int d = 0; d < 3; d++) {
+            double scaled = value * Math.pow(10, d);
+            if (Math.abs(scaled - Math.round(scaled)) < 1e-9) return d;
+        }
+        return 3;
+    }
+
+    /** A typed setting's text: large counts, such as money, with thousands separators. */
+    private static String numberText(Tuning.Setting s, double value) {
+        return s.kind() == Tuning.Kind.COUNT && Math.abs(value) >= 10_000 ? String.format(Locale.ROOT, "%,.0f", value) : s.format(value);
+    }
+
+    /**
+     * A typed value in the setting's own unit: minutes take s, min, h or d; seconds take s, min or h; counts take k, m
+     * or b. Any other letters make it unreadable, so nothing is set rather than a guess.
+     */
+    private static double parseSetting(Tuning.Setting s, String text) {
+        var matcher = NUMBER.matcher(text.toLowerCase(Locale.ROOT).replace(",", "").strip());
+        if (!matcher.matches()) return Double.NaN;
+        double value = Double.parseDouble(matcher.group(1));
+        String unit = matcher.group(2);
+        double scale = switch (s.kind()) {
+            case MINUTES -> switch (unit) {
+                case "", "m", "min", "mins", "minute", "minutes" -> 1;
+                case "s", "sec", "secs", "second", "seconds" -> 1 / 60.0;
+                case "h", "hr", "hrs", "hour", "hours" -> 60;
+                case "d", "day", "days" -> 1440;
+                default -> Double.NaN;
+            };
+            case SECONDS -> switch (unit) {
+                case "", "s", "sec", "secs", "second", "seconds" -> 1;
+                case "m", "min", "mins", "minute", "minutes" -> 60;
+                case "h", "hr", "hrs", "hour", "hours" -> 3600;
+                default -> Double.NaN;
+            };
+            case COUNT -> switch (unit) {
+                case "" -> 1;
+                case "k" -> 1e3;
+                case "m" -> 1e6;
+                case "b" -> 1e9;
+                default -> Double.NaN;
+            };
+            case PERCENT -> unit.isEmpty() || unit.equals("%") ? 1 : Double.NaN;
+            case RATE -> unit.isEmpty() || unit.equals("/h") ? 1 : Double.NaN;
+            case BLOCKS -> unit.isEmpty() || unit.startsWith("block") ? 1 : Double.NaN;
+            case FACTOR -> unit.isEmpty() || unit.equals("x") ? 1 : Double.NaN;
+            case TOGGLE -> Double.NaN;
+        };
+        return value * scale;
+    }
+
+    /** GoNuts descriptions end on-off settings with "(1 on, 0 off)", which a switch already says. */
+    private static String clean(String description) {
+        return description == null ? "" : description.replaceAll("\\s*\\(1 on, 0 off\\)", "");
     }
 
     /** "WAITING_FOR_ORDER" as "Waiting for order". */
     private static String words(String constant) {
         String spaced = constant.toLowerCase(Locale.ROOT).replace('_', ' ');
         return spaced.isEmpty() ? spaced : Character.toUpperCase(spaced.charAt(0)) + spaced.substring(1);
-    }
-
-    /**
-     * The first number in some text, with an optional k, m or b after it; NaN without one. A unit word such as
-     * "12 min" or "5 blocks" is not a multiplier.
-     */
-    private static double parseNumber(String text) {
-        var matcher = NUMBER.matcher(text.replace(",", ""));
-        if (!matcher.find()) return Double.NaN;
-        double value = Double.parseDouble(matcher.group(1));
-        String suffix = matcher.group(2) == null ? "" : matcher.group(2);
-        return switch (suffix.toLowerCase(Locale.ROOT)) {
-            case "k" -> value * 1e3;
-            case "m" -> value * 1e6;
-            case "b" -> value * 1e9;
-            default -> value;
-        };
     }
 
     // Navigation --------------------------------------------------------------------------------
@@ -1317,10 +1511,11 @@ public final class DonutScreen extends Screen {
 
     private int width(String text, Size size) { return UiPaint.width(font, text, size); }
 
+    /** The text cut to fit, ending in an ellipsis; a cut never leaves a stray period or comma before it. */
     private String fit(String value, Size size, int maxWidth) {
         if (width(value, size) <= maxWidth) return value;
-        while (!value.isEmpty() && width(value + "...", size) > maxWidth) value = removeLastCharacter(value);
-        return value + "...";
+        while (!value.isEmpty() && width(value + "…", size) > maxWidth) value = removeLastCharacter(value);
+        return value.replaceAll("[\\s.,;:]+$", "") + "…";
     }
 
     private List<String> wrap(String value, int maxWidth, Size size) {
@@ -1486,8 +1681,28 @@ public final class DonutScreen extends Screen {
 
     @Override
     public boolean mouseReleased(MouseButtonEvent event) {
-        if (dragging != null) { dragging = null; flush(); return true; }
-        return false;
+        if (dragging == null) return false;
+        dragging = null;
+        commitDrafts();
+        flush();
+        return true;
+    }
+
+    /** Sets the values deferred sliders held while they were dragged. */
+    private void commitDrafts() {
+        drafts.forEach((id, value) -> {
+            DoubleConsumer setter = commits.get(id);
+            if (setter != null) setter.accept(value);
+        });
+        drafts.clear();
+        commits.clear();
+    }
+
+    /** A value on the slider's grid: whole steps from {@code min}, without floating-point dust such as 0.30000000000000004. */
+    private static double snap(double value, double min, double max, double step) {
+        if (!(max > min) || !(step > 0)) return min;
+        double snapped = min + Math.round((value - min) / step) * step;
+        return Math.clamp(Math.round(snapped * 1e9) / 1e9, min, max);
     }
 
     @Override
@@ -1559,7 +1774,8 @@ public final class DonutScreen extends Screen {
         if (textField != null) {
             if (event.key() == GLFW.GLFW_KEY_V && event.hasControlDown()) {
                 String pasted = minecraft.keyboardHandler.getClipboard().replaceAll("[\\p{Cntrl}]", "").strip();
-                textBuffer = (textBuffer + pasted).substring(0, Math.min(128, textBuffer.length() + pasted.length())); return true;
+                // Only the pasted text is cut to fit; what is already there is never shortened.
+                textBuffer += pasted.substring(0, Math.clamp(textLimit - textBuffer.length(), 0, pasted.length())); return true;
             }
             if (event.key() == GLFW.GLFW_KEY_BACKSPACE) { textBuffer = removeLastCharacter(textBuffer); return true; }
             if (event.key() == GLFW.GLFW_KEY_ENTER) { commitText(); return true; }
@@ -1620,7 +1836,7 @@ public final class DonutScreen extends Screen {
             return true;
         }
         if (textField != null) {
-            if (event.isAllowedChatCharacter() && textBuffer.length() < 128) textBuffer += event.codepointAsString();
+            if (event.isAllowedChatCharacter() && textBuffer.length() < textLimit) textBuffer += event.codepointAsString();
             return true;
         }
         // Typing anywhere else searches, as long as no other field has focus.
@@ -1802,16 +2018,26 @@ public final class DonutScreen extends Screen {
         /** A slider whose value box shows the value as {@code format} writes it. */
         void slider(String key, String label, String description, DoubleSupplier getter, DoubleConsumer setter,
                     double min, double max, double step, DoubleFunction<String> format) {
+            slider(key, label, description, getter, setter, min, max, step, format, false);
+        }
+
+        /**
+         * A slider; values snap to {@code step} counted from {@code min}. A deferred slider holds its value while it is
+         * dragged and sets it once, on release, for settings that are expensive to write.
+         */
+        void slider(String key, String label, String description, DoubleSupplier getter, DoubleConsumer setter,
+                    double min, double max, double step, DoubleFunction<String> format, boolean deferred) {
             flushChips();
             String id = id(key);
-            double value = getter.getAsDouble();
+            Double draft = drafts.get(id);
+            double value = draft != null ? draft : getter.getAsDouble();
             String display = format.apply(value);
             int h = rowHeight(description);
             int box = Math.max(46, width(display, Size.BASE) + 16), trackW = Math.min(140, (int) (w * .3));
             int trackX = x + w - box - 14 - trackW, mid = y + h / 2;
             boolean over = inside(x - 10, y, w + 20, h);
             rowLabel(label, description, MUTED, over, h, box + 14 + trackW + 6);
-            float filled = (float) (trackW * Math.clamp((value - min) / (max - min), 0, 1));
+            float filled = max > min ? (float) (trackW * Math.clamp((value - min) / (max - min), 0, 1)) : 0;
             round(graphics, (float) trackX, mid - 2f, (float) trackW, 4f, 2f, TRACK);
             round(graphics, (float) trackX, mid - 2f, Math.max(4f, filled), 4f, 2f, accent());
             round(graphics, trackX + filled - 5f, mid - 4.4f, 10f, 10f, 5f, 0x66000000);
@@ -1820,10 +2046,19 @@ public final class DonutScreen extends Screen {
             outline(graphics, x + w - box, mid - 9, box, 18, 5, EDGE);
             draw(display, Size.BASE, x + w - box + (box - width(display, Size.BASE)) / 2, mid - 3, TEXT);
             dragHit(id, trackX, y, trackW, h, position -> {
-                double next = Math.round((min + Math.clamp(position, 0, 1) * (max - min)) / step) * step;
-                setter.accept(Math.clamp(next, min, max));
+                double next = snap(min + Math.clamp(position, 0, 1) * (max - min), min, max, step);
+                if (deferred) {
+                    drafts.put(id, next);
+                    commits.put(id, setter);
+                } else {
+                    setter.accept(next);
+                    dirty = true;
+                }
+            }, direction -> {
+                setter.accept(snap(getter.getAsDouble() + direction * step, min, max, step));
                 dirty = true;
-            }, direction -> { setter.accept(Math.clamp(getter.getAsDouble() + direction * step, min, max)); dirty = true; flush(); });
+                flush();
+            });
             y += h + 2;
         }
 
@@ -1844,6 +2079,12 @@ public final class DonutScreen extends Screen {
         }
 
         void field(String key, String label, String description, Supplier<String> getter, Consumer<String> setter, boolean secret) {
+            field(key, label, description, getter, setter, secret, 128);
+        }
+
+        /** A text field holding at most {@code limit} characters; long lists such as item ids need more than names do. */
+        void field(String key, String label, String description, Supplier<String> getter, Consumer<String> setter, boolean secret,
+                   int limit) {
             flushChips();
             String id = id(key);
             boolean focused = id.equals(textField);
@@ -1856,14 +2097,20 @@ public final class DonutScreen extends Screen {
             // Secrets show only their last four characters unless being edited.
             if (secret && !focused) value = value.isEmpty() ? "" : "*".repeat(Math.min(12, Math.max(0, value.length() - 4)))
                     + value.substring(Math.max(0, value.length() - 4));
-            String shown = value + (focused && System.currentTimeMillis() % 1000 < 500 ? "|" : "");
-            // Keep the end in view while typing.
-            while (!shown.isEmpty() && width(shown, Size.BASE) > boxW - 16) shown = removeFirstCharacter(shown);
+            String shown;
+            if (focused) {
+                // Keep the end in view while typing.
+                shown = value + (System.currentTimeMillis() % 1000 < 500 ? "|" : "");
+                while (!shown.isEmpty() && width(shown, Size.BASE) > boxW - 16) shown = removeFirstCharacter(shown);
+            } else {
+                shown = fit(value, Size.BASE, boxW - 16);
+            }
             draw(shown, Size.BASE, bx + 8, by + 7, focused ? TEXT : LABEL);
             hit(id, x - 10, y, w + 20, h, () -> {
                 textField = id;
                 textBuffer = getter.get();
                 textSetter = setter;
+                textLimit = Math.max(limit, textBuffer.length());
                 keyboardFocus = null;
             }, null);
             y += h + 2;
@@ -1942,15 +2189,6 @@ public final class DonutScreen extends Screen {
             draw(text, Size.BASE, bx + 14, by + 7, over ? TEXT : LABEL);
             hit(id, x - 10, y, w + 20, h, () -> change(action), null);
             y += h + 2;
-        }
-
-        /** A number typed into a box; it accepts 250k, 1.5M or 12000, and anything after the number is ignored. */
-        void number(String key, String label, String description, DoubleSupplier getter, DoubleConsumer setter,
-                    DoubleFunction<String> format) {
-            field(key, label, description, () -> format.apply(getter.getAsDouble()), text -> {
-                double value = parseNumber(text);
-                if (Double.isFinite(value)) setter.accept(value);
-            }, false);
         }
 
         /** Settings most people leave alone, folded away until asked for. */

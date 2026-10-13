@@ -116,15 +116,7 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             GuiClicks.click(context, "nav.theme");
             GuiClicks.settle(context);
             screenshot(context, "donut-02-clickgui-theme");
-            GuiClicks.click(context, "nav.gonuts");
-            GuiClicks.settle(context);
-            screenshot(context, "donut-02-clickgui-gonuts");
-            GuiClicks.click(context, "nav.gonuts-settings");
-            GuiClicks.settle(context);
-            screenshot(context, "donut-02-clickgui-gonuts-settings");
-            GuiClicks.expand(context, "Session");
-            screenshot(context, "donut-02-clickgui-gonuts-session");
-            GuiClicks.collapse(context, "Session");
+            GoNutsPagesCheck.run(context, name -> screenshot(context, name));
             context.runOnClient(client -> client.gui.screen().onClose());
             context.waitForScreen(null);
 
