@@ -126,6 +126,9 @@ public final class DonutClient implements ClientModInitializer {
             if (client.player == null || client.gui.screen() != null || client.gui.hud.isHidden()) return;
             FinderHud.render(graphics, client, config, scanner);
         });
+        // GoNuts's own HUD keeps its panel, alerts and nearby-player list off both.
+        ModuleArrayList.reserveSpace(config, freecam::isActive);
+        FinderHud.reserveSpace(config, scanner);
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> xray.close());
 
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {

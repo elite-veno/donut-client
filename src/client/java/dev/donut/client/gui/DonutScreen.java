@@ -22,6 +22,8 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -380,7 +382,7 @@ public final class DonutScreen extends Screen {
                 m.section("Colors");
                 colors.accept(m);
             });
-        }).key(index);
+        }).key(index).values(s);
     }
 
     private Module xray() {
@@ -401,7 +403,7 @@ public final class DonutScreen extends Screen {
                     () -> s.exposedOresOnly, () -> s.exposedOresOnly = !s.exposedOresOnly);
             c.more(m -> m.field("extra", "Also hide", "Block ids, separated by commas", () -> s.extraHidden, v -> s.extraHidden = v, false));
             c.note("Uses Minecraft's own renderer; Sodium replaces it and is not supported.", DIM);
-        }).key(6);
+        }).key(6).values(s);
     }
 
     private Module fullbright() {
@@ -410,7 +412,7 @@ public final class DonutScreen extends Screen {
                 "fullbright brightness gamma night vision fog dark caves", () -> s.enabled, () -> change(() -> s.enabled = !s.enabled), c -> {
             c.bind(7);
             c.toggle("noFog", "Remove fog", "Distance, water, lava, blindness and darkness fog", () -> s.noFog, () -> s.noFog = !s.noFog);
-        }).key(7);
+        }).key(7).values(s);
     }
 
     private Module freecam() {
@@ -426,7 +428,7 @@ public final class DonutScreen extends Screen {
                     + keyName(minecraft.options.keyDown) + keyName(minecraft.options.keyRight), LABEL);
             c.info("Up / down", keyName(minecraft.options.keyJump) + " / " + keyName(minecraft.options.keyShift), LABEL);
             c.info("Boost", keyName(minecraft.options.keySprint), LABEL);
-        }).key(2);
+        }).key(2).values(s);
     }
 
     private Module autoRtp() {
@@ -452,12 +454,12 @@ public final class DonutScreen extends Screen {
                         v -> s.maxAttempts = (int) Math.round(v), 1, 200, 1, "");
             });
             c.note("Check the server's rules before automating commands.", DIM);
-        }).key(5);
+        }).key(5).values(s);
     }
 
     private Module module(String name, String description, String keywords, BooleanSupplier enabled, Runnable toggle,
                           Consumer<Column> settings) {
-        return new Module(name, description, keywords, enabled, toggle, () -> true, "", settings, -1);
+        return new Module(name, description, keywords, enabled, toggle, () -> true, "", settings, -1, null);
     }
 
     /** Freecam and Auto RTP act in a world, so they can only start inside one. */
@@ -465,7 +467,7 @@ public final class DonutScreen extends Screen {
                                Consumer<Column> settings) {
         return new Module(name, description, keywords, enabled, () -> {
             if (enabled.getAsBoolean() || canUseWorld()) flip.run();
-        }, () -> enabled.getAsBoolean() || canUseWorld(), "Join a world to use " + name, settings, -1);
+        }, () -> enabled.getAsBoolean() || canUseWorld(), "Join a world to use " + name, settings, -1, null);
     }
 
     private boolean canUseWorld() { return minecraft.level != null && minecraft.player != null; }
@@ -509,7 +511,7 @@ public final class DonutScreen extends Screen {
     private String goNutsReply = "";
     private long goNutsReplyAt;
     private boolean goNutsReplyBad;
-    /** Guarded settings armed by a first click, until when; a second click before then changes them. */
+    /** Guarded settings and resets armed by a first click, until when; a second click before then goes ahead. */
     private final Map<String, Long> armed = new HashMap<>();
 
     private void drawGoNuts(Column c) {
@@ -659,7 +661,7 @@ public final class DonutScreen extends Screen {
             String description = settings.size() + (settings.size() == 1 ? " setting" : " settings") + "  ·  "
                     + String.join(", ", settings.stream().map(Tuning.Setting::label).toList());
             cards.add(new Module(group, description, keywords.toString(), () -> false, null, () -> true, "",
-                    c -> goNutsSettings(c, settings), -1));
+                    c -> goNutsSettings(c, settings), -1, null));
         }
         StringBuilder keywords = new StringBuilder("gonuts lists");
         for (Tuning.ListSetting l : GoNutsApi.lists()) keywords.append(' ').append(l.label());
@@ -668,7 +670,7 @@ public final class DonutScreen extends Screen {
                     for (Tuning.ListSetting l : GoNutsApi.lists()) goNutsList(c, l);
                     replyNote(c);
                     c.note("Lists save when you press Enter or click elsewhere.", DIM);
-                }, -1));
+                }, -1, null));
         return cards;
     }
 
@@ -697,7 +699,8 @@ public final class DonutScreen extends Screen {
         for (Tuning.Setting s : front) goNutsSetting(c, s);
         if (!folded.isEmpty()) c.more(m -> folded.forEach(s -> goNutsSetting(m, s)));
         replyNote(c);
-        c.note("Changes save at once. Resets and presets are on the full GoNuts screen.", DIM);
+        c.note("Changes save at once. A dot marks a setting changed from its default; hover it for Reset. Presets are on the full "
+                + "GoNuts screen.", DIM);
     }
 
     private void goNutsSetting(Column c, Tuning.Setting s) {
@@ -705,11 +708,19 @@ public final class DonutScreen extends Screen {
         boolean guarded = GoNutsApi.guarded(key);
         String description = clean(s.description());
         if (guarded) {
-            description = isArmed(id) ? "Click again within 8 seconds to change this" : "Guarded: " + description;
+            description = isArmed(id) || isArmed(id + ".reset") ? "Click again within 8 seconds to change this" : "Guarded: " + description;
             c.warnNext();
         }
         String[] options = GONUTS_OPTIONS.get(key);
-        if (options != null && options.length == (int) Math.round(s.max() - s.min()) + 1) {
+        boolean named = options != null && options.length == (int) Math.round(s.max() - s.min()) + 1;
+        if (!GoNutsApi.isDefault(key)) {
+            double fallback = s.defaultValue();
+            String shown = named ? options[Math.clamp((int) Math.round(fallback - s.min()), 0, options.length - 1)]
+                    : s.kind() == Tuning.Kind.TOGGLE ? (fallback >= .5 ? "On" : "Off") : numberText(s, fallback);
+            Runnable back = () -> GoNutsApi.reset(key);
+            c.resetNext(key, shown, guarded ? () -> guard(id + ".reset", s.label(), back) : back);
+        }
+        if (named) {
             int base = (int) Math.round(s.min());
             c.choice(key, s.label(), options.length, () -> Math.clamp((int) Math.round(GoNutsApi.get(key)) - base, 0, options.length - 1), v -> {
                 Runnable change = () -> GoNutsApi.set(key, v + base);
@@ -1250,9 +1261,50 @@ public final class DonutScreen extends Screen {
         scrolled(x + 1, y + 45, w - 2, h - 49, origin -> {
             Column c = new Column(x + 16, w - 32, origin + 8, m.name);
             m.settings.accept(c);
+            if (m.values != null) resetRow(c, m);
             c.flushChips();
             return c.y + 10;
         });
+    }
+
+    /** The last row of a module's settings: puts them all back to their defaults, on a second click. */
+    private void resetRow(Column c, Module m) {
+        String id = "reset." + m.name;
+        boolean confirming = isArmed(id);
+        c.section("Defaults");
+        if (confirming) c.warnNext();
+        c.button("reset", "Reset settings", confirming ? "Click Confirm within 8 seconds to reset every setting above"
+                : "Every setting back to its default; the switch and keybind stay", confirming ? "Confirm" : "Reset", () -> {
+            if (isArmed(id)) {
+                armed.remove(id);
+                resetToDefaults(m.values);
+            } else {
+                armed.put(id, System.currentTimeMillis() + ARM_MILLIS);
+            }
+        });
+    }
+
+    /**
+     * Copies every saved setting from a fresh config into {@code values}, one of this config's module settings, leaving
+     * whether the module is on, and whether it is a favorite, as they are.
+     */
+    private void resetToDefaults(Object values) {
+        ClientConfig fresh = new ClientConfig();
+        try {
+            for (Field holder : ClientConfig.class.getFields()) {
+                if (holder.get(config) != values) continue;
+                Object defaults = holder.get(fresh);
+                for (Field f : values.getClass().getFields()) {
+                    int modifiers = f.getModifiers();
+                    if (Modifier.isStatic(modifiers) || Modifier.isFinal(modifiers) || Modifier.isTransient(modifiers)
+                            || f.getName().equals("enabled") || f.getName().equals("favorite")) continue;
+                    f.set(values, f.get(defaults));
+                }
+                return;
+            }
+        } catch (IllegalAccessException e) {
+            throw new IllegalStateException("Could not reset " + values.getClass().getSimpleName(), e);
+        }
     }
 
     /** A switch; the knob slides across a track filled with the accent when on. */
@@ -1788,6 +1840,32 @@ public final class DonutScreen extends Screen {
         /** Shows the next row's description in the warning color. */
         void warnNext() { warning = true; }
 
+        /** Set by {@link #resetNext}: the next row's Reset link, its id, its default and where it was drawn. */
+        private Runnable reset;
+        private String resetId, resetDefault;
+        private int[] resetAt;
+
+        /**
+         * Marks the next row as changed from its default: a dot follows its label, and while the row is hovered a
+         * Reset link beside the dot puts it back.
+         */
+        void resetNext(String key, String defaultValue, Runnable action) {
+            reset = action;
+            resetId = id(key) + ".reset";
+            resetDefault = defaultValue;
+        }
+
+        /** Moves below a row; its Reset link, added last, takes clicks before the row under it. */
+        private void endRow(int h) {
+            if (resetAt != null) {
+                Runnable action = reset;
+                hit(resetId, resetAt[0], resetAt[1], resetAt[2], resetAt[3], () -> change(action), null);
+            }
+            reset = null;
+            resetAt = null;
+            y += h + 2;
+        }
+
         /**
          * A row's label and description; a hovered row gets an accent tick at its left edge, and a description too
          * long for the row shows in full beside the mouse.
@@ -1800,11 +1878,22 @@ public final class DonutScreen extends Screen {
                 warning = false;
             }
             if (over) round(graphics, x - 9, y + 6, 2f, h - 12f, 1f, accent());
-            bold(fit(label, Size.BASE, room), x, y + (described ? 7 : 8), TEXT);
+            int labelY = y + (described ? 7 : 8), linkW = width("Reset", Size.SMALL) + 12;
+            String shownLabel = fit(label, Size.BASE, reset == null ? room : room - linkW - 6);
+            bold(shownLabel, x, labelY, TEXT);
+            boolean overLink = false;
+            if (reset != null) {
+                int lx = x + width(shownLabel, Size.BASE) + 6;
+                overLink = inside(lx - 3, labelY - 4, linkW + 3, 15);
+                round(graphics, lx, labelY + 2, 4, 4, 2, accent());
+                if (over) draw("Reset", Size.SMALL, lx + 9, labelY + 1, overLink ? accent() : DIM, overLink, false);
+                if (overLink) tooltip = "Default: " + resetDefault;
+                resetAt = new int[]{lx - 3, labelY - 4, linkW + 3, 15};
+            }
             if (!described) return;
             String shown = fit(description, Size.SMALL, room);
             draw(shown, Size.SMALL, x, y + 20, descriptionColor);
-            if (over && !shown.equals(description)) tooltip = description;
+            if (over && !overLink && !shown.equals(description)) tooltip = description;
         }
 
         void section(String title) {
@@ -1833,7 +1922,7 @@ public final class DonutScreen extends Screen {
             rowLabel(label, description, MUTED, over, h, 40);
             toggleSwitch(x + w - 26, y + (h - 13) / 2, 26, 13, value.getAsBoolean(), "toggle." + id, true);
             hit(id, x - 10, y, w + 20, h, () -> change(action), null);
-            y += h + 2;
+            endRow(h);
         }
 
         /** A small on/off pill; consecutive chips share lines, so a list of filters stays compact. */
@@ -1892,7 +1981,7 @@ public final class DonutScreen extends Screen {
                 hit(id + "." + option, sx, top, widths[i], 20, () -> change(() -> setter.accept(value)), null);
                 sx += widths[i];
             }
-            y += h + 2;
+            endRow(h);
         }
 
         void slider(String key, String label, String description, DoubleSupplier getter, DoubleConsumer setter,
@@ -1945,7 +2034,7 @@ public final class DonutScreen extends Screen {
                 dirty = true;
                 flush();
             });
-            y += h + 2;
+            endRow(h);
         }
 
         void color(String key, String label, IntSupplier getter, IntConsumer setter) { color(key, label, null, getter, setter); }
@@ -1961,7 +2050,7 @@ public final class DonutScreen extends Screen {
             round(graphics, x + w - 30, mid - 7, 30, 14, 5, alpha(getter.getAsInt(), 1));
             outline(graphics, x + w - 30, mid - 7, 30, 14, 5, alpha(0xFFFFFF, over ? .3 : .14));
             hit(id, x - 10, y, w + 20, h, () -> { colorEditor = new ColorEditor(label, getter, setter); keyboardFocus = null; }, null);
-            y += h + 2;
+            endRow(h);
         }
 
         void field(String key, String label, String description, Supplier<String> getter, Consumer<String> setter, boolean secret) {
@@ -1999,7 +2088,7 @@ public final class DonutScreen extends Screen {
                 textLimit = Math.max(limit, textBuffer.length());
                 keyboardFocus = null;
             }, null);
-            y += h + 2;
+            endRow(h);
         }
 
 
@@ -2051,7 +2140,7 @@ public final class DonutScreen extends Screen {
                 searchFocused = false;
                 keyboardFocus = null;
             }, null);
-            y += h + 2;
+            endRow(h);
         }
 
         void button(String key, String label, String description, Runnable action) { button(key, label, description, label, action); }
@@ -2067,7 +2156,7 @@ public final class DonutScreen extends Screen {
             outline(graphics, bx, by, bw, 20, 6, over ? EDGE_HOVER : EDGE);
             draw(text, Size.BASE, bx + 14, by + 7, over ? TEXT : LABEL);
             hit(id, x - 10, y, w + 20, h, () -> change(action), null);
-            y += h + 2;
+            endRow(h);
         }
 
         /** Settings most people leave alone, folded away until asked for. */
@@ -2103,11 +2192,18 @@ public final class DonutScreen extends Screen {
         String header() { return heading == null ? title : heading; }
     }
 
-    /** A module: its switch, its settings (or null), and the index of its keybind (or -1). */
+    /**
+     * A module: its switch, its settings (or null), the index of its keybind (or -1), and the config object its settings
+     * live in (or null), which Reset puts back to its defaults.
+     */
     private record Module(String name, String description, String keywords, BooleanSupplier enabled, Runnable toggle,
-                          BooleanSupplier available, String unavailable, Consumer<Column> settings, int key) {
+                          BooleanSupplier available, String unavailable, Consumer<Column> settings, int key, Object values) {
         Module key(int index) {
-            return new Module(name, description, keywords, enabled, toggle, available, unavailable, settings, index);
+            return new Module(name, description, keywords, enabled, toggle, available, unavailable, settings, index, values);
+        }
+
+        Module values(Object object) {
+            return new Module(name, description, keywords, enabled, toggle, available, unavailable, settings, key, object);
         }
     }
 

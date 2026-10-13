@@ -5,6 +5,7 @@ import dev.donut.client.finder.FinderScanner;
 import dev.donut.client.finder.FinderSummary;
 import dev.donut.client.render.HighlightRenderer;
 import dev.donut.client.render.ScreenLabel;
+import dev.doughbay.fabric.GoNutsApi;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.client.Minecraft;
@@ -26,6 +27,38 @@ public final class FinderHud {
         if (config.hud.info) info(g, font, client, scanner.summaries());
     }
 
+    /** Keeps GoNuts's HUD panel, alerts and nearby-player list off the info panel; call once at startup. */
+    public static void reserveSpace(ClientConfig config, FinderScanner scanner) {
+        GoNutsApi.reserveHud("donut:finder_info", () -> {
+            Minecraft client = Minecraft.getInstance();
+            return config.hud.info && shown(client) ? infoArea(client, client.font, scanner.summaries()) : null;
+        });
+    }
+
+    /** Whether Donut's HUD draws at all: in a world, with no screen open, and not hidden with F1. */
+    static boolean shown(Minecraft client) {
+        return client.player != null && client.gui.screen() == null && !client.gui.hud.isHidden();
+    }
+
+    /** The info panel's {x, y, width, height}, as {@link #info} lays it out, or null while it draws nothing. */
+    private static int[] infoArea(Minecraft client, Font font, List<FinderSummary> lines) {
+        if (lines.isEmpty() || client.getDebugOverlay().showDebugScreen()) return null;
+        Vec3 origin = client.player.position();
+        int width = 0;
+        for (FinderSummary line : lines) width = Math.max(width, rowWidth(font, line, distance(line, origin)));
+        return new int[] {2, 2, width, lines.size() * 12};
+    }
+
+    private static String distance(FinderSummary line, Vec3 origin) {
+        return line.nearest() == null ? "" : Math.round(line.nearest().distanceTo(origin)) + "m";
+    }
+
+    private static int rowWidth(Font font, FinderSummary line, String distance) {
+        return 4 + UiPaint.width(font, line.name()) + 5 + UiPaint.width(font, Integer.toString(line.count()))
+                + (distance.isEmpty() ? 0 : 16 + UiPaint.width(font, distance))
+                + (line.note().isEmpty() ? 0 : 6 + UiPaint.width(font, line.note())) + 4;
+    }
+
     /** Rows mirror the array list: a dark strip per finder, edged in that finder's color. */
     private static void info(GuiGraphicsExtractor g, Font font, Minecraft client, List<FinderSummary> lines) {
         if (lines.isEmpty() || client.getDebugOverlay().showDebugScreen()) return;
@@ -34,11 +67,9 @@ public final class FinderHud {
         int x = 2, y = 2;
         for (FinderSummary line : lines) {
             String count = Integer.toString(line.count());
-            String distance = line.nearest() == null ? "" : Math.round(line.nearest().distanceTo(origin)) + "m";
+            String distance = distance(line, origin);
             int nameWidth = UiPaint.width(font, line.name());
-            int width = 4 + nameWidth + 5 + UiPaint.width(font, count)
-                    + (distance.isEmpty() ? 0 : 16 + UiPaint.width(font, distance))
-                    + (line.note().isEmpty() ? 0 : 6 + UiPaint.width(font, line.note())) + 4;
+            int width = rowWidth(font, line, distance);
             int color = UiPaint.alpha(line.color(), 1);
             g.fill(x, y, x + width, y + 12, STRIP);
             g.fill(x, y, x + 1, y + 12, color);

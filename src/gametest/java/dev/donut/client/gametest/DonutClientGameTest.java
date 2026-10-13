@@ -116,6 +116,19 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             GuiClicks.click(context, "nav.theme");
             GuiClicks.settle(context);
             screenshot(context, "donut-02-clickgui-theme");
+            // Reset puts a module's settings back on a second click, and leaves it on or off as it was.
+            boolean fullbrightOn = context.computeOnClient(client -> config.fullbright.enabled);
+            GuiClicks.expand(context, "Fullbright");
+            GuiClicks.click(context, "Fullbright.noFog");
+            context.runOnClient(client -> require(!config.fullbright.noFog, "Remove fog did not switch off"));
+            GuiClicks.click(context, "Fullbright.reset");
+            context.runOnClient(client -> require(!config.fullbright.noFog, "One click on Reset already reset Fullbright"));
+            GuiClicks.settle(context);
+            screenshot(context, "donut-02-clickgui-reset-confirm");
+            GuiClicks.click(context, "Fullbright.reset");
+            context.runOnClient(client -> require(config.fullbright.noFog && config.fullbright.enabled == fullbrightOn,
+                    "Reset did not restore Fullbright's settings, or changed its switch"));
+            GuiClicks.collapse(context, "Fullbright");
             GoNutsPagesCheck.run(context, name -> screenshot(context, name));
             context.runOnClient(client -> client.gui.screen().onClose());
             context.waitForScreen(null);

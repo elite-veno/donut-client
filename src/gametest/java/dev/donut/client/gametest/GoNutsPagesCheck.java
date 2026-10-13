@@ -55,6 +55,11 @@ final class GoNutsPagesCheck {
         clickSetting(context, toggle);
         require(GoNutsApi.get(toggle.key()) == before, "Clicking " + toggle.label() + " again did not change it back");
 
+        // A setting changed from its default shows a Reset link that puts the default back.
+        if (GoNutsApi.isDefault(toggle.key())) clickSetting(context, toggle);
+        GuiClicks.click(context, toggle.group() + "." + toggle.key() + ".reset");
+        require(GoNutsApi.isDefault(toggle.key()), "Reset did not put " + toggle.label() + " back to its default");
+
         // A guarded setting changes only on a second click; one click must leave it alone.
         Tuning.Setting guarded = first(s -> s.kind() == Tuning.Kind.TOGGLE && GoNutsApi.guarded(s.key()));
         double guardedBefore = GoNutsApi.get(guarded.key());
