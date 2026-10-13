@@ -29,6 +29,8 @@ public final class AutoRtpController {
     /** How long after sending a newly opened menu is taken to be the command's. */
     private static final int MENU_WINDOW = 10 * 20;
     private static final int BLIND_CHUNKS = 100;
+    /** Growth this unlikely from worldgen over the geode's chunks is practically never a false stop in a whole run. */
+    private static final double STOP_CHANCE = 1e-6;
     private static AutoRtpController instance;
 
     private final ClientConfig config;
@@ -88,6 +90,7 @@ public final class AutoRtpController {
         }
         if (GoNutsGate.busy()) {
             // GoNuts has the auction house open: an /rtp or a menu click now lands in the middle of one of its steps.
+            loop.refuse(RtpLoop.Result.GONUTS_BUSY);
             finish(client, RtpLoop.Result.GONUTS_BUSY);
             return;
         }
@@ -98,15 +101,21 @@ public final class AutoRtpController {
         lastHealth = health;
 
         if (loop.phase() == RtpLoop.Phase.AWAIT_TELEPORT && !menuHandled && tick - sentTick < MENU_WINDOW
-                && client.gui.screen() instanceof ContainerScreen menu) {
+                && client.gui.screen() instanceof ContainerScreen menu && hasItems(menu)) {
+            // The items can arrive a tick after the screen opens.
             menuHandled = true;
             if (!clickMenuItem(client, menu)) { finish(client, RtpLoop.Result.MENU_MISSING); return; }
         }
 
         ActivityStats stats = scanner.activityStats();
         boolean blind = stats.overworld() && stats.scannedChunks() >= BLIND_CHUNKS && stats.amethystChunks() == 0;
-        int hits = stats.best() != null && stats.best().score() >= settings().stopAtGrowth ? 1 : 0;
-        RtpLoop.Action action = loop.tick(tick, teleported(client), hurt, hits, blind, settings().stopWhenHurt);
+        // A score of 0 is plain worldgen, which a 0% threshold must not stop on. A chunk that is still being judged
+        // has a chance of NaN, which never stops.
+        ActivityArea best = stats.best();
+        int hits = best != null && best.score() > 0 && best.score() >= settings().stopAtGrowth
+                && best.chance() <= STOP_CHANCE ? 1 : 0;
+        RtpLoop.Action action = loop.tick(tick, teleported(client), hurt, hits, blind, stats.overworld(),
+                settings().stopWhenHurt);
         if (action == RtpLoop.Action.SEND) send(client);
         else if (action == RtpLoop.Action.STOP) finish(client, loop.result());
     }
@@ -116,9 +125,10 @@ public final class AutoRtpController {
         loop.configure(s.intervalSeconds, s.scanSeconds, s.maxAttempts);
         loop.start(tick);
         lastMenuSlot = -1;
-        if (!config.activity.enabled) {
-            // Auto RTP stops on ActivityFinder's results, so it needs the finder running.
+        if (!config.activity.enabled || !config.activity.allLoadedChunks) {
+            // Auto RTP stops on ActivityFinder's results, so it needs the finder running over every chunk the server sent.
             config.activity.enabled = true;
+            config.activity.allLoadedChunks = true;
             save.run();
         }
         message(client, "started. Sending /" + s.command + " every " + Math.round(s.intervalSeconds)
@@ -143,6 +153,13 @@ public final class AutoRtpController {
         Vec3 now = client.player.position();
         double dx = now.x - sentFrom.x, dz = now.z - sentFrom.z;
         return dx * dx + dz * dz > TELEPORT_DISTANCE * TELEPORT_DISTANCE;
+    }
+
+    private static boolean hasItems(ContainerScreen screen) {
+        var menu = screen.getMenu();
+        int size = Math.min(menu.getContainer().getContainerSize(), menu.slots.size());
+        for (int index = 0; index < size; index++) if (!menu.slots.get(index).getItem().isEmpty()) return true;
+        return false;
     }
 
     private boolean clickMenuItem(Minecraft client, ContainerScreen screen) {
@@ -183,8 +200,11 @@ public final class AutoRtpController {
             ActivityArea best = scanner.activityStats().best();
             String where = best == null ? "" : ": " + Math.round(best.score() * 100) + "% growth at x "
                     + (best.chunk().getMinBlockX() + 8) + ", z " + (best.chunk().getMinBlockZ() + 8);
-            message(client, "found likely player activity after " + loop.attempts() + " "
-                    + (loop.attempts() == 1 ? "attempt" : "attempts") + where + ".", ChatFormatting.GREEN);
+            int attempts = loop.areaAttempt();
+            String pending = loop.commandPending() ? " The next /" + settings().command
+                    + " was already sent: close its menu or move to cancel the teleport." : "";
+            message(client, "found likely player activity after " + attempts + " "
+                    + (attempts == 1 ? "attempt" : "attempts") + where + "." + pending, ChatFormatting.GREEN);
             client.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.PLAYER_LEVELUP, 1.0f));
         } else if (result == RtpLoop.Result.STOPPED) {
             message(client, "stopped.", ChatFormatting.GRAY);
@@ -203,7 +223,8 @@ public final class AutoRtpController {
     public String status() {
         if (!isActive()) {
             RtpLoop.Result result = loop.result();
-            return result == null ? "Idle" : "Last run: " + result.reason + " (" + loop.attempts() + " attempts)";
+            if (result == null) return "Idle";
+            return "Last run: " + result.reason + (loop.attempts() == 0 ? "" : " (" + loop.attempts() + " attempts)");
         }
         String attempt = "attempt " + loop.attempts() + " of " + loop.maxAttempts();
         return switch (loop.phase()) {

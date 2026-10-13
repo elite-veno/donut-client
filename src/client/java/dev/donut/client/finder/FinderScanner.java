@@ -18,12 +18,12 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.SpawnerBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
+import net.minecraft.world.level.dimension.BuiltinDimensionTypes;
 import net.minecraft.world.phys.Vec3;
 
 /** Reads only blocks and block entities already sent to the client; never requests chunks. */
@@ -137,8 +137,9 @@ public final class FinderScanner implements ChunkEvents.Listener {
         if (config.activity.enabled) activity.collect(origin, activityRange, config.activity.minActivity, grown);
         grown.sort(Comparator.comparingDouble(area -> area.horizontalDistance(origin)));
         areas = List.copyOf(grown);
-        activityStats = config.activity.enabled
-                ? activity.stats(client.level.dimension() == Level.OVERWORLD, origin, activityRange) : ActivityStats.EMPTY;
+        // Paper's extra worlds have their own dimension keys but the Overworld's type.
+        boolean overworld = client.level.dimensionTypeRegistration().is(BuiltinDimensionTypes.OVERWORLD);
+        activityStats = config.activity.enabled ? activity.stats(overworld, origin, activityRange) : ActivityStats.EMPTY;
 
         List<TunnelDetector.Segment> passages = new ArrayList<>();
         if (t.enabled) tunnelIndex.collect(origin, t.range, passages);
@@ -255,7 +256,11 @@ public final class FinderScanner implements ChunkEvents.Listener {
         }
         if (config.activity.enabled) {
             Vec3 nearest = areas.isEmpty() ? null : Vec3.atCenterOf(areas.getFirst().chunk().getMiddleBlockPosition(areas.getFirst().surfaceY()));
-            lines.add(new FinderSummary("Activity", areas.size(), nearest, config.activity.color, ""));
+            ActivityStats stats = activityStats;
+            String note = !stats.overworld() ? "not Overworld"
+                    : stats.best() != null ? "best " + Math.round(stats.best().score() * 100) + "%"
+                    : stats.scannedChunks() > 0 ? "no amethyst loaded" : "";
+            lines.add(new FinderSummary("Activity", areas.size(), nearest, config.activity.color, note));
         }
         if (config.entities.enabled) {
             int count = 0;
@@ -304,6 +309,21 @@ public final class FinderScanner implements ChunkEvents.Listener {
         if (config.debris.enabled && debrisChanged) debris.markDirty(pos);
         if (config.debris.enabled && previous.is(Blocks.ANCIENT_DEBRIS) && !current.is(Blocks.ANCIENT_DEBRIS)) debris.debrisRemoved(pos);
         if (config.tunnels.enabled) tunnelIndex.markDirty(pos);
+        if (config.activity.enabled && (amethyst(previous) || amethyst(current))) {
+            // A bud on the chunk's edge can belong to budding amethyst next door.
+            int chunkX = SectionPos.blockToSectionCoord(pos.getX()), chunkZ = SectionPos.blockToSectionCoord(pos.getZ());
+            int x = pos.getX() & 15, z = pos.getZ() & 15;
+            activity.markDirty(chunkX, chunkZ);
+            if (x == 0) activity.markDirty(chunkX - 1, chunkZ);
+            if (x == 15) activity.markDirty(chunkX + 1, chunkZ);
+            if (z == 0) activity.markDirty(chunkX, chunkZ - 1);
+            if (z == 15) activity.markDirty(chunkX, chunkZ + 1);
+        }
+    }
+
+    private static boolean amethyst(BlockState state) {
+        return state.is(Blocks.BUDDING_AMETHYST) || state.is(Blocks.SMALL_AMETHYST_BUD) || state.is(Blocks.MEDIUM_AMETHYST_BUD)
+                || state.is(Blocks.LARGE_AMETHYST_BUD) || state.is(Blocks.AMETHYST_CLUSTER);
     }
 
     @Override
@@ -335,6 +355,14 @@ public final class FinderScanner implements ChunkEvents.Listener {
             debris.markDirty(pos);
         }
         if (config.tunnels.enabled) tunnelIndex.markDirty(pos);
+        if (config.activity.enabled) {
+            // Faces on the edges next to this chunk read as missing until it loads.
+            activity.markDirty(pos.x(), pos.z());
+            activity.markDirty(pos.x() - 1, pos.z());
+            activity.markDirty(pos.x() + 1, pos.z());
+            activity.markDirty(pos.x(), pos.z() - 1);
+            activity.markDirty(pos.x(), pos.z() + 1);
+        }
     }
 
     private void announceRevealed(Minecraft client) {

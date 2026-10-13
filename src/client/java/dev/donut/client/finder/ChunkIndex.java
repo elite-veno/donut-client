@@ -13,6 +13,8 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Caches one scan result per loaded chunk for searches that must read block data directly.
@@ -20,6 +22,7 @@ import net.minecraft.world.level.chunk.status.ChunkStatus;
  * rescanned on the next tick, so changes show at once instead of waiting for the periodic refresh.
  */
 final class ChunkIndex<T> {
+    private static final Logger LOGGER = LoggerFactory.getLogger("Donut/Finder");
     /** Dirty chunks rescanned per tick; a large explosion or section update can dirty many at once. */
     private static final int DIRTY_PER_TICK = 24;
 
@@ -31,7 +34,10 @@ final class ChunkIndex<T> {
     private final LongLinkedOpenHashSet dirty = new LongLinkedOpenHashSet();
     private int[] offsets = new int[0];
     private double offsetsRange = -1;
+    /** Where the periodic refresh resumes, so far chunks get their turn even when there are many. */
+    private int refreshCursor;
     private long tick;
+    private boolean failed;
 
     /** The scanner may return null for chunks without a result. */
     ChunkIndex(Function<LevelChunk, T> scanner, int chunksPerTick) { this(scanner, chunksPerTick, 40); }
@@ -58,6 +64,7 @@ final class ChunkIndex<T> {
         if (range != offsetsRange) {
             offsets = offsets(range);
             offsetsRange = range;
+            refreshCursor = 0;
         }
         rescanDirty(level, center, range);
         // Newly loaded chunks take priority over refreshing chunks that are already indexed.
@@ -91,13 +98,18 @@ final class ChunkIndex<T> {
             if (!withinRange(x - center.x(), z - center.z(), range)) continue;
             LevelChunk chunk = level.getChunkSource().getChunk(x, z, ChunkStatus.FULL, false);
             if (chunk == null) continue;
-            scans.put(key, new Scan<>(chunk, tick, scanner.apply(chunk)));
+            scans.put(key, new Scan<>(chunk, tick, scanOf(chunk)));
             budget--;
         }
     }
 
     private int scan(ClientLevel level, ChunkPos center, int budget, boolean refresh) {
-        for (int i = 0; i < offsets.length && budget > 0; i += 2) {
+        int count = offsets.length / 2;
+        // New chunks go nearest first; the refresh carries on from where the last tick stopped.
+        int start = refresh ? refreshCursor : 0;
+        for (int step = 0; step < count && budget > 0; step++) {
+            int i = (start + step) % count * 2;
+            if (refresh) refreshCursor = (i / 2 + 1) % count;
             int x = center.x() + offsets[i], z = center.z() + offsets[i + 1];
             LevelChunk chunk = level.getChunkSource().getChunk(x, z, ChunkStatus.FULL, false);
             if (chunk == null) continue;
@@ -106,10 +118,23 @@ final class ChunkIndex<T> {
             // A reloaded chunk is a new object, even when it reuses the same position.
             boolean indexed = previous != null && previous.chunk == chunk;
             if (refresh ? !indexed || tick - previous.tick < refreshTicks : indexed) continue;
-            scans.put(key, new Scan<>(chunk, tick, scanner.apply(chunk)));
+            scans.put(key, new Scan<>(chunk, tick, scanOf(chunk)));
             budget--;
         }
         return budget;
+    }
+
+    /** A scanner bug must not crash the client from the tick handler; the chunk is kept without a result. */
+    private T scanOf(LevelChunk chunk) {
+        try {
+            return scanner.apply(chunk);
+        } catch (RuntimeException e) {
+            if (!failed) {
+                failed = true;
+                LOGGER.error("Chunk scan failed at {}; chunks that fail are kept without a result", chunk.getPos(), e);
+            }
+            return null;
+        }
     }
 
     private void prune(ClientLevel level, ChunkPos center, double range) {

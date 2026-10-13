@@ -18,6 +18,7 @@ public final class RtpLoop {
         EXHAUSTED("used every attempt without finding activity"),
         NO_TELEPORT("the command did not teleport you three times in a row"),
         NO_AMETHYST("three areas in a row had no budding amethyst; the server may hide it"),
+        NOT_OVERWORLD("the teleport did not land in the Overworld, the only place geodes generate"),
         HURT("you took damage"),
         MENU_MISSING("the command opened a menu without the configured item"),
         GONUTS_BUSY("GoNuts is trading; stop its session first"),
@@ -33,6 +34,10 @@ public final class RtpLoop {
     static final int TELEPORT_TIMEOUT = 60 * 20;
     /** New chunks need a moment to arrive before an early hit is trusted. */
     static final int MIN_SCAN = 2 * 20;
+    /** A cooldown notice only counts this soon after the command; later ones are someone else's chat. */
+    static final int NOTICE_WINDOW = 15 * 20;
+    /** Longer cooldowns are more likely misread chat than a real refusal. */
+    static final int MAX_COOLDOWN = 15 * 60;
     private static final int GIVE_UP_AFTER = 3;
     private static final Pattern DURATION = Pattern.compile(
             "(\\d+)\\s*(h|hours?|hrs?|m|min|mins|minutes?|s|sec|secs|seconds?)\\b");
@@ -40,8 +45,14 @@ public final class RtpLoop {
     private int intervalTicks = 20 * 20, scanTicks = 8 * 20, maxAttempts = 25;
     private Phase phase = Phase.IDLE;
     private Result result;
-    private int attempts, missedTeleports, blindAreas;
+    private int attempts, missedTeleports, blindAreas, areaAttempt;
     private long sentAt, scanStart, nextSend;
+    /** A teleport landed in the area the player now stands in. */
+    private boolean arrived;
+    /** A cooldown notice took back the last command; it may yet teleport if the notice was a countdown. */
+    private boolean refused;
+    /** The run found activity after the next command was already sent. */
+    private boolean commandPending;
 
     public void configure(double intervalSeconds, double scanSeconds, int maxAttempts) {
         this.intervalTicks = (int) Math.round(intervalSeconds * 20);
@@ -52,7 +63,9 @@ public final class RtpLoop {
     public void start(long tick) {
         phase = Phase.COOLDOWN;
         result = null;
-        attempts = missedTeleports = blindAreas = 0;
+        attempts = missedTeleports = blindAreas = areaAttempt = 0;
+        arrived = refused = commandPending = false;
+        sentAt = Long.MIN_VALUE / 2;
         nextSend = tick;
     }
 
@@ -62,29 +75,52 @@ public final class RtpLoop {
         result = why;
     }
 
+    /** Stops the run, or, when none is running, records why one could not start. */
+    public void refuse(Result why) {
+        if (phase != Phase.IDLE) {
+            stop(why);
+            return;
+        }
+        result = why;
+        attempts = areaAttempt = 0;
+        commandPending = false;
+    }
+
     /**
      * @param teleported the player left the area the command was sent from
      * @param hurt the player lost health since the previous tick
      * @param hits chunks currently at or above ActivityFinder's threshold
      * @param blind an Overworld area with plenty of loaded chunks but no budding amethyst at all
+     * @param overworld the player stands in an Overworld-type dimension
      */
-    public Action tick(long tick, boolean teleported, boolean hurt, int hits, boolean blind, boolean stopWhenHurt) {
+    public Action tick(long tick, boolean teleported, boolean hurt, int hits, boolean blind, boolean overworld,
+                       boolean stopWhenHurt) {
         if (phase == Phase.IDLE) return Action.NONE;
         if (hurt && stopWhenHurt) return finish(Result.HURT);
         switch (phase) {
             case COOLDOWN -> {
+                if (refused && teleported) {
+                    // The "cooldown" was a countdown after all, and the command went through.
+                    attempts++;
+                    land(tick);
+                    return Action.NONE;
+                }
+                if (lateHit(tick, hits)) return finish(Result.FOUND);
                 if (tick < nextSend) return Action.NONE;
                 if (attempts >= maxAttempts) return finish(Result.EXHAUSTED);
                 attempts++;
                 sentAt = tick;
+                refused = false;
                 phase = Phase.AWAIT_TELEPORT;
                 return Action.SEND;
             }
             case AWAIT_TELEPORT -> {
                 if (teleported) {
                     missedTeleports = 0;
-                    scanStart = tick;
-                    phase = Phase.SCANNING;
+                    land(tick);
+                } else if (lateHit(tick, hits)) {
+                    commandPending = true;
+                    return finish(Result.FOUND);
                 } else if (tick - sentAt >= TELEPORT_TIMEOUT) {
                     if (++missedTeleports >= GIVE_UP_AFTER) return finish(Result.NO_TELEPORT);
                     waitForNext(tick);
@@ -93,7 +129,9 @@ public final class RtpLoop {
             }
             case SCANNING -> {
                 long scanned = tick - scanStart;
-                if (hits > 0 && scanned >= MIN_SCAN) return finish(Result.FOUND);
+                if (scanned < MIN_SCAN) return Action.NONE;
+                if (!overworld) return finish(Result.NOT_OVERWORLD);
+                if (hits > 0) return finish(Result.FOUND);
                 if (scanned < scanTicks) return Action.NONE;
                 blindAreas = blind ? blindAreas + 1 : 0;
                 if (blindAreas >= GIVE_UP_AFTER) return finish(Result.NO_AMETHYST);
@@ -106,12 +144,28 @@ public final class RtpLoop {
 
     /** The server refused the teleport for now; the attempt does not count and the next one waits it out. */
     public void serverCooldown(long tick, int seconds) {
-        if (phase == Phase.IDLE) return;
+        if (phase == Phase.IDLE || tick - sentAt > NOTICE_WINDOW) return;
         if (phase == Phase.AWAIT_TELEPORT) {
             attempts--;
+            refused = true;
             phase = Phase.COOLDOWN;
         }
-        nextSend = Math.max(nextSend, tick + (seconds + 1) * 20L);
+        nextSend = Math.max(nextSend, tick + (Math.min(seconds, MAX_COOLDOWN) + 1) * 20L);
+    }
+
+    /**
+     * Chunks keep arriving, and get rescanned, after the scan window. A hit still counts while the player stands in
+     * the area a teleport brought them to, through the wait and the next command's countdown.
+     */
+    private boolean lateHit(long tick, int hits) {
+        return hits > 0 && arrived && tick - scanStart >= MIN_SCAN;
+    }
+
+    private void land(long tick) {
+        arrived = true;
+        areaAttempt = attempts;
+        scanStart = tick;
+        phase = Phase.SCANNING;
     }
 
     private void waitForNext(long tick) {
@@ -127,6 +181,10 @@ public final class RtpLoop {
     public Phase phase() { return phase; }
     public Result result() { return result; }
     public int attempts() { return attempts; }
+    /** The attempt whose teleport reached the area the player stands in. */
+    public int areaAttempt() { return areaAttempt; }
+    /** The run found activity while the next command was already on its way. */
+    public boolean commandPending() { return commandPending; }
     public int maxAttempts() { return maxAttempts; }
     public long nextSend() { return nextSend; }
     public long scanStart() { return scanStart; }

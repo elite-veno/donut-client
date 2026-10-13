@@ -22,11 +22,110 @@ class RtpLoopTest {
 
     /** Advance until the loop asks for something or the tick budget runs out. */
     private Action run(int ticks, boolean teleported, int hits, boolean blind) {
+        return run(ticks, teleported, hits, blind, true);
+    }
+
+    private Action run(int ticks, boolean teleported, int hits, boolean blind, boolean overworld) {
         for (int i = 0; i < ticks; i++) {
-            Action action = loop.tick(tick++, teleported, false, hits, blind, true);
+            Action action = loop.tick(tick++, teleported, false, hits, blind, overworld, true);
             if (action != Action.NONE) return action;
         }
         return Action.NONE;
+    }
+
+    /** Sends the first command, lands, and lets the whole scan window pass without a hit. */
+    private void quietFirstArea() {
+        assertEquals(Action.SEND, run(1, false, 0, false));
+        run(1, true, 0, false);
+        assertEquals(Action.NONE, run(SCAN, true, 0, false));
+        assertEquals(Phase.COOLDOWN, loop.phase());
+    }
+
+    @Test
+    void aHitThatShowsUpAfterTheScanWindowStillStopsTheRun() {
+        started(5);
+        quietFirstArea();
+        // An outer chunk arrives, or a refresh corrects one, a moment after the scan ended.
+        assertEquals(Action.STOP, run(1, true, 1, false));
+        assertEquals(Result.FOUND, loop.result());
+        assertEquals(1, loop.areaAttempt());
+        assertFalse(loop.commandPending());
+    }
+
+    @Test
+    void theLastAttemptWaitsOutItsIntervalForLateHits() {
+        started(1);
+        quietFirstArea();
+        assertEquals(Action.NONE, run(INTERVAL / 2, true, 0, false));
+        assertEquals(Action.STOP, run(1, true, 1, false));
+        assertEquals(Result.FOUND, loop.result(), "not EXHAUSTED next to a hit");
+    }
+
+    @Test
+    void aHitDuringTheNextCountdownStopsAndSaysTheCommandWasSent() {
+        started(5);
+        quietFirstArea();
+        assertEquals(Action.SEND, run(INTERVAL, true, 0, false));
+        assertEquals(Phase.AWAIT_TELEPORT, loop.phase());
+        // Still standing where the first teleport landed; the second has not happened yet.
+        assertEquals(Action.STOP, run(1, false, 1, false));
+        assertEquals(Result.FOUND, loop.result());
+        assertEquals(1, loop.areaAttempt());
+        assertTrue(loop.commandPending());
+    }
+
+    @Test
+    void hitsWhereTheRunStartedDoNotCount() {
+        started(5);
+        assertEquals(Action.SEND, run(1, false, 0, false));
+        // The player's own base, before any teleport: the command times out and the next one goes out.
+        assertEquals(Action.SEND, run(RtpLoop.TELEPORT_TIMEOUT + INTERVAL, false, 1, false));
+        assertNull(loop.result());
+    }
+
+    @Test
+    void landingOutsideTheOverworldStopsTheRun() {
+        started(5);
+        run(1, false, 0, false);
+        run(1, true, 0, false, false);
+        assertEquals(Action.NONE, run(RtpLoop.MIN_SCAN - 2, true, 0, false, false), "the dimension is settled first");
+        assertEquals(Action.STOP, run(5, true, 0, false, false));
+        assertEquals(Result.NOT_OVERWORLD, loop.result());
+    }
+
+    @Test
+    void cooldownNoticesOnlyCountRightAfterTheCommandAndAreCapped() {
+        started(5);
+        loop.serverCooldown(tick, 30);
+        assertEquals(Action.SEND, run(1, false, 0, false), "nothing was sent yet, so a notice is someone else's");
+        loop.serverCooldown(tick, 7200);
+        assertEquals(Phase.COOLDOWN, loop.phase());
+        assertEquals(tick + (RtpLoop.MAX_COOLDOWN + 1) * 20L, loop.nextSend(), "a two hour wait is capped");
+    }
+
+    @Test
+    void aCountdownMisreadAsACooldownStillScansTheArea() {
+        started(5);
+        run(1, false, 0, false);
+        loop.serverCooldown(tick, 5);
+        assertEquals(0, loop.attempts());
+        run(1, true, 0, false);
+        assertEquals(Phase.SCANNING, loop.phase(), "the teleport went through after all");
+        assertEquals(1, loop.attempts());
+        assertEquals(Action.STOP, run(RtpLoop.MIN_SCAN + 1, true, 1, false));
+        assertEquals(Result.FOUND, loop.result());
+    }
+
+    @Test
+    void aRefusedStartIsRecordedWhileARunningOneIsStopped() {
+        loop.refuse(Result.GONUTS_BUSY);
+        assertEquals(Result.GONUTS_BUSY, loop.result());
+        assertEquals(Phase.IDLE, loop.phase());
+        started(5);
+        run(1, false, 0, false);
+        loop.refuse(Result.GONUTS_BUSY);
+        assertEquals(Phase.IDLE, loop.phase());
+        assertEquals(1, loop.attempts(), "a stopped run keeps its count");
     }
 
     @Test
@@ -92,8 +191,8 @@ class RtpLoopTest {
     void takingDamageStopsImmediatelyUnlessDisabled() {
         started(5);
         run(1, false, 0, false);
-        assertEquals(Action.NONE, loop.tick(tick++, false, true, 0, false, false));
-        assertEquals(Action.STOP, loop.tick(tick++, false, true, 0, false, true));
+        assertEquals(Action.NONE, loop.tick(tick++, false, true, 0, false, true, false));
+        assertEquals(Action.STOP, loop.tick(tick++, false, true, 0, false, true, true));
         assertEquals(Result.HURT, loop.result());
     }
 
