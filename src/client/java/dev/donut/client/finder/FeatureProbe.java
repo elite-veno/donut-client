@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
@@ -58,6 +59,15 @@ public final class FeatureProbe {
 
     private FeatureProbe() { }
 
+    /** Anti-xray leaves a block as it is once any neighbor lets light or redstone through. */
+    private static boolean exposed(Level level, BlockPos pos) {
+        for (Direction direction : Direction.values()) {
+            BlockPos neighbor = pos.relative(direction);
+            if (!level.getBlockState(neighbor).isRedstoneConductor(level, neighbor)) return true;
+        }
+        return false;
+    }
+
     public static Result run(ClientLevel level, ChunkPos center, int radius, long seed) {
         List<LevelChunk> chunks = new ArrayList<>();
         for (int x = center.x() - radius; x <= center.x() + radius; x++) {
@@ -86,13 +96,18 @@ public final class FeatureProbe {
      * Gravel and blackstone blob centers predicted in one chunk, and how many hold their block. Anti-xray leaves both
      * alone, so they show whether this part of a server's world placed its ores from the seed.
      */
-    static int[] verify(Level level, LevelChunk chunk, WorldgenRandom random, long seed) {
-        int[] gravel = count(level, List.of(chunk), random, seed, GRAVEL, GRAVEL.index());
-        int[] blackstone = count(level, List.of(chunk), random, seed, BLACKSTONE, BLACKSTONE.index());
+    static int[] verify(Level level, LevelChunk chunk, WorldgenRandom random, long seed, boolean exposedOnly) {
+        int[] gravel = count(level, List.of(chunk), random, seed, GRAVEL, GRAVEL.index(), exposedOnly);
+        int[] blackstone = count(level, List.of(chunk), random, seed, BLACKSTONE, BLACKSTONE.index(), exposedOnly);
         return new int[] {gravel[0] + blackstone[0], gravel[1] + blackstone[1]};
     }
 
     private static int[] count(Level level, List<LevelChunk> chunks, WorldgenRandom random, long seed, Ore ore, int index) {
+        return count(level, chunks, random, seed, ore, index, false);
+    }
+
+    private static int[] count(Level level, List<LevelChunk> chunks, WorldgenRandom random, long seed, Ore ore, int index,
+                               boolean exposedOnly) {
         int[] counts = new int[2];
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         for (LevelChunk chunk : chunks) {
@@ -112,6 +127,7 @@ public final class FeatureProbe {
                 // since says nothing either way; servers whose players mine heavily are full of them.
                 BlockState center = chunk.getBlockState(pos.set(x, y + Math.floorDiv(low + high, 2), z));
                 if (center.isAir() || !center.getFluidState().isEmpty()) continue;
+                if (exposedOnly && !exposed(level, pos)) continue;
                 counts[0]++;
                 if (center.is(ore.block())) counts[1]++;
             }

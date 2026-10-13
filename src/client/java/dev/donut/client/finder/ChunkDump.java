@@ -1,5 +1,6 @@
 package dev.donut.client.finder;
 
+import java.io.BufferedOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -68,7 +69,7 @@ public final class ChunkDump {
 
         Files.createDirectories(directory);
         Path file = directory.resolve("nether_%d_%d_%d.bin.gz".formatted(player.getX(), player.getZ(), System.currentTimeMillis() / 1000));
-        try (DataOutputStream out = new DataOutputStream(new GZIPOutputStream(Files.newOutputStream(file)))) {
+        try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(new GZIPOutputStream(Files.newOutputStream(file), 1 << 16), 1 << 16))) {
             out.writeUTF("DONUTDUMP1");
             out.writeInt(player.getX());
             out.writeInt(player.getY());

@@ -65,9 +65,8 @@ public final class XrayController {
         if (Objects.equals(wanted, applied)) return;
         applied = wanted;
         active = wanted == null ? null : new Filter(blocks(wanted), wanted.exposedOresOnly());
-        if (client.levelRenderer != null && client.level != null) {
-            client.levelRenderer.invalidateCompiledGeometry(client.level, client.options, client.gameRenderer.mainCamera(), client.getBlockColors());
-        }
+        // Marks every section dirty so the next frame rebuilds them, as F3+A does.
+        if (client.level != null) client.levelExtractor.allChanged();
     }
 
     /** Turns X-ray off immediately, such as when the game closes. */

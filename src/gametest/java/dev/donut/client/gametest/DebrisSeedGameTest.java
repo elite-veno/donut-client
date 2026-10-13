@@ -25,7 +25,6 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.Vec3;
 
@@ -63,8 +62,8 @@ public final class DebrisSeedGameTest implements FabricClientGameTest {
                 verify(context, server, connection, scanner, "server");
                 // A wrong seed is caught by the debris the server shows.
                 context.runOnClient(client -> config.debris.seed = "12345");
-                context.waitFor(client -> scanner.debrisStats().bedrockMismatch() && scanner.debrisStats().debrisMismatch()
-                        && scanner.debrisStats().offSeedChunks() > 100, 400);
+                // Every chunk reads as generated another way, so no real debris counts against the seed.
+                context.waitFor(client -> scanner.debrisStats().bedrockMismatch() && scanner.debrisStats().offSeedChunks() > 100, 400);
                 DebrisStats wrong = scanner.debrisStats();
                 log("server, wrong seed: seed check %d of %d, bedrock %d of %d, chunks on seed %d, off seed %d, %d estimates",
                         wrong.seedMatched(), wrong.seedChecked(), wrong.bedrockMatched(), wrong.bedrockChecked(), wrong.seedChunks(),
@@ -171,7 +170,9 @@ public final class DebrisSeedGameTest implements FabricClientGameTest {
                 }
             }
         }
-        for (BlockPos pos : buried) level.setBlock(pos, Blocks.NETHERRACK.defaultBlockState(), Block.UPDATE_CLIENTS);
+        // Without update flags no block change fires, as when Paper sends a chunk already disguised: the section's
+        // palette keeps listing debris, and DebrisFinder sees the swap only when it rescans the chunk.
+        for (BlockPos pos : buried) level.setBlock(pos, Blocks.NETHERRACK.defaultBlockState(), 0);
         return buried;
     }
 

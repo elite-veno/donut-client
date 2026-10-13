@@ -245,7 +245,7 @@ public final class FinderScanner implements ChunkEvents.Listener {
             String note = stats.bedrockMismatch() ? "seed is not this Nether's" : stats.oresRandomized() ? "server randomizes debris"
                     : stats.seedMismatch() ? "seed doesn't match" : stats.offSeedChunks() > 0 && stats.seedChunks() == 0 ? "area not from seed"
                     : stats.estimates() > 0 ? "+" + stats.estimates() + " by seed" : stats.searchAreas() > 0 ? stats.searchAreas() + " search areas"
-                    : stats.seedChunks() > 0 && stats.dugOut() > 0 ? "seed spots dug out" : stats.estimates() > 0 ? "+" + stats.estimates() + " by seed"
+                    : stats.allDugOut() ? "seed spots dug out"
                     : stats.fakedChunks() > 0 ? "anti-xray fakes hidden" : stats.likelyHidden() ? "hidden until mined" : "";
             lines.add(new FinderSummary(found.name(), (int) debrisCount(), found.nearest(), found.color(), note));
         }
@@ -302,6 +302,7 @@ public final class FinderScanner implements ChunkEvents.Listener {
         if (level != lastLevel) return;
         boolean debrisChanged = previous.is(Blocks.ANCIENT_DEBRIS) || current.is(Blocks.ANCIENT_DEBRIS);
         if (config.debris.enabled && debrisChanged) debris.markDirty(pos);
+        if (config.debris.enabled && previous.is(Blocks.ANCIENT_DEBRIS) && !current.is(Blocks.ANCIENT_DEBRIS)) debris.debrisRemoved(pos);
         if (config.tunnels.enabled) tunnelIndex.markDirty(pos);
     }
 
@@ -309,10 +310,13 @@ public final class FinderScanner implements ChunkEvents.Listener {
     public void serverBlock(ClientLevel level, BlockPos pos, BlockState state) {
         if (level != lastLevel || !config.debris.enabled) return;
         boolean isDebris = state.is(Blocks.ANCIENT_DEBRIS);
-        // Anti-xray sends the real block once a neighbor is mined; a newly confirmed debris was just revealed.
+        // This runs before the update applies, so the level still shows what the client had.
+        boolean alreadyShown = level.getBlockState(pos).is(Blocks.ANCIENT_DEBRIS) && !debris.inFakedChunk(pos);
+        // Anti-xray sends the real block once a neighbor is mined; a newly confirmed debris was just revealed. Paper
+        // also resends debris that was in plain sight, which is no news.
         if (debris.confirm(pos, isDebris)) {
             debris.markDirty(pos);
-            if (revealed.size() < 64) revealed.add(pos.immutable());
+            if (!alreadyShown && revealed.size() < 64) revealed.add(pos.immutable());
         }
     }
 
@@ -326,7 +330,10 @@ public final class FinderScanner implements ChunkEvents.Listener {
         LevelChunk chunk = level.getChunkSource().getChunk(pos.x(), pos.z(), ChunkStatus.FULL, false);
         if (chunk != null) recordSpawners(chunk);
         // Chunk data can be resent in place, which keeps the same chunk object.
-        if (config.debris.enabled) debris.markDirty(pos);
+        if (config.debris.enabled) {
+            debris.chunkReloaded(level, pos);
+            debris.markDirty(pos);
+        }
         if (config.tunnels.enabled) tunnelIndex.markDirty(pos);
     }
 

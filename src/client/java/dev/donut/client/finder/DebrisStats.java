@@ -39,6 +39,12 @@ public record DebrisStats(boolean nether, int scannedChunks, int buried, int exp
 
     public boolean bedrockMismatch() { return bedrockReady() && bedrockMatched < bedrockChecked * 0.97; }
 
+    /**
+     * The server hides debris and none of the seed's spots here still hides any: players dug them out. Spots that were
+     * open from the start count as dug too, so this needs a server that hides debris to mean anything.
+     */
+    public boolean allDugOut() { return seedChunks > 0 && estimates == 0 && dugOut > 0 && searchAreas == 0 && likelyHidden(); }
+
     /** The seed is this Nether's, yet debris lies elsewhere: the server seeds its ore placement separately. */
     public boolean oresRandomized() { return bedrockReady() && !bedrockMismatch() && debrisMismatch(); }
 }

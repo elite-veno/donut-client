@@ -44,8 +44,9 @@ import org.slf4j.LoggerFactory;
  *
  * <p>A chunk section reaches the client as a palette of block types plus each block's index into it. Paper's anti-xray
  * rewrites the indexes but leaves the palette, so a section whose palette lists debris that none of its blocks show
- * still holds hidden debris: a search area. Where any search area shows, the server leaks this way, and estimates
- * outside search areas are left out: their debris is gone.
+ * still holds hidden debris: a search area. A palette never drops a type, so a section where this client saw debris
+ * disappear lists it until the chunk is sent again; those prove nothing. Where search areas show, the server leaks
+ * this way, and estimates in sections whose palette lacks debris are left out: their debris is gone.
  */
 final class DebrisIndex {
     private static final Predicate<BlockState> DEBRIS = state -> state.is(Blocks.ANCIENT_DEBRIS);
@@ -53,18 +54,24 @@ final class DebrisIndex {
     private static final Predicate<BlockState> NEVER_SENT = state -> state.is(Blocks.STRUCTURE_VOID);
     /** Blocks anti-xray shows in place of buried debris: netherrack, or in engine mode 2 also random ores. */
     private static final Predicate<BlockState> COVER = state -> state.is(BlockTags.BASE_STONE_NETHER);
+    /** Engine mode 2 shows a buried block as any of its hidden types; Paper's Nether list includes these. */
     private static final Predicate<BlockState> FAKE_ORE = state -> state.is(Blocks.ANCIENT_DEBRIS)
-            || state.is(Blocks.NETHER_QUARTZ_ORE) || state.is(Blocks.NETHER_GOLD_ORE);
+            || state.is(Blocks.NETHER_QUARTZ_ORE) || state.is(Blocks.NETHER_GOLD_ORE) || state.is(Blocks.GILDED_BLACKSTONE)
+            || state.is(Blocks.GLOWSTONE) || state.is(Blocks.MAGMA_BLOCK) || state.is(Blocks.BONE_BLOCK) || state.is(Blocks.NETHER_BRICKS);
     private static final Direction[] DIRECTIONS = Direction.values();
     private static final Logger LOGGER = LoggerFactory.getLogger("Donut/Debris");
     /** Lines the live log writes per world, so a server without anti-xray can't flood it. */
     private static final int LOG_LIMIT = 1500;
     /** Worldgen's two debris features place a handful per chunk; anti-xray fakes number in the hundreds. */
     static final int FAKE_THRESHOLD = 24;
+    /** Search areas it takes to believe the server leaks; one stale palette elsewhere must not hide every estimate. */
+    private static final int LEAK_EVIDENCE = 3;
 
     private final ChunkIndex<DebrisChunk> chunks = new ChunkIndex<>(this::scan, 8);
     /** Positions the server sent as debris in a block update, which anti-xray never fakes. */
     private final LongSet confirmed = new LongOpenHashSet();
+    /** Sections where this client saw debris turn into another block; their palette still lists it. */
+    private final LongSet stale = new LongOpenHashSet();
     private final DebrisPredictor predictor = new DebrisPredictor();
     private final WorldgenRandom oreRandom = new WorldgenRandom(new XoroshiroRandomSource(0));
     /** The world seed estimates come from, if any. */
@@ -82,6 +89,7 @@ final class DebrisIndex {
     void clear() {
         chunks.clear();
         confirmed.clear();
+        stale.clear();
         logged.clear();
         loggedAreas.clear();
         areas = List.of();
@@ -96,6 +104,10 @@ final class DebrisIndex {
             this.seed = seed;
             bedrock = seed.isPresent() ? new DebrisPredictor.Bedrock(seed.getAsLong()) : null;
             chunks.clear();
+            // Logged debris is relogged against the new seed's positions.
+            logged.clear();
+            loggedAreas.clear();
+            logLines = 0;
             lastSummary = "";
             if (seed.isPresent()) log("seed %d", seed.getAsLong());
         }
@@ -105,6 +117,20 @@ final class DebrisIndex {
     void markDirty(BlockPos pos) { chunks.markDirty(SectionPos.blockToSectionCoord(pos.getX()), SectionPos.blockToSectionCoord(pos.getZ())); }
 
     void markDirty(ChunkPos pos) { chunks.markDirty(pos.x(), pos.z()); }
+
+    /** Debris this client saw turn into another block, such as by mining: its section's palette goes stale. */
+    void debrisRemoved(BlockPos pos) { stale.add(SectionPos.asLong(pos)); }
+
+    /** A chunk sent again brings fresh palettes. */
+    void chunkReloaded(ClientLevel level, ChunkPos pos) {
+        for (int y = level.getMinSectionY(); y <= level.getMaxSectionY(); y++) stale.remove(SectionPos.asLong(pos.x(), y, pos.z()));
+    }
+
+    /** Whether this position's chunk is filled with anti-xray fake debris. */
+    boolean inFakedChunk(BlockPos pos) {
+        DebrisChunk chunk = chunks.get(SectionPos.blockToSectionCoord(pos.getX()), SectionPos.blockToSectionCoord(pos.getZ()));
+        return chunk != null && chunk.faked();
+    }
 
     /** @return true the first time the server confirms debris at this position */
     boolean confirm(BlockPos pos, boolean debris) {
@@ -121,17 +147,20 @@ final class DebrisIndex {
         double rangeSqr = range * range;
         boolean nether = level.dimension() == Level.NETHER, seeded = nether && seed.isPresent();
         BlockPos.MutableBlockPos neighbor = new BlockPos.MutableBlockPos();
-        LongSet clues = new LongOpenHashSet();
+        LongSet listed = new LongOpenHashSet();
         List<SectionPos> inRange = new ArrayList<>();
+        int[] clueCount = new int[1];
         chunks.forEach(chunk -> {
+            for (long section : chunk.listed()) if (!stale.contains(section)) listed.add(section);
             for (long section : chunk.clues()) {
-                clues.add(section);
+                if (stale.contains(section)) continue;
+                clueCount[0]++;
                 SectionPos pos = SectionPos.of(section);
                 if (pos.center().distToCenterSqr(origin) <= rangeSqr) inRange.add(pos);
             }
         });
         inRange.sort(java.util.Comparator.comparingDouble(pos -> pos.center().distToCenterSqr(origin)));
-        boolean leaks = !clues.isEmpty();
+        boolean leaks = clueCount[0] >= LEAK_EVIDENCE;
         LongSet estimated = new LongOpenHashSet();
         int[] counts = new int[14];
         chunks.forEach(chunk -> {
@@ -145,14 +174,16 @@ final class DebrisIndex {
             counts[10] += chunk.bedrockSeen();
             boolean faked = filterFakes && chunk.faked();
             if (chunk.faked()) counts[3]++;
+            // Real debris in a chunk generated another way says nothing about the seed.
+            boolean checks = seeded && !Boolean.FALSE.equals(follows);
             for (BlockPos pos : chunk.exposed()) {
                 add(level, pos, origin, rangeSqr, found);
-                if (seeded) checkSeed(chunk, pos, counts);
+                if (checks) checkSeed(chunk, pos, counts);
                 if (nether) logDebris(chunk, pos, "exposed");
             }
             for (BlockPos pos : chunk.buried()) {
                 boolean real = confirmed.contains(pos.asLong());
-                if (seeded && real) checkSeed(chunk, pos, counts);
+                if (checks && real) checkSeed(chunk, pos, counts);
                 if (nether && (real || !chunk.faked())) logDebris(chunk, pos, real ? "revealed" : "buried");
                 if (faked && !real) { counts[4]++; continue; }
                 add(level, pos, origin, rangeSqr, found);
@@ -163,9 +194,9 @@ final class DebrisIndex {
             }
             for (BlockPos pos : chunk.estimates()) {
                 if (confirmed.contains(pos.asLong())) { logOutcome(pos, "debris"); continue; }
-                if (pos.distToCenterSqr(origin) > rangeSqr) continue;
-                // On a server whose palettes give hidden debris away, a section without it holds none.
-                if (leaks && !clues.contains(SectionPos.asLong(pos))) continue;
+                if (pos.distToCenterSqr(origin) > rangeSqr || !level.hasChunkAt(pos)) continue;
+                // On a server whose palettes give hidden debris away, a section whose palette lacks it holds none.
+                if (leaks && !listed.contains(SectionPos.asLong(pos))) continue;
                 BlockState state = level.getBlockState(pos);
                 // Debris drawn as found needs no estimate; a block mined out or opened up was not hiding any.
                 if (DEBRIS.test(state) && !faked) continue;
@@ -224,17 +255,17 @@ final class DebrisIndex {
     // The live log: what the server shows, so a seed can be checked against a real server from latest.log.
 
     private void logDebris(DebrisChunk chunk, BlockPos pos, String how) {
-        if (!logged.add(pos.asLong())) return;
+        if (logLines >= LOG_LIMIT || !logged.add(pos.asLong())) return;
         String spot = seed.isEmpty() ? "" : chunk.attempts().contains(pos.asLong()) ? ", on a seed spot" : ", NOT on a seed spot";
         log("debris %d %d %d %s%s", pos.getX(), pos.getY(), pos.getZ(), how, spot);
     }
 
     private void logOutcome(BlockPos pos, String block) {
-        if (logged.add(pos.asLong())) log("estimate %d %d %d is %s", pos.getX(), pos.getY(), pos.getZ(), block);
+        if (logLines < LOG_LIMIT && logged.add(pos.asLong())) log("estimate %d %d %d is %s", pos.getX(), pos.getY(), pos.getZ(), block);
     }
 
     private void logArea(SectionPos area) {
-        if (!loggedAreas.add(area.asLong())) return;
+        if (logLines >= LOG_LIMIT || !loggedAreas.add(area.asLong())) return;
         DebrisChunk chunk = chunks.get(area.x(), area.z());
         int spots = 0, hidden = 0;
         if (chunk != null) {
@@ -264,7 +295,7 @@ final class DebrisIndex {
 
     private DebrisChunk scan(LevelChunk chunk) {
         List<BlockPos> exposed = new ArrayList<>(), buried = new ArrayList<>();
-        LongArrayList clues = new LongArrayList();
+        LongArrayList listed = new LongArrayList(), clues = new LongArrayList();
         Level level = chunk.getLevel();
         LevelChunkSection[] sections = chunk.getSections();
         int minX = chunk.getPos().getMinBlockX(), minZ = chunk.getPos().getMinBlockZ();
@@ -284,10 +315,11 @@ final class DebrisIndex {
                     }
                 }
             }
-            // Listed but nowhere in the blocks: hidden, unless this palette is the global one that lists every type.
-            if (exposed.size() + buried.size() == found && !section.maybeHas(NEVER_SENT)) {
-                clues.add(SectionPos.asLong(chunk.getPos().x(), chunk.getSectionYFromSectionIndex(index), chunk.getPos().z()));
-            }
+            // The global palette lists every type, so it says nothing. Listed but nowhere in the blocks: hidden.
+            if (section.maybeHas(NEVER_SENT)) continue;
+            long sectionPos = SectionPos.asLong(chunk.getPos().x(), chunk.getSectionYFromSectionIndex(index), chunk.getPos().z());
+            listed.add(sectionPos);
+            if (exposed.size() + buried.size() == found) clues.add(sectionPos);
         }
         LongSet attempts = attempts(chunk);
         boolean faked = buried.size() > FAKE_THRESHOLD;
@@ -300,10 +332,11 @@ final class DebrisIndex {
             if (cover && !exposed(level, chunk, pos, neighbor)) estimates.add(pos);
         }
         int[] bedrockCounts = checkBedrock(chunk);
-        int[] ores = attempts.isEmpty() ? new int[2] : FeatureProbe.verify(level, chunk, oreRandom, seed.getAsLong());
-        if (exposed.isEmpty() && buried.isEmpty() && attempts.isEmpty() && clues.isEmpty()) return null;
+        // Engine mode 2 also disguises buried gravel and blackstone, so a faked chunk checks only the exposed blobs.
+        int[] ores = attempts.isEmpty() ? new int[2] : FeatureProbe.verify(level, chunk, oreRandom, seed.getAsLong(), faked);
+        if (exposed.isEmpty() && buried.isEmpty() && attempts.isEmpty() && listed.isEmpty()) return null;
         return new DebrisChunk(chunk.getPos().x(), chunk.getPos().z(), List.copyOf(exposed), List.copyOf(buried), List.copyOf(estimates),
-                attempts, bedrockCounts[0], bedrockCounts[1], bedrockCounts[2], ores[0], ores[1], clues.toLongArray());
+                attempts, bedrockCounts[0], bedrockCounts[1], bedrockCounts[2], ores[0], ores[1], listed.toLongArray(), clues.toLongArray());
     }
 
     /** Compares every other column of the chunk's bedrock layers with the seed: checked, matched, bedrock seen. */
@@ -362,11 +395,12 @@ final class DebrisIndex {
 
     /**
      * One chunk's debris: exposed blocks are always real; buried ones are real unless the chunk is faked.
-     * Attempts are the seed positions in the chunk; estimates are those where a buried block may hide debris. Clues
-     * are the sections whose palette lists debris that their blocks don't show.
+     * Attempts are the seed positions in the chunk; estimates are those where a buried block may hide debris. Listed
+     * are the sections whose palette names debris; clues are those of them whose blocks show none.
      */
     record DebrisChunk(int x, int z, List<BlockPos> exposed, List<BlockPos> buried, List<BlockPos> estimates, LongSet attempts,
-                       int bedrockChecked, int bedrockMatched, int bedrockSeen, int oreChecked, int oreMatched, long[] clues) {
+                       int bedrockChecked, int bedrockMatched, int bedrockSeen, int oreChecked, int oreMatched, long[] listed,
+                       long[] clues) {
         boolean faked() { return buried.size() > FAKE_THRESHOLD; }
     }
 }

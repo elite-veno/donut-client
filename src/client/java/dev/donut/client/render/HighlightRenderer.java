@@ -99,10 +99,11 @@ public final class HighlightRenderer implements AutoCloseable {
                 .withCull(!lines)
                 .withDepthStencilState(new DepthStencilState(throughWalls ? CompareOp.ALWAYS_PASS : CompareOp.GREATER_THAN_OR_EQUAL, false));
         if (lines) {
-            // The vanilla line shaders expand each segment in screen space.
+            // The vanilla line vertex shader expands each segment in screen space; it reads the fog uniforms.
+            // The position-color fragment shader keeps these overlays independent of fog.
             builder.withBindGroupLayout(BindGroupLayouts.FOG)
                     .withVertexShader("core/rendertype_lines")
-                    .withFragmentShader("core/rendertype_lines")
+                    .withFragmentShader("core/position_color")
                     .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH)
                     .withPrimitiveTopology(PrimitiveTopology.LINES);
         } else {
@@ -121,7 +122,6 @@ public final class HighlightRenderer implements AutoCloseable {
 
     private void extract(LevelExtractionContext context) {
         CameraRenderState cameraState = context.levelState().cameraRenderState;
-        WorldProjection.capture(cameraState.projectionMatrix);
         FabricRenderState state = (FabricRenderState) context.levelState();
         if (closed || !anyEnabled()) {
             state.setData(frame, Frame.EMPTY);
@@ -352,39 +352,43 @@ public final class HighlightRenderer implements AutoCloseable {
         Frame boxes = ((FabricRenderState) context.levelState()).getData(frame);
         if (boxes == null || boxes.isEmpty()) return;
         PoseStack.Pose pose = context.poseStack().last();
-        var sorting = RenderSystem.getProjectionType().vertexSorting();
-        StagedVertexBuffer.Draw fillVisible = vertices.appendDraw(DefaultVertexFormat.POSITION_COLOR, PrimitiveTopology.QUADS, sorting);
-        StagedVertexBuffer.Draw fillThrough = vertices.appendDraw(DefaultVertexFormat.POSITION_COLOR, PrimitiveTopology.QUADS, sorting);
-        StagedVertexBuffer.Draw lineVisible = vertices.appendDraw(DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH, PrimitiveTopology.LINES);
-        StagedVertexBuffer.Draw lineThrough = vertices.appendDraw(DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH, PrimitiveTopology.LINES);
-        // One builder at a time: each draw is written whole before the next.
-        for (boolean through : new boolean[] {false, true}) {
-            VertexConsumer buffer = null;
-            for (DrawBox box : boxes.boxes) {
-                if (box.throughWalls != through || (box.fill >>> 24) == 0) continue;
-                if (buffer == null) buffer = vertices.getVertexBuilder(through ? fillThrough : fillVisible);
-                filled(buffer, pose.pose(), box.bounds, box.fill);
+        // A frame that fails partway must still end, or every later frame refuses new draws.
+        try {
+            var sorting = RenderSystem.getProjectionType().vertexSorting();
+            StagedVertexBuffer.Draw fillVisible = vertices.appendDraw(DefaultVertexFormat.POSITION_COLOR, PrimitiveTopology.QUADS, sorting);
+            StagedVertexBuffer.Draw fillThrough = vertices.appendDraw(DefaultVertexFormat.POSITION_COLOR, PrimitiveTopology.QUADS, sorting);
+            StagedVertexBuffer.Draw lineVisible = vertices.appendDraw(DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH, PrimitiveTopology.LINES);
+            StagedVertexBuffer.Draw lineThrough = vertices.appendDraw(DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH, PrimitiveTopology.LINES);
+            // One builder at a time: each draw is written whole before the next.
+            for (boolean through : new boolean[] {false, true}) {
+                VertexConsumer buffer = null;
+                for (DrawBox box : boxes.boxes) {
+                    if (box.throughWalls != through || (box.fill >>> 24) == 0) continue;
+                    if (buffer == null) buffer = vertices.getVertexBuilder(through ? fillThrough : fillVisible);
+                    filled(buffer, pose.pose(), box.bounds, box.fill);
+                }
             }
+            for (boolean through : new boolean[] {false, true}) {
+                VertexConsumer buffer = null;
+                for (DrawBox box : boxes.boxes) {
+                    if (box.throughWalls != through || (box.outline >>> 24) == 0) continue;
+                    if (buffer == null) buffer = vertices.getVertexBuilder(through ? lineThrough : lineVisible);
+                    outlined(buffer, pose, box.bounds, box.outline, box.width);
+                }
+                if (through && !boxes.tracers.isEmpty()) {
+                    if (buffer == null) buffer = vertices.getVertexBuilder(lineThrough);
+                    for (DrawLine line : boxes.tracers) segment(buffer, pose, line);
+                }
+            }
+            vertices.upload();
+            GpuBufferSlice transform = RenderSystem.getDynamicUniforms().writeTransform(RenderSystem.getModelViewMatrixCopy());
+            drawPass(FILL_VISIBLE, fillVisible, transform);
+            drawPass(FILL_THROUGH, fillThrough, transform);
+            drawPass(LINE_VISIBLE, lineVisible, transform);
+            drawPass(LINE_THROUGH, lineThrough, transform);
+        } finally {
+            vertices.endFrame();
         }
-        for (boolean through : new boolean[] {false, true}) {
-            VertexConsumer buffer = null;
-            for (DrawBox box : boxes.boxes) {
-                if (box.throughWalls != through || (box.outline >>> 24) == 0) continue;
-                if (buffer == null) buffer = vertices.getVertexBuilder(through ? lineThrough : lineVisible);
-                outlined(buffer, pose, box.bounds, box.outline, box.width);
-            }
-            if (through && !boxes.tracers.isEmpty()) {
-                if (buffer == null) buffer = vertices.getVertexBuilder(lineThrough);
-                for (DrawLine line : boxes.tracers) segment(buffer, pose, line);
-            }
-        }
-        vertices.upload();
-        GpuBufferSlice transform = RenderSystem.getDynamicUniforms().writeTransform(RenderSystem.getModelViewMatrixCopy());
-        drawPass(FILL_VISIBLE, fillVisible, transform);
-        drawPass(FILL_THROUGH, fillThrough, transform);
-        drawPass(LINE_VISIBLE, lineVisible, transform);
-        drawPass(LINE_THROUGH, lineThrough, transform);
-        vertices.endFrame();
     }
 
     /** Draws one staged batch onto the main target, the way vanilla's prepared render types do. */
