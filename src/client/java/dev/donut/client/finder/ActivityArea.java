@@ -7,8 +7,19 @@ import net.minecraft.world.phys.Vec3;
 /**
  * A chunk with amethyst growth. {@code minY}/{@code maxY} span its budding amethyst;
  * {@code surfaceY} is the chunk's highest motion-blocking block when it was scanned.
+ *
+ * @param score growth past worldgen from 0 to 1, or 0 when the amethyst around the chunk could be worldgen luck
+ * @param budding budding amethyst counted here, {@code faces} their open or budded faces, {@code stages} the bud sizes
+ * @param chance how likely freshly generated amethyst is to show as much growth as this chunk and the
+ *               amethyst chunks around it; NaN until the chunk is judged against its neighbors
  */
-public record ActivityArea(ChunkPos chunk, int minY, int maxY, int surfaceY, double score, int budding) {
+public record ActivityArea(ChunkPos chunk, int minY, int maxY, int surfaceY, double score, int budding,
+                           int faces, int stages, double chance) {
+    /** The same chunk judged: its score and the chance its neighborhood's growth is worldgen luck. */
+    ActivityArea judged(double score, double chance) {
+        return new ActivityArea(chunk, minY, maxY, surfaceY, score, budding, faces, stages, chance);
+    }
+
     /** The chunk around the geode's budding amethyst. */
     public AABB bounds() {
         int x = chunk.getMinBlockX(), z = chunk.getMinBlockZ();

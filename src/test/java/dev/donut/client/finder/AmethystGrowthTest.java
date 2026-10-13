@@ -2,7 +2,9 @@ package dev.donut.client.finder;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.util.List;
 import java.util.Random;
+import net.minecraft.world.level.ChunkPos;
 import org.junit.jupiter.api.Test;
 
 class AmethystGrowthTest {
@@ -39,6 +41,56 @@ class AmethystGrowthTest {
         assertEquals(1, AmethystGrowth.score(4, 4, 16));
         // Two buds on one budding block cannot come from worldgen at all.
         assertTrue(AmethystGrowth.beyondWorldgen(4, 17));
+    }
+
+    @Test
+    void theTableHoldsTheExactWorldgenOdds() {
+        for (int budding : new int[] {1, 4, 17, 64, 100, 256}) {
+            for (int stages : new int[] {1, budding, 2 * budding, 3 * budding, 4 * budding}) {
+                double exact = AmethystGrowth.naturalTail(budding, stages);
+                assertEquals(exact, AmethystGrowth.chance(budding, stages), 1e-12 + 1e-9 * exact,
+                        budding + " budding, " + stages + " stages");
+            }
+        }
+    }
+
+    @Test
+    void pastTheTableTheApproximationKeepsTheFalseAlarmRate() {
+        for (int budding : new int[] {257, 400, 800}) {
+            int cutoff = 0;
+            while (!AmethystGrowth.beyondWorldgen(budding, cutoff)) cutoff++;
+            // Fresh worldgen reaches the accepted count about as rarely as promised, and not much more often.
+            double atCutoff = AmethystGrowth.naturalTail(budding, cutoff);
+            assertTrue(atCutoff <= 1.5 * AmethystGrowth.FALSE_ALARM, budding + " budding: " + atCutoff + " at " + cutoff);
+            assertTrue(AmethystGrowth.naturalTail(budding, cutoff - 1) > 0.5 * AmethystGrowth.FALSE_ALARM,
+                    budding + " budding: needlessly strict at " + cutoff);
+        }
+    }
+
+    @Test
+    void aLuckyPieceIsOutweighedByTheRestOfItsGeode() {
+        // Four budding blocks with a cluster each: rare, but within worldgen's reach on its own.
+        ActivityArea lucky = area(0, 0, 4, 4, 16);
+        assertEquals(1, ActivityIndex.judge(lucky, List.of(lucky)).score());
+        // Next to a fresh piece of the same geode the pooled growth is ordinary worldgen.
+        ActivityArea fresh = area(1, 0, 30, 34, 26);
+        assertEquals(0, ActivityIndex.judge(lucky, List.of(lucky, fresh)).score());
+        assertEquals(0, ActivityIndex.judge(fresh, List.of(lucky, fresh)).score());
+    }
+
+    @Test
+    void aGrownGeodeSplitThinlyOverChunksIsStillFound() {
+        ActivityArea sliver = area(0, 0, 2, 2, 8);
+        // Two budding blocks alone are too few to tell growth from luck.
+        assertEquals(0, ActivityIndex.judge(sliver, List.of(sliver)).score());
+        ActivityArea rest = area(0, 1, 20, 24, 90);
+        ActivityArea judged = ActivityIndex.judge(sliver, List.of(sliver, rest));
+        assertEquals(1, judged.score());
+        assertTrue(judged.chance() < 1e-12, "chance " + judged.chance());
+    }
+
+    private static ActivityArea area(int x, int z, int budding, int faces, int stages) {
+        return new ActivityArea(new ChunkPos(x, z), 0, 0, 64, 0, budding, faces, stages, Double.NaN);
     }
 
     @Test

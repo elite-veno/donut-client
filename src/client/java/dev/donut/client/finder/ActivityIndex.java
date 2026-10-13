@@ -17,7 +17,11 @@ import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.Vec3;
 
-/** Scores each loaded chunk's amethyst by how far its buds grew past worldgen. */
+/**
+ * Scores each loaded chunk's amethyst by how far its buds grew past worldgen. Whether growth is real is
+ * decided over the chunk and the amethyst chunks around it, since a geode usually spans a few chunks and a
+ * small piece of one is easily lucky; how far it grew is the chunk's own.
+ */
 final class ActivityIndex {
     private static final Predicate<BlockState> BUDDING = state -> state.is(Blocks.BUDDING_AMETHYST);
     private static final Direction[] DIRECTIONS = Direction.values();
@@ -28,9 +32,17 @@ final class ActivityIndex {
 
     void tick(ClientLevel level, ChunkPos center, double range) { chunks.tick(level, center, range); }
 
+    /**
+     * Rescans a chunk on the next tick: its amethyst changed, or a neighbor whose blocks its edge faces
+     * read has just loaded.
+     */
+    void markDirty(int chunkX, int chunkZ) { chunks.markDirty(chunkX, chunkZ); }
+
     void collect(Vec3 origin, double range, double minScore, List<ActivityArea> found) {
-        chunks.forEach(area -> {
-            if (area.score() >= minScore && area.horizontalDistance(origin) <= range) found.add(area);
+        chunks.forEach(raw -> {
+            if (raw.horizontalDistance(origin) > range) return;
+            ActivityArea area = judge(raw);
+            if (area.score() >= minScore) found.add(area);
         });
     }
 
@@ -38,16 +50,49 @@ final class ActivityIndex {
     ActivityStats stats(boolean overworld, Vec3 origin, double range) {
         int[] amethyst = new int[2];
         ActivityArea[] best = new ActivityArea[1];
-        chunks.forEach(area -> {
-            if (area.horizontalDistance(origin) > range) return;
+        chunks.forEach(raw -> {
+            if (raw.horizontalDistance(origin) > range) return;
             amethyst[0]++;
-            amethyst[1] += area.budding();
-            if (best[0] == null || area.score() > best[0].score()) best[0] = area;
+            amethyst[1] += raw.budding();
+            ActivityArea area = judge(raw);
+            // Of equal scores, the nearest is the one worth going to.
+            if (best[0] == null || area.score() > best[0].score()
+                    || area.score() == best[0].score() && area.horizontalDistance(origin) < best[0].horizontalDistance(origin)) {
+                best[0] = area;
+            }
         });
         return new ActivityStats(overworld, chunks.size(), amethyst[0], amethyst[1], best[0]);
     }
 
-    private static ActivityArea scan(LevelChunk chunk) {
+    /**
+     * The chunk's growth, counted only when it and the amethyst chunks around it carry more than worldgen
+     * would give them. A lucky handful of buds in one chunk is outweighed by its geode's other chunks, and a
+     * grown geode split thinly over chunks is still found.
+     */
+    private ActivityArea judge(ActivityArea raw) {
+        List<ActivityArea> around = new java.util.ArrayList<>(9);
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                ActivityArea near = chunks.get(raw.chunk().x() + dx, raw.chunk().z() + dz);
+                if (near != null) around.add(near);
+            }
+        }
+        return judge(raw, around);
+    }
+
+    /** {@link #judge(ActivityArea)} over a given neighborhood, which includes the chunk itself. */
+    static ActivityArea judge(ActivityArea raw, List<ActivityArea> around) {
+        int budding = 0, stages = 0;
+        for (ActivityArea near : around) {
+            budding += near.budding();
+            stages += near.stages();
+        }
+        double chance = AmethystGrowth.chance(budding, stages);
+        boolean real = budding >= AmethystGrowth.MIN_BUDDING && chance <= AmethystGrowth.FALSE_ALARM;
+        return raw.judged(real ? AmethystGrowth.growth(raw.budding(), raw.faces(), raw.stages()) : 0, chance);
+    }
+
+    static ActivityArea scan(LevelChunk chunk) {
         Level level = chunk.getLevel();
         LevelChunkSection[] sections = chunk.getSections();
         int minX = chunk.getPos().getMinBlockX(), minZ = chunk.getPos().getMinBlockZ();
@@ -63,6 +108,7 @@ final class ActivityIndex {
                         if (!BUDDING.test(section.getBlockState(x, y, z))) continue;
                         BlockPos pos = new BlockPos(minX + x, sectionY + y, minZ + z);
                         int ownFaces = 0, ownStages = 0;
+                        boolean couldBud = false;
                         for (Direction direction : DIRECTIONS) {
                             BlockPos next = pos.relative(direction);
                             // An unloaded neighbor reads as air, which would count as an empty face.
@@ -73,11 +119,18 @@ final class ActivityIndex {
                             if (stage > 0 && neighbor.getValue(AmethystClusterBlock.FACING) == direction) {
                                 ownFaces++;
                                 ownStages += stage;
+                                couldBud = true;
                             } else if (BuddingAmethystBlock.canClusterGrowAtState(neighbor)) {
                                 ownFaces++;
+                                couldBud = true;
+                            } else if (!geodeShell(neighbor)) {
+                                // Not something a geode is made of, so placed or flowed in later: the face
+                                // may have been open when worldgen handed out buds. Counting the block keeps
+                                // a geode whose empty faces got filled from looking all budded.
+                                couldBud = true;
                             }
                         }
-                        if (ownFaces == 0) continue;
+                        if (!couldBud) continue;
                         budding++;
                         faces += ownFaces;
                         stages += ownStages;
@@ -88,7 +141,16 @@ final class ActivityIndex {
             }
         }
         if (budding == 0) return null;
-        return new ActivityArea(chunk.getPos(), minY, maxY, surface(chunk), AmethystGrowth.score(budding, faces, stages), budding);
+        return new ActivityArea(chunk.getPos(), minY, maxY, surface(chunk), 0, budding, faces, stages, Double.NaN);
+    }
+
+    /**
+     * What a geode's walls are made of; anything else next to budding amethyst came later. A neighbor's bud
+     * is not wall: its cell was open when worldgen handed out buds, whoever's bud took it.
+     */
+    private static boolean geodeShell(BlockState state) {
+        return state.is(Blocks.AMETHYST_BLOCK) || state.is(Blocks.BUDDING_AMETHYST)
+                || state.is(Blocks.CALCITE) || state.is(Blocks.SMOOTH_BASALT);
     }
 
     /** The chunk's highest motion-blocking block; the server sends this heightmap with every chunk. */
