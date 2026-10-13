@@ -7,9 +7,11 @@ import dev.donut.client.freecam.FreecamController;
 import dev.donut.client.gui.DonutScreen;
 import dev.donut.client.input.ModuleKeybinds;
 import dev.donut.client.rtp.AutoRtpController;
+import dev.doughbay.fabric.GoNutsApi;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Arrays;
+import java.util.List;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions;
@@ -211,8 +213,26 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     setFinder(context, store, ENTITIES, true);
                     setFinder(context, store, FULLBRIGHT, true);
                     screenshot(context, "donut-arraylist-01-active-scaled");
+                    // GoNuts's HUD is told where the module list and the info panel are, and keeps its own surfaces off them.
+                    context.runOnClient(client -> {
+                        int width = client.getWindow().getGuiScaledWidth();
+                        List<int[]> reserved = GoNutsApi.hudReserved();
+                        require(reserved.stream().anyMatch(r -> r[0] + r[2] == width - 2 && r[1] == 2 && r[3] > 0 && r[3] % 13 == 0),
+                                "The module list's area is not reserved from GoNuts's HUD");
+                        require(reserved.stream().anyMatch(r -> r[0] == 2 && r[1] == 2 && r[3] > 0 && r[3] % 13 == 0),
+                                "The info panel's area is not reserved from GoNuts's HUD");
+                        for (int[] drawn : GoNutsApi.hudDrawn()) {
+                            for (int[] r : reserved) {
+                                boolean apart = drawn[0] >= r[0] + r[2] || r[0] >= drawn[0] + drawn[2]
+                                        || drawn[1] >= r[1] + r[3] || r[1] >= drawn[1] + drawn[3];
+                                require(apart, "GoNuts drew " + Arrays.toString(drawn) + " over Donut's HUD at " + Arrays.toString(r));
+                            }
+                        }
+                    });
                     context.getInput().pressKey(GLFW.GLFW_KEY_F1);
                     context.runOnClient(client -> require(client.gui.hud.isHidden(), "F1 did not hide the HUD"));
+                    context.runOnClient(client -> require(GoNutsApi.hudReserved().isEmpty(),
+                            "Donut's HUD still reserves space while F1 hides it"));
                     screenshot(context, "donut-arraylist-02-hidden-with-f1");
                     context.getInput().pressKey(GLFW.GLFW_KEY_F1);
                     context.runOnClient(client -> {

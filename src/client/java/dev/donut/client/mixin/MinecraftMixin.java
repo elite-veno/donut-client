@@ -24,7 +24,8 @@ abstract class MinecraftMixin {
         if (FreecamController.enabled()) FreecamController.getInstance().suppressActions((Minecraft) (Object) this);
     }
 
-    @Inject(method = {"startUseItem", "pickBlockOrEntity", "continueAttack"}, at = @At("HEAD"), cancellable = true)
+    // All three must be found: one renamed in a later version would otherwise let that input through unnoticed.
+    @Inject(method = {"startUseItem", "pickBlockOrEntity", "continueAttack"}, at = @At("HEAD"), cancellable = true, require = 3)
     private void donut$blockInteractions(CallbackInfo ci) {
         if (FreecamController.enabled()) ci.cancel();
     }

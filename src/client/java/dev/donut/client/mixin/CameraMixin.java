@@ -2,12 +2,14 @@ package dev.donut.client.mixin;
 
 import dev.donut.client.freecam.FreecamController;
 import net.minecraft.client.Camera;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -30,11 +32,20 @@ abstract class CameraMixin {
         detached = true;
     }
 
-    /** Renders terrain as a spectator's camera would when the free camera is inside an opaque block. */
-    @Inject(method = "extractRenderState", at = @At("RETURN"))
+    /** Whether this mod turned Minecraft's culling switch off, so it is turned back on only by this mod. */
+    @Unique private static boolean donut$cullingOff;
+
+    /**
+     * Renders terrain as a spectator's camera would when the free camera is inside an opaque block. Sodium reads
+     * Minecraft's own switch rather than the camera's, so that one is turned off too while the camera is inside.
+     */
+    @Inject(method = "extractRenderState", at = @At("RETURN"), require = 0)
     private void donut$freecamTerrain(CameraRenderState state, float partialTick, CallbackInfo ci) {
-        if (FreecamController.enabled() && level != null && level.getBlockState(blockPosition()).isSolidRender()) {
-            state.smartCull = false;
+        boolean inside = FreecamController.enabled() && level != null && level.getBlockState(blockPosition()).isSolidRender();
+        if (inside) state.smartCull = false;
+        if (inside != donut$cullingOff) {
+            Minecraft.getInstance().smartCull = !inside;
+            donut$cullingOff = inside;
         }
     }
 }

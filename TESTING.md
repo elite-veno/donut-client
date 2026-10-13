@@ -8,6 +8,25 @@ Run `./gradlew runClientGameTest` for the isolated Minecraft smoke test. It crea
 
 The Freecam runtime test compares both the actual client player and integrated server player before and after camera movement, checks speed/boost/vertical movement and mouse look, verifies action queues are cleared, and checks that disabling restores normal input without undoing a server teleport. It also checks disconnect cleanup and clicks the Freecam GUI controls. Configuration tests cover persistence of speed/favorites and deliberately non-persistent activation.
 
+## Verified on 2026-10-14 (final review round: menu, GoNuts pages, HUD, mixins, build)
+
+Two review agents per module looked for bugs and improvements, and the fixes were checked by `runClientGameTest`. The run at 00:34 passed DonutClientGameTest, FreecamGameTest, ModuleKeybindGameTest and AutoRtpGameTest with these changes; DebrisSeedGameTest then failed on its own fixture (fixed separately), so ActivityWorldgenGameTest did not run. New checks:
+- GoNuts pages:
+  - a changed setting's Reset link restores its default;
+  - a guarded typed value is unchanged after one Enter and set after the second;
+  - `1,5m` reads as 1,500,000;
+  - Esc leaves a field as it was;
+  - clicking a field selects its text, so typing replaces it;
+  - a paste after End is added to a 300-character list rather than replacing it.
+- Module settings: Reset settings needs Confirm and leaves the module on.
+- HUD: GoNuts's `hudReserved()` holds the info panel's and the module list's boxes while they show, and nothing once F1 hides the HUD. The overlap check against `hudDrawn()` only bites once GoNuts draws its panel, which needs a live feed or a preview.
+
+Decisions to review:
+- Start closes the menu, since GoNuts's trading steps wait while it is open.
+- Approve takes a second click.
+- Resume is not offered for a recovered session that is unsure about a trade (the full GoNuts screen resolves it).
+- Webhook URLs saved from Donut also turn the hourly reports on, as GoNuts's own Save does.
+
 ## Verified on 2026-10-13 (Minecraft 26.2 port, GoNuts inside)
 
 Done on branch `port/26.2` while the user was away. Decisions to review:
@@ -105,9 +124,9 @@ Use a separate creative singleplayer world with commands enabled:
 10. Enable EntityFinder near another player and some mobs; check boxes, tracers and name labels. Check the info panel's counts, distances and arrows while turning around.
 11. Enable ActivityFinder near an untouched geode and near one with clusters on every face. Only the grown geode's chunk should get a square, resting on the highest block with corner lines down to the geode; lower Minimum growth to see weaker chunks, and toggle Surface marker to move the square to the geode. With All loaded chunks on, squares should appear out to your render distance without fading; turning it off brings back the range slider and distance fade.
 12. Reduce range and walk across its boundary. Test distance fading, unload chunks, and change dimension/world; previous-world targets should disappear.
-13. Open and scroll every module's settings, search by typing, drag and collapse panels, edit the accent color and the HUD modules, close/reopen, and restart the game to check persistence. Reset layout should put the panels back. Test another window size and GUI scale.
+13. Open and scroll every page and module's settings, search by typing, edit the accent color and the HUD modules, close and reopen (each page keeps its scroll position), and restart the game to check persistence. Use Reset settings on a module (it needs Confirm) and a GoNuts setting's Reset link. In a text field, check that a click selects the text, that a paste replaces it, that Esc leaves it unchanged and that an amber GoNuts field saves only on a second Enter. Test another window size and GUI scale.
 14. Assign each module's key from the Bind row in its settings and confirm the same binding appears in Minecraft Controls. Test keyboard and mouse bindings, Escape to cancel, Delete/Backspace to clear, conflicts, and persistence after restarting. Capturing a binding must not toggle its module; shortcuts must stay inactive in chat and menus.
-15. Enable all modules and check the array list at the top right: names only, longest first, each on a dark strip with an accent edge and no counters. Disable modules and the ArrayList module in the Client panel, and check F1 hides the HUD.
-16. Inspect panel corners, header icons, toggle movement, open animations and scrolling at GUI scales 1 and 2 and a smaller window. Test with the intended shader/rendering mods separately if using them.
+15. Enable all modules and check the array list at the top right: names only, longest first, each on a dark strip with an accent edge and no counters. With a potion effect active the list starts below the effect icons, and F3 hides it. Turn modules and the ArrayList module (HUD page) off, and check F1 hides the HUD. With GoNuts trading, its panel, alerts and nearby list should stay clear of both Donut lists.
+16. Inspect card corners, sidebar icons, switch movement, page animations, the fade at scrolled edges and scrolling at GUI scales 1, 2 and Auto, and in a smaller window. Test with the intended shader/rendering mods separately if using them.
 
-Only checks actually executed are reported in the delivery message; this checklist is not a claim that every renderer/mod combination has been tested.
+This checklist is not a claim that every renderer and mod combination has been tested; the dated sections above list what was.

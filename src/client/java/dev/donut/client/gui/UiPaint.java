@@ -10,12 +10,12 @@ import net.minecraft.resources.Identifier;
 /** Small, antialiased vector drawing helpers for the click GUI. */
 final class UiPaint {
     /**
-     * The UI font in three sizes, each rasterized at 1 to 8 (menu sizes: 1 to 6) screen pixels per unit. Minecraft
+     * The UI font in three sizes, each rasterized at 1 to 10 (menu sizes: 1 to 6) screen pixels per unit. Minecraft
      * samples glyphs without filtering, so text is only sharp when its raster matches the pixels it covers; any other
      * size is stretched into uneven, blocky edges. Every size sits on the same baseline, 7 units below y.
      */
     enum Size {
-        SMALL("ui_small_", 6), BASE("ui_", 8), TITLE("ui_title_", 6);
+        SMALL("ui_small_", MAX_RATIO), BASE("ui_", 10), TITLE("ui_title_", MAX_RATIO);
 
         private final FontDescription[] fonts;
 
@@ -27,12 +27,19 @@ final class UiPaint {
         FontDescription font() { return fonts[Math.clamp(ratio(), 1, fonts.length - 1)]; }
     }
 
+    /** The most screen pixels per unit every size has a raster for; the menu draws at no more than this. */
+    static final int MAX_RATIO = 6;
+
     /** Screen pixels per unit of what is being drawn; 0 follows the GUI scale. The menu sets its own while it draws. */
     private static int pixels;
+    /** How thick lines and outlines are, relative to one unit; icons drawn shrunk thicken theirs back. */
+    private static float stroke = 1;
 
     private UiPaint() { }
 
     static void pixelScale(int value) { pixels = value; }
+
+    static void strokeScale(float value) { stroke = value; }
 
     private static int ratio() {
         return Math.max(1, pixels > 0 ? pixels : Minecraft.getInstance().getWindow().getGuiScale());
@@ -60,28 +67,6 @@ final class UiPaint {
         return font.width(label(text, size, false));
     }
 
-    /**
-     * Semibold text: a second pass one screen pixel to the right. Minecraft's own bold and shadow offset a whole unit,
-     * several pixels on a large GUI scale, which smears the glyphs.
-     */
-    static void strong(GuiGraphicsExtractor g, Font font, String text, int x, int y, int color) {
-        text(g, font, text, Size.BASE, x, y, color, true, false);
-    }
-
-    /** Text over a crisp one-pixel drop shadow, for names and titles that should stand out. */
-    static void shadowed(GuiGraphicsExtractor g, Font font, String text, int x, int y, int color) {
-        Component value = label(text);
-        nudged(g, 1, 1, () -> g.text(font, value, x, y, alpha(0, .6), false));
-        g.text(font, value, x, y, color, false);
-    }
-
-    static void strongShadowed(GuiGraphicsExtractor g, Font font, String text, int x, int y, int color) {
-        Component value = label(text);
-        nudged(g, 1, 1, () -> g.text(font, value, x, y, alpha(0, .6), false));
-        nudged(g, 2, 1, () -> g.text(font, value, x, y, alpha(0, .6), false));
-        strong(g, font, text, x, y, color);
-    }
-
     /** Draws shifted by whole screen pixels. */
     private static void nudged(GuiGraphicsExtractor g, int dx, int dy, Runnable draw) {
         float pixel = 1f / ratio();
@@ -91,18 +76,8 @@ final class UiPaint {
         g.pose().popMatrix();
     }
 
-    /** A filled rounded box sitting on a soft drop shadow. */
-    static void raised(GuiGraphicsExtractor g, float x, float y, float w, float h, float radius, int color) {
-        round(g, x, y + 1.5f, w, h, radius, 0x70000000);
-        round(g, x, y, w, h, radius, color);
-    }
-
     static int width(Font font, String text) {
         return font.width(label(text));
-    }
-
-    static void right(GuiGraphicsExtractor g, Font font, String text, int right, int y, int color) {
-        text(g, font, text, right - width(font, text), y, color);
     }
 
     static int alpha(int rgb, double alpha) {
@@ -129,7 +104,7 @@ final class UiPaint {
     }
 
     static void outline(GuiGraphicsExtractor g, float x, float y, float w, float h, float radius, int color) {
-        SmoothGeometry.rounded(g, x, y, w, h, radius, 1, color);
+        SmoothGeometry.rounded(g, x, y, w, h, radius, stroke, color);
     }
 
     static void shadow(GuiGraphicsExtractor g, int x, int y, int w, int h, int radius, int color) {
@@ -141,7 +116,7 @@ final class UiPaint {
     }
 
     static void line(GuiGraphicsExtractor g, float x1, float y1, float x2, float y2, int color) {
-        SmoothGeometry.line(g, x1, y1, x2, y2, 1.2f, color);
+        SmoothGeometry.line(g, x1, y1, x2, y2, 1.2f * stroke, color);
     }
 
     static void search(GuiGraphicsExtractor g, int x, int y, int color) {
@@ -149,71 +124,11 @@ final class UiPaint {
         line(g, x + 7f, y + 7f, x + 10f, y + 10f, color);
     }
 
-    static void chest(GuiGraphicsExtractor g, int x, int y, int color) {
-        outline(g, x + 1, y + 3, 15, 12, 2, color);
-        line(g, x + 2f, y + 8f, x + 7f, y + 8f, color);
-        line(g, x + 10f, y + 8f, x + 15f, y + 8f, color);
-        round(g, x + 7, y + 7, 3, 4, 1, color);
-    }
-
-    static void spawner(GuiGraphicsExtractor g, int x, int y, int color) {
-        outline(g, x + 1, y + 1, 15, 15, 2, color);
-        line(g, x + 6f, y + 2f, x + 6f, y + 15f, color);
-        line(g, x + 11f, y + 2f, x + 11f, y + 15f, color);
-        line(g, x + 2f, y + 6f, x + 15f, y + 6f, color);
-        line(g, x + 2f, y + 11f, x + 15f, y + 11f, color);
-    }
-
-    /** Ancient debris' ringed top face. */
-    static void debris(GuiGraphicsExtractor g, int x, int y, int color) {
-        outline(g, x + 1, y + 1, 15, 15, 2, color);
-        outline(g, x + 5, y + 5, 7, 7, 3, color);
-        round(g, x + 7, y + 7, 3, 3, 1, color);
-    }
-
-    /** A cluster of three amethyst crystals. */
-    static void amethyst(GuiGraphicsExtractor g, int x, int y, int color) {
-        line(g, x + 8.5f, y + 1f, x + 8.5f, y + 15f, color);
-        line(g, x + 3f, y + 6f, x + 7f, y + 15f, color);
-        line(g, x + 14f, y + 6f, x + 10f, y + 15f, color);
-        line(g, x + 2f, y + 15.5f, x + 15f, y + 15.5f, color);
-    }
-
-    /** A compass needle in a ring, for random teleports. */
+    /** A compass in a ring, for random teleports: its needle's north half solid and its south half faint. */
     static void rtp(GuiGraphicsExtractor g, int x, int y, int color) {
         outline(g, x + 1, y + 1, 15, 15, 7, color);
-        line(g, x + 5f, y + 12f, x + 12f, y + 5f, color);
-        round(g, x + 11, y + 4, 3, 3, 1, color);
-    }
-
-    static void camera(GuiGraphicsExtractor g, int x, int y, int color) {
-        outline(g, x, y + 4, 17, 11, 2, color);
-        outline(g, x + 5, y + 6, 7, 7, 3, color);
-        round(g, x + 3, y + 2, 6, 3, 1, color);
-        round(g, x + 13, y + 6, 2, 2, 1, color);
-    }
-
-    static void star(GuiGraphicsExtractor g, int x, int y, int color) {
-        float[] path = new float[20];
-        for (int i = 0; i < 10; i++) {
-            double angle = -Math.PI / 2 + i * Math.PI / 5;
-            float radius = i % 2 == 0 ? 7.5f : 3.6f;
-            path[i * 2] = x + 7.5f + (float) Math.cos(angle) * radius;
-            path[i * 2 + 1] = y + 7.5f + (float) Math.sin(angle) * radius;
-        }
-        SmoothGeometry.closedStroke(g, path, 1.15f, color);
-    }
-
-    static void cube(GuiGraphicsExtractor g, int x, int y, int size, int color, double outlineAlpha, double fillAlpha) {
-        int dx = size / 3, dy = size / 4;
-        round(g, x, y + dy, size, size, 1, alpha(color, fillAlpha));
-        int c = alpha(color, outlineAlpha);
-        outline(g, x, y + dy, size, size, 1, c);
-        outline(g, x + dx, y, size, size, 1, alpha(color, outlineAlpha * 0.45));
-        line(g, x, y + dy, x + dx, y, c);
-        line(g, x + size - 1, y + dy, x + size + dx - 1, y, c);
-        line(g, x, y + size + dy - 1, x + dx, y + size - 1, c);
-        line(g, x + size - 1, y + size + dy - 1, x + size + dx - 1, y + size - 1, c);
+        SmoothGeometry.line(g, x + 8.5f, y + 8.5f, x + 12.2f, y + 4.8f, 2.4f * stroke, color);
+        SmoothGeometry.line(g, x + 8.5f, y + 8.5f, x + 4.8f, y + 12.2f, 2.4f * stroke, alpha(color, .45));
     }
 
     /** An eye, for X-ray. */
@@ -224,32 +139,9 @@ final class UiPaint {
             path[i * 2] = x + 8.5f + (float) Math.cos(angle) * 8f;
             path[i * 2 + 1] = y + 8.5f + (float) Math.sin(angle) * 5f;
         }
-        SmoothGeometry.closedStroke(g, path, 1.15f, color);
+        SmoothGeometry.closedStroke(g, path, 1.15f * stroke, color);
         outline(g, x + 5, y + 5, 7, 7, 3, color);
         round(g, x + 7, y + 7, 3, 3, 1, color);
-    }
-
-    /** A sun, for Fullbright. */
-    static void sun(GuiGraphicsExtractor g, int x, int y, int color) {
-        outline(g, x + 4, y + 4, 9, 9, 4, color);
-        for (int i = 0; i < 8; i++) {
-            double angle = i * Math.PI / 4;
-            float cos = (float) Math.cos(angle), sin = (float) Math.sin(angle);
-            line(g, x + 8.5f + cos * 6.5f, y + 8.5f + sin * 6.5f, x + 8.5f + cos * 8.5f, y + 8.5f + sin * 8.5f, color);
-        }
-    }
-
-    /** A tunnel mouth in rock, for TunnelFinder. */
-    static void tunnel(GuiGraphicsExtractor g, int x, int y, int color) {
-        outline(g, x + 1, y + 1, 15, 15, 2, color);
-        outline(g, x + 5, y + 5, 7, 11, 3, color);
-        line(g, x + 2f, y + 15.5f, x + 15f, y + 15.5f, color);
-    }
-
-    /** A person, for EntityFinder. */
-    static void person(GuiGraphicsExtractor g, int x, int y, int color) {
-        outline(g, x + 5, y + 1, 7, 7, 3, color);
-        outline(g, x + 2, y + 10, 13, 7, 3, color);
     }
 
     /** A small arrow centered on x/y, pointing up when {@code degrees} is 0 and turning clockwise. */
@@ -269,8 +161,9 @@ final class UiPaint {
     /** A donut seen from above, 15 pixels across, for the menu's brand. */
     static void donut(GuiGraphicsExtractor g, int x, int y, int color) {
         SmoothGeometry.rounded(g, x, y, 15, 15, 7.5f, 3.2f, color);
-        round(g, x + 4.5f, y + 3.5f, 2f, 1.2f, .6f, alpha(color, .55));
-        round(g, x + 9f, y + 10.5f, 2f, 1.2f, .6f, alpha(color, .55));
+        // Two sprinkles on the ring itself.
+        round(g, x + 2.6f, y + 3.4f, 2f, 1.2f, .6f, alpha(0xFFFFFF, .9));
+        round(g, x + 10.4f, y + 10.4f, 2f, 1.2f, .6f, alpha(0xFFFFFF, .9));
     }
 
     /** A screen on a stand, for the HUD. */
@@ -311,22 +204,6 @@ final class UiPaint {
         for (int row = 0; row < 3; row++) {
             round(g, x + 1, y + 3 + row * 5, 2, 2, 1, color);
             line(g, x + 5f, y + 4f + row * 5, x + 16f, y + 4f + row * 5, color);
-        }
-    }
-
-    /** A six-armed snowflake, 13 pixels across, for the menu's header. */
-    static void snowflake(GuiGraphicsExtractor g, int x, int y, int color) {
-        float cx = x + 6.5f, cy = y + 6.5f;
-        for (int i = 0; i < 6; i++) {
-            double angle = i * Math.PI / 3;
-            float dx = (float) Math.sin(angle), dy = (float) -Math.cos(angle);
-            line(g, cx, cy, cx + dx * 6, cy + dy * 6, color);
-            // A small V on each arm, two thirds of the way out.
-            float bx = cx + dx * 4, by = cy + dy * 4;
-            for (int side = -1; side <= 1; side += 2) {
-                double branch = angle + side * Math.toRadians(45);
-                line(g, bx, by, bx + (float) Math.sin(branch) * 2.2f, by - (float) Math.cos(branch) * 2.2f, color);
-            }
         }
     }
 

@@ -63,4 +63,8 @@ java {
     withSourcesJar()
 }
 
-jar { from('LICENSE') { rename { "${it}_${project.base.archivesName.get()}" } } }
+jar {
+    from('LICENSE') { rename { "${it}_${project.base.archivesName.get()}" } }
+    // GoNuts ships inside this jar, and its MIT license asks for its notice to come with every copy.
+    from('../Gonuts/LICENSE') { rename { 'LICENSE_doughbay' } }
+}
