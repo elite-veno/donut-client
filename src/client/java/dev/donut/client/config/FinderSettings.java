@@ -18,6 +18,8 @@ public final class FinderSettings {
     public boolean trialSpawners = true;
     /** ActivityFinder only: the amethyst growth a chunk needs before it is highlighted. */
     public double minActivity = 0.5;
+    /** ActivityFinder only: draw squares on the surface with a guide down to the geode. */
+    public boolean surfaceMarker = true;
     public boolean perTypeColors = true;
     public int color = 0x4C86FF;
     public int chestColor = 0xFFC66B;

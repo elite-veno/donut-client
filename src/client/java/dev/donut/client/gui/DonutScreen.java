@@ -324,6 +324,8 @@ public final class DonutScreen extends Screen {
             text(g, font, "Anti-xray servers can hide or fake debris until it is exposed.", CX + 3, y + 8, MUTED); y += 31;
         } else {
             slider(g, "minActivity", "Minimum growth", y, () -> s.minActivity, v -> s.minActivity = v, 0, 1, .01, "%"); y += 47;
+            settingToggle(g, "surface", "Surface marker", "Squares on the surface with a guide down to the geode", y,
+                    () -> s.surfaceMarker, () -> s.surfaceMarker = !s.surfaceMarker); y += 47;
             text(g, font, "Amethyst only grows while a player is within simulation distance.", CX + 3, y + 2, MUTED); y += 17;
             text(g, font, "Worldgen buds score near 0%. 50% is roughly an hour of nearby activity.", CX + 3, y + 2, MUTED); y += 17;
             text(g, font, "Squares mark the geode's chunk; the player was within a few chunks.", CX + 3, y + 2, MUTED); y += 25;

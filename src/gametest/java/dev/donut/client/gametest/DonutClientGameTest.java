@@ -151,20 +151,27 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             // A geode as worldgen leaves it stays unmarked; one with a cluster on every open face marks its chunk.
             createGeode(world.getServer(), -9, -25, false);
             createGeode(world.getServer(), 5, -25, true);
+            // Ground over the grown geode, below eye level so the surface square is seen from above.
+            world.getServer().runCommand("fill 0 63 -32 15 63 -17 minecraft:grass_block");
             ChunkPos fresh = new ChunkPos(-1, -2), grown = new ChunkPos(0, -2);
             context.runOnClient(client -> config.activity.minActivity = 0);
-            context.waitFor(client -> scanner.activity().size() == 2);
+            context.waitFor(client -> scanner.activity().size() == 2
+                    && scanner.activity().stream().anyMatch(area -> area.surfaceY() == 63));
             context.runOnClient(client -> {
                 for (ActivityArea area : scanner.activity()) {
                     require(area.budding() == 8 && area.minY() == 59 && area.maxY() == 59, "Unexpected geode bounds: " + area);
                     if (area.chunk().equals(fresh)) require(area.score() < 0.05, "A worldgen-like geode scored " + area.score());
-                    else require(area.chunk().equals(grown) && area.score() == 1, "A fully grown geode scored " + area);
+                    else require(area.chunk().equals(grown) && area.score() == 1 && area.surfaceY() == 63,
+                            "A fully grown geode under grass at y 63 was read as " + area);
                 }
             });
             context.runOnClient(client -> config.activity.minActivity = 0.5);
             context.waitFor(client -> scanner.activity().size() == 1 && scanner.activity().getFirst().chunk().equals(grown));
             context.waitTicks(2);
-            screenshot(context, "donut-06-activity-chunk");
+            screenshot(context, "donut-06-activity-surface");
+            context.runOnClient(client -> config.activity.surfaceMarker = false);
+            context.waitTicks(2);
+            screenshot(context, "donut-06-activity-geode-only");
 
             context.runOnClient(client -> {
                 config.storage.enabled = false;

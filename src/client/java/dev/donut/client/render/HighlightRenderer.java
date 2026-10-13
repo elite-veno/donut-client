@@ -146,18 +146,30 @@ public final class HighlightRenderer implements AutoCloseable {
         for (ActivityArea area : scanner.activity()) {
             double distance = area.horizontalDistance(camera);
             if (distance > settings.range || area.score() < settings.minActivity) continue;
-            AABB bounds = area.bounds().inflate(0.003);
-            if (!context.frustum().isVisible(bounds)) continue;
             // Chunks just past the threshold stay faint; fully grown geodes draw at the configured opacity.
             double headroom = 1.0 - settings.minActivity;
             double emphasis = headroom <= 0 ? 1.0 : 0.35 + 0.65 * (area.score() - settings.minActivity) / headroom;
             double strength = emphasis * (settings.distanceFade ? fade(distance, settings.range) : 1.0);
             int fill = settings.mode != RenderMode.OUTLINE ? argb(settings.color, settings.fillOpacity * strength) : 0;
             int outline = settings.mode != RenderMode.FILL ? argb(settings.color, settings.outlineOpacity * strength) : 0;
-            if ((fill >>> 24) == 0 && (outline >>> 24) == 0) continue;
-            boxes.add(new DrawBox(bounds.move(-camera.x, -camera.y, -camera.z), fill, outline,
-                    (float) Math.clamp(settings.lineWidth, 0.5, 8.0), settings.throughWalls));
+            float width = (float) Math.clamp(settings.lineWidth, 0.5, 8.0);
+            if (settings.surfaceMarker) {
+                // The guide's corner edges lead from the square down to the geode's level.
+                int guide = settings.mode != RenderMode.FILL ? argb(settings.color, settings.outlineOpacity * strength * 0.4) : 0;
+                addBox(context, camera, boxes, area.guideBounds(), 0, guide, width * 0.75f, settings.throughWalls);
+                addBox(context, camera, boxes, area.surfaceBounds(), fill, outline, width, settings.throughWalls);
+            } else {
+                addBox(context, camera, boxes, area.bounds(), fill, outline, width, settings.throughWalls);
+            }
         }
+    }
+
+    private static void addBox(WorldExtractionContext context, Vec3 camera, List<DrawBox> boxes, AABB box,
+                               int fill, int outline, float width, boolean throughWalls) {
+        if ((fill >>> 24) == 0 && (outline >>> 24) == 0) return;
+        AABB bounds = box.inflate(0.003);
+        if (!context.frustum().isVisible(bounds)) return;
+        boxes.add(new DrawBox(bounds.move(-camera.x, -camera.y, -camera.z), fill, outline, width, throughWalls));
     }
 
     private static int color(FinderSettings settings, TargetKind kind) {

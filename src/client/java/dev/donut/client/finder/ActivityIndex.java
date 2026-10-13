@@ -14,6 +14,7 @@ import net.minecraft.world.level.block.BuddingAmethystBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.Vec3;
 
 /** Scores each loaded chunk's amethyst by how far its buds grew past worldgen. */
@@ -74,7 +75,16 @@ final class ActivityIndex {
             }
         }
         if (budding == 0) return null;
-        return new ActivityArea(chunk.getPos(), minY, maxY, AmethystGrowth.score(budding, faces, stages), budding);
+        return new ActivityArea(chunk.getPos(), minY, maxY, surface(chunk), AmethystGrowth.score(budding, faces, stages), budding);
+    }
+
+    /** The chunk's highest motion-blocking block; the server sends this heightmap with every chunk. */
+    private static int surface(LevelChunk chunk) {
+        int top = chunk.getMinY();
+        for (int x = 0; x < 16; x++) {
+            for (int z = 0; z < 16; z++) top = Math.max(top, chunk.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z));
+        }
+        return top;
     }
 
     private static int stage(BlockState state) {
