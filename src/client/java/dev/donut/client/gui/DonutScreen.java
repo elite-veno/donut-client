@@ -14,6 +14,8 @@ import dev.donut.client.sniper.LiveTrader;
 import dev.donut.client.sniper.Money;
 import dev.donut.client.sniper.PriceStats;
 import dev.donut.client.sniper.SniperEngine;
+import dev.doughbay.fabric.GoNutsApi;
+import dev.doughbay.fabric.Tuning;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -37,6 +39,7 @@ import java.util.Set;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
+import java.util.function.DoubleFunction;
 import java.util.function.DoubleSupplier;
 import java.util.function.IntConsumer;
 import java.util.function.IntFunction;
@@ -151,6 +154,11 @@ public final class DonutScreen extends Screen {
                     page("dashboard", "Dashboard", "grid", "Profit, open trades and the sniper's activity", this::drawDashboard),
                     page("markets", "Markets", "list", "The busiest items in the saved sale history", this::drawMarkets));
         }
+        // GoNuts ships inside Donut Client; these pages drive it through GoNutsApi, its one stable entry point.
+        group("GoNuts",
+                page("gonuts", "Overview", "donut", "Trading session, safety and updates", this::drawGoNuts).heading("GoNuts"),
+                new Page("gonuts-settings", "Settings", "sliders", "Every GoNuts setting, by group; changes save at once",
+                        goNutsGroups(), null, "GoNuts settings"));
         group("General",
                 page("keybinds", "Keybinds", "keyboard", "Keys that turn modules on or off", this::drawKeybinds),
                 page("theme", "Theme", "palette", "Colors and effects", this::drawTheme));
@@ -170,11 +178,11 @@ public final class DonutScreen extends Screen {
     }
 
     private static Page page(String id, String title, String icon, List<Module> modules) {
-        return new Page(id, title, icon, null, modules, null);
+        return new Page(id, title, icon, null, modules, null, null);
     }
 
     private static Page page(String id, String title, String icon, String subtitle, Consumer<Column> content) {
-        return new Page(id, title, icon, subtitle, null, content);
+        return new Page(id, title, icon, subtitle, null, content, null);
     }
 
     // Modules -----------------------------------------------------------------------------------
@@ -612,6 +620,139 @@ public final class DonutScreen extends Screen {
         c.toggle("snow", "Snowfall", "Faint snow behind the menu", () -> config.gui.snow, () -> config.gui.snow = !config.gui.snow);
     }
 
+    // GoNuts ------------------------------------------------------------------------------------
+
+    private static final java.util.regex.Pattern NUMBER = java.util.regex.Pattern.compile("(-?\\d+(?:\\.\\d+)?)(?:\\s*([kmbKMB])(?![a-zA-Z]))?");
+
+    /** What the last Start, Stop or confirm click on the GoNuts page answered. */
+    private String goNutsReply = "";
+
+    private void drawGoNuts(Column c) {
+        var session = GoNutsApi.session();
+        c.section("Session");
+        if (session == null) {
+            c.note("GoNuts is still starting.", MUTED);
+        } else {
+            boolean stopped = session.state().name().equals("STOPPED");
+            c.info("State", words(session.state().name()), stopped ? MUTED : GOOD);
+            if (session.detail() != null && !session.detail().isBlank()) c.note(session.detail(), MUTED);
+            c.info("Trades started", Integer.toString(session.tradesStarted()), TEXT);
+            c.info("Committed", Money.format(session.committedSpend()), TEXT);
+            c.info("Open listings", Integer.toString(session.openListings()), TEXT);
+            long balance = GoNutsApi.balance();
+            c.info("Balance", balance < 0 ? "Not read yet" : Money.format(balance), balance < 0 ? MUTED : TEXT);
+            c.button("session", "Trading", stopped ? "Starts trading on this client, within the limits in Settings"
+                    : "Stops trading on this client", stopped ? "Start" : "Stop",
+                    () -> goNutsReply = stopped ? GoNutsApi.start() : GoNutsApi.stop());
+        }
+        if (!goNutsReply.isBlank()) c.note(goNutsReply, LABEL);
+
+        c.section("Safety");
+        // No payroll payment goes out until this is confirmed, so it comes first and stands out.
+        var pending = GoNutsApi.pendingPayment();
+        if (pending != null) {
+            c.note("Payroll is waiting for your OK: " + Money.format(pending.amount()) + " to " + pending.name()
+                    + ", from " + Money.format(pending.profit()) + " profit. Nothing is paid until you confirm.", WARN);
+            c.warnNext();
+            c.button("confirmPay", "First payment", "Pays " + pending.name() + " " + Money.format(pending.amount()), "Confirm",
+                    () -> {
+                        GoNutsApi.confirmPayment(pending.ruleId());
+                        goNutsReply = "Payment to " + pending.name() + " confirmed.";
+                    });
+        }
+        long paid = GoNutsApi.paidToday(), cap = Math.round(GoNutsApi.get("pay.daily_cap"));
+        c.info("Paid out today", Money.format(paid) + " of " + Money.format(cap), cap > 0 && paid >= cap ? WARN : TEXT);
+        List<String> risky = GoNutsApi.riskyFeaturesOn();
+        if (risky.isEmpty()) c.note("Nothing that spends money or acts for this account is on.", MUTED);
+        else c.note("On, and able to spend money or act for this account: " + String.join(", ", risky) + ".", WARN);
+
+        c.section("GoNuts");
+        var update = GoNutsApi.updateStatus();
+        c.info("Updates", words(update.state().name()), update.state().name().equals("FAILED") ? WARN : LABEL);
+        if (update.detail() != null && !update.detail().isBlank()) c.note(update.detail(), MUTED);
+        c.button("full", "Full GoNuts", "Markets, charts, payroll rules and the web panel", "Open", GoNutsApi::openFullScreen);
+    }
+
+    /** One card per GoNuts settings group, plus its free-text lists; each opens like a module's settings. */
+    private List<Module> goNutsGroups() {
+        List<Module> cards = new ArrayList<>();
+        for (String group : GoNutsApi.groups()) {
+            List<Tuning.Setting> settings = GoNutsApi.settings().stream().filter(s -> s.group().equals(group)).toList();
+            StringBuilder keywords = new StringBuilder("gonuts");
+            for (Tuning.Setting s : settings) keywords.append(' ').append(s.label());
+            String description = settings.stream().limit(3).map(Tuning.Setting::label).reduce((a, b) -> a + ", " + b).orElse("")
+                    + (settings.size() > 3 ? " and " + (settings.size() - 3) + " more" : "");
+            cards.add(new Module(group, description, keywords.toString(), () -> false, null, () -> true, "",
+                    c -> goNutsSettings(c, settings), -1));
+        }
+        StringBuilder keywords = new StringBuilder("gonuts lists");
+        for (Tuning.ListSetting l : GoNutsApi.lists()) keywords.append(' ').append(l.label());
+        cards.add(new Module("Lists", "Item lists, prices, addresses and the status webhook", keywords.toString(),
+                () -> false, null, () -> true, "", c -> {
+                    for (Tuning.ListSetting l : GoNutsApi.lists()) {
+                        if (GoNutsApi.guarded(l.key())) c.warnNext();
+                        c.field(l.key(), l.label(), l.description(), () -> GoNutsApi.text(l.key()), v -> GoNutsApi.setText(l.key(), v), false);
+                    }
+                }, -1));
+        return cards;
+    }
+
+    /** A group's first settings up front; the rest behind "More options". */
+    private void goNutsSettings(Column c, List<Tuning.Setting> settings) {
+        int shown = Math.min(settings.size(), 6);
+        for (int i = 0; i < shown; i++) goNutsSetting(c, settings.get(i));
+        if (settings.size() > shown) c.more(m -> {
+            for (int i = shown; i < settings.size(); i++) goNutsSetting(m, settings.get(i));
+        });
+        c.note("Changes save at once. Resets and presets are on the full GoNuts screen.", DIM);
+    }
+
+    private void goNutsSetting(Column c, Tuning.Setting s) {
+        String key = s.key();
+        String description = s.description();
+        if (GoNutsApi.guarded(key)) {
+            description = "Moves money, data or the server joined. " + description;
+            c.warnNext();
+        }
+        if (s.kind() == Tuning.Kind.TOGGLE) {
+            c.toggle(key, s.label(), description, () -> GoNutsApi.get(key) >= .5, () -> GoNutsApi.set(key, GoNutsApi.get(key) >= .5 ? 0 : 1));
+            return;
+        }
+        double range = s.max() - s.min();
+        // Wide ranges, such as amounts of money, are typed; a slider could not land on a value precisely.
+        if (range > 1000 || !Double.isFinite(range)) {
+            c.number(key, s.label(), description, () -> GoNutsApi.get(key), v -> GoNutsApi.set(key, v), s::format);
+            return;
+        }
+        double step = s.kind() == Tuning.Kind.COUNT || range >= 20 ? 1 : range >= 2 ? .1 : .01;
+        c.slider(key, s.label(), description, () -> GoNutsApi.get(key), v -> {
+            if (v != GoNutsApi.get(key)) GoNutsApi.set(key, v);
+        }, s.min(), s.max(), step, s::format);
+    }
+
+    /** "WAITING_FOR_ORDER" as "Waiting for order". */
+    private static String words(String constant) {
+        String spaced = constant.toLowerCase(Locale.ROOT).replace('_', ' ');
+        return spaced.isEmpty() ? spaced : Character.toUpperCase(spaced.charAt(0)) + spaced.substring(1);
+    }
+
+    /**
+     * The first number in some text, with an optional k, m or b after it; NaN without one. A unit word such as
+     * "12 min" or "5 blocks" is not a multiplier.
+     */
+    private static double parseNumber(String text) {
+        var matcher = NUMBER.matcher(text.replace(",", ""));
+        if (!matcher.find()) return Double.NaN;
+        double value = Double.parseDouble(matcher.group(1));
+        String suffix = matcher.group(2) == null ? "" : matcher.group(2);
+        return switch (suffix.toLowerCase(Locale.ROOT)) {
+            case "k" -> value * 1e3;
+            case "m" -> value * 1e6;
+            case "b" -> value * 1e9;
+            default -> value;
+        };
+    }
+
     // Navigation --------------------------------------------------------------------------------
 
     private Page currentPage() { return pages.getOrDefault(pageId, pages.values().iterator().next()); }
@@ -870,6 +1011,7 @@ public final class DonutScreen extends Screen {
             case "list" -> list(graphics, 0, 0, color);
             case "keyboard" -> keyboard(graphics, 0, 0, color);
             case "palette" -> palette(graphics, 0, 0, color);
+            case "donut" -> donut(graphics, 1, 1, color);
             default -> sliders(graphics, 0, 0, color);
         }
         graphics.pose().popMatrix();
@@ -878,7 +1020,7 @@ public final class DonutScreen extends Screen {
     private void drawHeader() {
         int x = mainX(), w = mainW();
         Page page = currentPage();
-        String title = query.isEmpty() ? page.title : "Search";
+        String title = query.isEmpty() ? page.header() : "Search";
         int searchW = Math.min(176, w / 3), titleW = w - searchW - 16;
         draw("Donut", Size.TITLE, x, wy + 21, accent(), false, true);
         int after = x + width("Donut ", Size.TITLE) + 2;
@@ -887,7 +1029,7 @@ public final class DonutScreen extends Screen {
         if (!query.isEmpty()) {
             int found = searchResults().size();
             subtitle = found + (found == 1 ? " module" : " modules");
-        } else if (page.modules != null) {
+        } else if (page.modules != null && page.subtitle == null) {
             long enabled = page.modules.stream().filter(m -> m.enabled.getAsBoolean()).count();
             subtitle = page.modules.size() + (page.modules.size() == 1 ? " module" : " modules") + "  ·  " + enabled + " enabled";
         } else {
@@ -1538,13 +1680,29 @@ public final class DonutScreen extends Screen {
 
         private int rowHeight(String description) { return description == null || description.isEmpty() ? 22 : 32; }
 
-        /** A row's label and description; a hovered row gets an accent tick at its left edge. */
+        /** Set by {@link #warnNext()}: the next row's description is a warning. */
+        private boolean warning;
+
+        /** Shows the next row's description in the warning color. */
+        void warnNext() { warning = true; }
+
+        /**
+         * A row's label and description; a hovered row gets an accent tick at its left edge, and a description too
+         * long for the row shows in full beside the mouse.
+         */
         private void rowLabel(String label, String description, int descriptionColor, boolean over, int h, int controlWidth) {
             int room = w - controlWidth - 14;
             boolean described = description != null && !description.isEmpty();
+            if (warning) {
+                descriptionColor = WARN;
+                warning = false;
+            }
             if (over) round(graphics, x - 9, y + 6, 2f, h - 12f, 1f, accent());
             bold(fit(label, Size.BASE, room), x, y + (described ? 7 : 8), TEXT);
-            if (described) draw(fit(description, Size.SMALL, room), Size.SMALL, x, y + 20, descriptionColor);
+            if (!described) return;
+            String shown = fit(description, Size.SMALL, room);
+            draw(shown, Size.SMALL, x, y + 20, descriptionColor);
+            if (over && !shown.equals(description)) tooltip = description;
         }
 
         void section(String title) {
@@ -1637,11 +1795,17 @@ public final class DonutScreen extends Screen {
 
         void slider(String key, String label, String description, DoubleSupplier getter, DoubleConsumer setter,
                     double min, double max, double step, String unit) {
+            slider(key, label, description, getter, setter, min, max, step, value -> unit.equals("%") ? Math.round(value * 100) + "%"
+                    : step >= 1 ? Math.round(value) + unit : String.format(Locale.ROOT, "%.1f%s", value, unit));
+        }
+
+        /** A slider whose value box shows the value as {@code format} writes it. */
+        void slider(String key, String label, String description, DoubleSupplier getter, DoubleConsumer setter,
+                    double min, double max, double step, DoubleFunction<String> format) {
             flushChips();
             String id = id(key);
             double value = getter.getAsDouble();
-            String display = unit.equals("%") ? Math.round(value * 100) + "%"
-                    : step >= 1 ? Math.round(value) + unit : String.format(Locale.ROOT, "%.1f%s", value, unit);
+            String display = format.apply(value);
             int h = rowHeight(description);
             int box = Math.max(46, width(display, Size.BASE) + 16), trackW = Math.min(140, (int) (w * .3));
             int trackX = x + w - box - 14 - trackW, mid = y + h / 2;
@@ -1764,17 +1928,29 @@ public final class DonutScreen extends Screen {
             y += h + 2;
         }
 
-        void button(String key, String label, String description, Runnable action) {
+        void button(String key, String label, String description, Runnable action) { button(key, label, description, label, action); }
+
+        /** A row with a button on the right; the button reads {@code text}. */
+        void button(String key, String label, String description, String text, Runnable action) {
             flushChips();
             String id = id(key);
-            int h = rowHeight(description), bw = width(label, Size.BASE) + 28, bx = x + w - bw, by = y + h / 2 - 10;
+            int h = rowHeight(description), bw = width(text, Size.BASE) + 28, bx = x + w - bw, by = y + h / 2 - 10;
             boolean over = inside(x - 10, y, w + 20, h);
             rowLabel(label, description, MUTED, over, h, bw);
             round(graphics, bx, by, bw, 20, 6, over ? CARD_HOVER : FIELD);
             outline(graphics, bx, by, bw, 20, 6, over ? EDGE_HOVER : EDGE);
-            draw(label, Size.BASE, bx + 14, by + 7, over ? TEXT : LABEL);
+            draw(text, Size.BASE, bx + 14, by + 7, over ? TEXT : LABEL);
             hit(id, x - 10, y, w + 20, h, () -> change(action), null);
             y += h + 2;
+        }
+
+        /** A number typed into a box; it accepts 250k, 1.5M or 12000, and anything after the number is ignored. */
+        void number(String key, String label, String description, DoubleSupplier getter, DoubleConsumer setter,
+                    DoubleFunction<String> format) {
+            field(key, label, description, () -> format.apply(getter.getAsDouble()), text -> {
+                double value = parseNumber(text);
+                if (Double.isFinite(value)) setter.accept(value);
+            }, false);
         }
 
         /** Settings most people leave alone, folded away until asked for. */
@@ -1802,7 +1978,13 @@ public final class DonutScreen extends Screen {
     private record NavGroup(String title, List<Page> pages) { }
 
     /** A sidebar entry: a category of modules, or a page that draws its own content. */
-    private record Page(String id, String title, String icon, String subtitle, List<Module> modules, Consumer<Column> content) { }
+    private record Page(String id, String title, String icon, String subtitle, List<Module> modules, Consumer<Column> content,
+                        String heading) {
+        /** The same page under a different title in the header than in the sidebar. */
+        Page heading(String text) { return new Page(id, title, icon, subtitle, modules, content, text); }
+
+        String header() { return heading == null ? title : heading; }
+    }
 
     /** A module: its switch, its settings (or null), and the index of its keybind (or -1). */
     private record Module(String name, String description, String keywords, BooleanSupplier enabled, Runnable toggle,
