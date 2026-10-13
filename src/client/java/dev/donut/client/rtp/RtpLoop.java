@@ -20,6 +20,7 @@ public final class RtpLoop {
         NO_AMETHYST("three areas in a row had no budding amethyst; the server may hide it"),
         HURT("you took damage"),
         MENU_MISSING("the command opened a menu without the configured item"),
+        GONUTS_BUSY("GoNuts is trading; stop its session first"),
         STOPPED("stopped");
 
         public final String reason;
