@@ -56,13 +56,14 @@ public final class ModuleArrayList {
     }
 
     private static List<String> names(Font font, ClientConfig config, boolean freecamActive) {
-        List<String> names = new ArrayList<>(11);
+        List<String> names = new ArrayList<>(12);
         if (config.storage.enabled) names.add("StorageFinder");
         if (config.spawner.enabled) names.add("SpawnerFinder");
         if (config.debris.enabled) names.add("DebrisFinder");
         if (config.activity.enabled) names.add("ActivityFinder");
         if (config.tunnels.enabled) names.add("TunnelFinder");
         if (config.entities.enabled) names.add("EntityFinder");
+        if (config.bases.enabled) names.add("BaseFinder");
         if (config.xray.enabled) names.add("Xray");
         if (config.fullbright.enabled) names.add("Fullbright");
         if (config.rtp.enabled) names.add("AutoRTP");

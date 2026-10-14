@@ -24,8 +24,9 @@ import org.lwjgl.glfw.GLFW;
 /** Uses the production screen, saved options and keyboard event route in an isolated game-test world. */
 public final class ModuleKeybindGameTest implements FabricClientGameTest {
     private static final int[] TEST_KEYS = {GLFW.GLFW_KEY_F8, GLFW.GLFW_KEY_F9, GLFW.GLFW_KEY_F10, GLFW.GLFW_KEY_F7,
-            GLFW.GLFW_KEY_F12, GLFW.GLFW_KEY_F4, GLFW.GLFW_KEY_KP_1, GLFW.GLFW_KEY_KP_2, GLFW.GLFW_KEY_KP_3, GLFW.GLFW_KEY_KP_4};
-    private static final int DEBRIS = 3, ACTIVITY = 4, AUTO_RTP = 5, XRAY = 6, FULLBRIGHT = 7, ENTITIES = 8, TUNNELS = 9;
+            GLFW.GLFW_KEY_F12, GLFW.GLFW_KEY_F4, GLFW.GLFW_KEY_KP_1, GLFW.GLFW_KEY_KP_2, GLFW.GLFW_KEY_KP_3, GLFW.GLFW_KEY_KP_4,
+            GLFW.GLFW_KEY_KP_5};
+    private static final int DEBRIS = 3, ACTIVITY = 4, AUTO_RTP = 5, XRAY = 6, FULLBRIGHT = 7, ENTITIES = 8, TUNNELS = 9, BASES = 10;
 
     @Override
     public void runTest(ClientGameTestContext context) {
@@ -75,7 +76,7 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     }
                     for (int module : new int[] {0, 1, DEBRIS}) GuiClicks.expand(context, GuiClicks.MODULES[module]);
                     ClientConfig afterBinding = store.load();
-                    for (int module : new int[] {0, 1, DEBRIS, ACTIVITY, XRAY, FULLBRIGHT, ENTITIES, TUNNELS}) {
+                    for (int module : new int[] {0, 1, DEBRIS, ACTIVITY, XRAY, FULLBRIGHT, ENTITIES, TUNNELS, BASES}) {
                         require(finderEnabled(afterBinding, module) == finderEnabled(originalConfig, module),
                                 "Assigning keys in the GUI must not toggle module " + module);
                     }
@@ -213,6 +214,7 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     setFinder(context, store, TUNNELS, true);
                     setFinder(context, store, ENTITIES, true);
                     setFinder(context, store, FULLBRIGHT, true);
+                    setFinder(context, store, BASES, true);
                     screenshot(context, "donut-arraylist-01-active-scaled");
                     // GoNuts's HUD is told where the module list and the info panel are, and keeps its own surfaces off them.
                     // Without a live market feed it draws nothing, so it previews its HUD with sample data.
@@ -262,6 +264,7 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     setFinder(context, store, TUNNELS, false);
                     setFinder(context, store, ENTITIES, false);
                     setFinder(context, store, FULLBRIGHT, false);
+                    setFinder(context, store, BASES, false);
                     screenshot(context, "donut-arraylist-04-disabled");
                 } finally {
                     context.setScreen(() -> null);
@@ -279,7 +282,7 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     setFinder(context, store, 1, originalConfig.spawner.enabled);
                     setFinder(context, store, DEBRIS, originalConfig.debris.enabled);
                     setFinder(context, store, ACTIVITY, originalConfig.activity.enabled);
-                    for (int module : new int[] {XRAY, FULLBRIGHT, ENTITIES, TUNNELS}) {
+                    for (int module : new int[] {XRAY, FULLBRIGHT, ENTITIES, TUNNELS, BASES}) {
                         setFinder(context, store, module, finderEnabled(originalConfig, module));
                     }
                     if (!originalConfig.showHud) {
@@ -325,6 +328,7 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
             case FULLBRIGHT -> config.fullbright.enabled;
             case ENTITIES -> config.entities.enabled;
             case TUNNELS -> config.tunnels.enabled;
+            case BASES -> config.bases.enabled;
             default -> throw new IllegalArgumentException("Not a finder module: " + module);
         };
     }

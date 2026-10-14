@@ -158,7 +158,7 @@ public final class DonutScreen extends Screen {
         version = FabricLoader.getInstance().getModContainer("donut")
                 .map(mod -> "v" + mod.getMetadata().getVersion().getFriendlyString()).orElse("");
         group("Modules",
-                page("finders", "Finders", "search", List.of(storage(), spawners(), debris(), tunnels(), entities(), activity())),
+                page("finders", "Finders", "search", List.of(storage(), spawners(), debris(), tunnels(), entities(), activity(), bases())),
                 page("render", "Render", "eye", List.of(xray(), fullbright(), freecam())),
                 page("utility", "Utility", "rtp", List.of(autoRtp())),
                 page("hud", "HUD", "monitor", List.of(
@@ -365,6 +365,21 @@ public final class DonutScreen extends Screen {
         });
     }
 
+    private Module bases() {
+        FinderSettings s = config.bases;
+        return finder(10, "BaseFinder", "Chunks with what only players build: shulker boxes, beacons, signs, player-only blocks",
+                "bases basefinder base stash player built suspicious chunks shulker beacon signs", s,
+                c -> c.color("color", "Bases", () -> s.color, v -> s.color = v), c -> {
+            c.section("Detection");
+            c.slider("minScore", "Min score", "One shulker box, beacon or enchanting table is 6; raise it if structures show up",
+                    () -> s.minBaseScore, v -> s.minBaseScore = v, 2, 30, 1, "");
+            c.toggle("allLoaded", "All loaded chunks", "Every chunk your client has, at any distance and depth",
+                    () -> s.allLoadedChunks, () -> s.allLoadedChunks = !s.allLoadedChunks);
+            c.note("Only blocks open to air count, so anti-xray's buried fake chests don't. Each marked chunk is labeled with its "
+                    + "score and what it found.", DIM);
+        });
+    }
+
     /** Live counts, including chunks below the threshold, so an empty world view can be explained. */
     private void activityScan(Column c, FinderSettings s) {
         c.section("Live scan");
@@ -394,8 +409,8 @@ public final class DonutScreen extends Screen {
                           Consumer<Column> colors, Consumer<Column> detection) {
         return module(name, description, keywords, () -> s.enabled, () -> change(() -> s.enabled = !s.enabled), c -> {
             c.bind(index);
-            // ActivityFinder can cover every loaded chunk, which makes range and distance fade irrelevant.
-            boolean everyChunk = s == config.activity && s.allLoadedChunks;
+            // ActivityFinder and BaseFinder can cover every loaded chunk, which makes range and distance fade irrelevant.
+            boolean everyChunk = (s == config.activity || s == config.bases) && s.allLoadedChunks;
             c.section("Render");
             c.choice("mode", "Mode", RenderMode.values().length, () -> s.mode.ordinal(),
                     v -> s.mode = RenderMode.values()[v], v -> modeName(RenderMode.values()[v]));
