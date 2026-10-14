@@ -252,19 +252,20 @@ public final class DonutScreen extends Screen {
 
     private Module debris() {
         FinderSettings s = config.debris;
-        return finder(3, "DebrisFinder", "Ancient debris, with anti-xray detection", "debris ancient netherite nether ores seed", s,
+        return finder(3, "DebrisFinder", "Exposed ancient debris, and what mining reveals", "debris ancient netherite nether ores seed", s,
                 c -> {
             c.color("color", "Debris", () -> s.color, v -> s.color = v);
             c.color("secondaryColor", "Seed estimates", () -> s.secondaryColor, v -> s.secondaryColor = v);
             c.color("tertiaryColor", "Search areas", () -> s.tertiaryColor, v -> s.tertiaryColor = v);
         }, c -> {
+            c.note("Can't find debris DonutSMP hides; shows exposed debris and lights up what mining reveals.", DIM);
             c.section("Detection");
             c.toggle("filterFakes", "Filter fakes", "Hide fake debris that anti-xray scatters through netherrack",
                     () -> s.filterFakes, () -> s.filterFakes = !s.filterFakes);
             c.toggle("notify", "Reveal alert", "Sound and message when mining uncovers debris", () -> s.notify, () -> s.notify = !s.notify);
             c.toggle("searchAreas", "Search areas", "Outline 16-block sections the server's block data says still hold hidden debris",
                     () -> s.searchAreas, () -> s.searchAreas = !s.searchAreas);
-            c.toggle("seedEstimates", "Seed estimates", "Mark the netherrack where the world seed placed debris the server hides",
+            c.toggle("seedEstimates", "Seed estimates", "Off by default: DonutSMP seeds its debris separately. Turns itself off when revealed spots keep coming up empty",
                     () -> s.seedEstimates, () -> s.seedEstimates = !s.seedEstimates);
             if (s.seedEstimates) {
                 c.field("seed", "World seed", "The server's seed; singleplayer worlds use their own", () -> s.seed, v -> s.seed = v.trim(), false);
