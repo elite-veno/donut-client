@@ -341,7 +341,7 @@ public final class DonutScreen extends Screen {
             c.color("itemColor", "Items", () -> s.itemColor, v -> s.itemColor = v);
         }, c -> {
             c.section("Detection");
-            c.chip("players", "Players", "Everyone except you, labeled with their name", () -> s.players, () -> s.players = !s.players);
+            c.chip("players", "Players", "Everyone except you, labeled with their name; server NPCs, which have no tab list entry, are skipped", () -> s.players, () -> s.players = !s.players);
             c.chip("hostiles", "Hostile mobs", "Zombies, creepers, skeletons and other monsters", () -> s.hostiles, () -> s.hostiles = !s.hostiles);
             c.chip("passives", "Other mobs", "Animals, villagers and golems", () -> s.passives, () -> s.passives = !s.passives);
             c.chip("items", "Items", "Items lying on the ground", () -> s.items, () -> s.items = !s.items);
@@ -398,7 +398,7 @@ public final class DonutScreen extends Screen {
             c.section("Render");
             c.choice("mode", "Mode", RenderMode.values().length, () -> s.mode.ordinal(),
                     v -> s.mode = RenderMode.values()[v], v -> modeName(RenderMode.values()[v]));
-            c.toggle("walls", "Through walls", "Keep highlights visible behind blocks", () -> s.throughWalls, () -> s.throughWalls = !s.throughWalls);
+            c.toggle("walls", "Through walls", "Keep highlights visible behind blocks, drawn faintly where something hides them", () -> s.throughWalls, () -> s.throughWalls = !s.throughWalls);
             c.toggle("tracers", "Tracers", "Lines from your crosshair to every highlight", () -> s.tracers, () -> s.tracers = !s.tracers);
             if (!everyChunk) c.slider("range", "Range", "Only loaded chunks can be highlighted",
                     () -> s.range, v -> s.range = v, 16, 256, 1, " blocks");
@@ -408,7 +408,7 @@ public final class DonutScreen extends Screen {
                 m.slider("outlineOpacity", "Outline opacity", "How opaque the outlines are",
                         () -> s.outlineOpacity, v -> s.outlineOpacity = v, 0, 1, .01, "%");
                 m.slider("fillOpacity", "Fill opacity", "How opaque the filled faces are", () -> s.fillOpacity, v -> s.fillOpacity = v, 0, 1, .01, "%");
-                m.slider("lineWidth", "Line width", "Outline width", () -> s.lineWidth, v -> s.lineWidth = v, .5, 5, .1, " px");
+                m.slider("lineWidth", "Line width", "Outline width; thicker on screens above 1080p, like Minecraft's own lines", () -> s.lineWidth, v -> s.lineWidth = v, .5, 5, .1, " px");
                 if (!everyChunk) m.toggle("fade", "Distance fade", "Soften highlights near the range limit",
                         () -> s.distanceFade, () -> s.distanceFade = !s.distanceFade);
                 m.section("Colors");
@@ -457,6 +457,9 @@ public final class DonutScreen extends Screen {
             c.section("Movement");
             c.slider("speed", "Speed", "Camera speed", () -> s.speed, v -> s.speed = v, .1, 5, .1, " blocks/tick");
             c.slider("boost", "Sprint boost", "Speed multiplier while sprinting", () -> s.boostMultiplier, v -> s.boostMultiplier = v, 1, 10, .1, "x");
+            c.section("Safety");
+            c.toggle("exitWhenHurt", "Exit when hurt", "Freecam turns off when your body takes damage",
+                    () -> s.exitWhenHurt, () -> s.exitWhenHurt = !s.exitWhenHurt);
             c.section("Controls");
             c.info("Move", String.join(" / ", keyName(minecraft.options.keyUp), keyName(minecraft.options.keyLeft),
                     keyName(minecraft.options.keyDown), keyName(minecraft.options.keyRight)), LABEL);
