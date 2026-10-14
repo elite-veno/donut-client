@@ -38,6 +38,7 @@ public final class FreecamController {
     private Vec3 previousPosition = Vec3.ZERO;
     private float yaw;
     private float pitch;
+    private float lastHealth;
 
     public FreecamController(ClientConfig config) {
         this.config = config;
@@ -85,6 +86,7 @@ public final class FreecamController {
         level = client.level;
         savedInput = player.input;
         sneaking = savedInput.keyPresses.shift();
+        lastHealth = player.getHealth();
         savedSneakToggle = client.options.keyShift.isDown();
         savedSprintToggle = client.options.keySprint.isDown();
         neutralInput.tick();
@@ -127,6 +129,13 @@ public final class FreecamController {
             client.player.sendOverlayMessage(Component.literal("Freecam off: GoNuts started trading"));
             return;
         }
+        float health = player.getHealth();
+        if (settings().exitWhenHurt && health < lastHealth) {
+            disable();
+            client.player.sendOverlayMessage(Component.literal("Freecam off: you took damage"));
+            return;
+        }
+        lastHealth = health;
         suppressActions(client);
         previousPosition = position;
         if (client.gui.screen() != null || client.isPaused()) return;

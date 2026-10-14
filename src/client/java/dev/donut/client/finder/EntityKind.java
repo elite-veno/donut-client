@@ -15,7 +15,13 @@ public enum EntityKind {
     PLAYER, HOSTILE, PASSIVE, ITEM, STORAGE_MINECART;
 
     public static EntityKind of(Entity entity) {
-        if (entity instanceof Player) return entity == Minecraft.getInstance().player ? null : PLAYER;
+        if (entity instanceof Player) {
+            Minecraft client = Minecraft.getInstance();
+            if (entity == client.player) return null;
+            // Server NPCs, such as shop keepers at spawn, are player entities that have no tab list entry.
+            var connection = client.getConnection();
+            return connection != null && connection.getPlayerInfo(entity.getUUID()) == null ? null : PLAYER;
+        }
         // Chest and hopper minecarts, and chest boats and rafts.
         if (entity instanceof ContainerEntity) return STORAGE_MINECART;
         if (entity instanceof ItemEntity) return ITEM;

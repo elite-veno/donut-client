@@ -69,9 +69,13 @@ public final class HighlightRenderer implements AutoCloseable {
     private final RenderStateDataKey<Frame> frame =
             RenderStateDataKey.create(() -> "Donut finder highlights");
     private static final RenderPipeline FILL_VISIBLE = pipeline("fill_visible", false, false);
-    private static final RenderPipeline FILL_THROUGH = pipeline("fill_through", false, true);
     private static final RenderPipeline LINE_VISIBLE = pipeline("line_visible", true, false);
+    /** Tracers always draw in full: they point through walls on purpose. */
     private static final RenderPipeline LINE_THROUGH = pipeline("line_through", true, true);
+    /** The parts of a through-walls highlight that something hides: drawn fainter, so what's in view stands out. */
+    private static final RenderPipeline FILL_HIDDEN = pipeline("fill_hidden", false, CompareOp.LESS_THAN);
+    private static final RenderPipeline LINE_HIDDEN = pipeline("line_hidden", true, CompareOp.LESS_THAN);
+    private static final Vector4f HIDDEN_TINT = new Vector4f(1, 1, 1, 0.4f);
 
     // Corner bits are X=1, Y=2, Z=4. Winding is outward for all six faces.
     private static final int[][] FACES = {
@@ -108,13 +112,17 @@ public final class HighlightRenderer implements AutoCloseable {
 
     private static RenderPipeline pipeline(String name, boolean lines, boolean throughWalls) {
         // Depth is reversed in 26.2: a nearer fragment has the greater depth.
+        return pipeline(name, lines, throughWalls ? CompareOp.ALWAYS_PASS : CompareOp.GREATER_THAN_OR_EQUAL);
+    }
+
+    private static RenderPipeline pipeline(String name, boolean lines, CompareOp depthTest) {
         RenderPipeline.Builder builder = RenderPipeline.builder()
                 .withLocation(Identifier.fromNamespaceAndPath("donut", "pipeline/" + name))
                 .withBindGroupLayout(BindGroupLayouts.GLOBALS)
                 .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
                 .withColorTargetState(new ColorTargetState(BlendFunction.TRANSLUCENT))
                 .withCull(!lines)
-                .withDepthStencilState(new DepthStencilState(throughWalls ? CompareOp.ALWAYS_PASS : CompareOp.GREATER_THAN_OR_EQUAL, false));
+                .withDepthStencilState(new DepthStencilState(depthTest, false));
         if (lines) {
             // The vanilla line vertex shader expands each segment in screen space; it reads the fog uniforms.
             // The position-color fragment shader keeps these overlays independent of fog.
@@ -156,7 +164,9 @@ public final class HighlightRenderer implements AutoCloseable {
         Vec3 crosshair = new Vec3(ahead.x / ahead.w, ahead.y / ahead.w, ahead.z / ahead.w);
         Minecraft client = Minecraft.getInstance();
         boolean labelling = config.hud.labels && !client.gui.hud.isHidden();
-        Extraction out = new Extraction(context, camera, crosshair, labelling);
+        // Vanilla thickens its lines on screens wider than 1080p; so do these.
+        float widthScale = client.getWindow().getAppropriateLineWidth() / 2.5f;
+        Extraction out = new Extraction(context, camera, crosshair, labelling, widthScale);
         for (FoundBlock block : scanner.snapshot()) {
             FinderSettings settings = block.kind().settings(config);
             if (!settings.enabled || !block.kind().included(settings)) continue;
@@ -331,15 +341,17 @@ public final class HighlightRenderer implements AutoCloseable {
         final Vec3 crosshair;
         /** Whether the HUD can show labels; without them no label text is built. */
         final boolean labelling;
+        final float widthScale;
         final List<DrawBox> boxes = new ArrayList<>();
         final List<DrawLine> tracerCandidates = new ArrayList<>();
         final List<Candidate> labelCandidates = new ArrayList<>();
 
-        Extraction(LevelExtractionContext context, Vec3 camera, Vec3 crosshair, boolean labelling) {
+        Extraction(LevelExtractionContext context, Vec3 camera, Vec3 crosshair, boolean labelling, float widthScale) {
             this.context = context;
             this.camera = camera;
             this.crosshair = crosshair;
             this.labelling = labelling;
+            this.widthScale = widthScale;
         }
 
         /** A highlight with the finder's styling, plus its tracer and label. */
@@ -361,7 +373,7 @@ public final class HighlightRenderer implements AutoCloseable {
             if (settings.tracers) {
                 Vec3 center = bounds.getCenter().subtract(camera);
                 tracerCandidates.add(new DrawLine(crosshair, center, argb(color, Math.max(0.35, settings.outlineOpacity) * fade),
-                        (float) Math.clamp(settings.lineWidth, 0.5, 8.0), distance));
+                        (float) Math.clamp(settings.lineWidth, 0.5, 8.0) * widthScale, distance));
             }
             if (labelling && label != null) labelCandidates.add(new Candidate(bounds, label, color, distance));
         }
@@ -371,7 +383,7 @@ public final class HighlightRenderer implements AutoCloseable {
             AABB bounds = box.inflate(0.003);
             if (!context.levelState().cameraRenderState.cullFrustum.isVisible(bounds)) return;
             // Subtract in double precision before making vertices, including near the world border.
-            boxes.add(new DrawBox(bounds.move(-camera.x, -camera.y, -camera.z), fill, outline, width, throughWalls));
+            boxes.add(new DrawBox(bounds.move(-camera.x, -camera.y, -camera.z), fill, outline, width * widthScale, throughWalls));
         }
 
         List<DrawLine> tracers(int max) {
@@ -415,6 +427,8 @@ public final class HighlightRenderer implements AutoCloseable {
             var sorting = RenderSystem.getProjectionType().vertexSorting();
             StagedVertexBuffer.Draw fill = vertices.appendDraw(DefaultVertexFormat.POSITION_COLOR, PrimitiveTopology.QUADS, sorting);
             StagedVertexBuffer.Draw line = vertices.appendDraw(DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH, PrimitiveTopology.LINES);
+            StagedVertexBuffer.Draw tracers = through
+                    ? vertices.appendDraw(DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH, PrimitiveTopology.LINES) : null;
             // One builder at a time: each draw is written whole before the next.
             VertexConsumer buffer = null;
             for (DrawBox box : boxes.boxes) {
@@ -429,13 +443,23 @@ public final class HighlightRenderer implements AutoCloseable {
                 outlined(buffer, pose, box.bounds, box.outline, box.width);
             }
             if (through && !boxes.tracers.isEmpty()) {
-                if (buffer == null) buffer = vertices.getVertexBuilder(line);
+                buffer = vertices.getVertexBuilder(tracers);
                 for (DrawLine tracer : boxes.tracers) segment(buffer, pose, tracer);
             }
             vertices.upload();
             GpuBufferSlice transform = RenderSystem.getDynamicUniforms().writeTransform(RenderSystem.getModelViewMatrixCopy());
-            drawPass(vertices, through ? FILL_THROUGH : FILL_VISIBLE, fill, transform);
-            drawPass(vertices, through ? LINE_THROUGH : LINE_VISIBLE, line, transform);
+            if (through) {
+                // The same vertices twice: faint where something hides them, full where they are in view.
+                GpuBufferSlice faint = RenderSystem.getDynamicUniforms().writeTransform(RenderSystem.getModelViewMatrixCopy(), HIDDEN_TINT);
+                drawPass(vertices, FILL_HIDDEN, fill, faint);
+                drawPass(vertices, FILL_VISIBLE, fill, transform);
+                drawPass(vertices, LINE_HIDDEN, line, faint);
+                drawPass(vertices, LINE_VISIBLE, line, transform);
+                drawPass(vertices, LINE_THROUGH, tracers, transform);
+            } else {
+                drawPass(vertices, FILL_VISIBLE, fill, transform);
+                drawPass(vertices, LINE_VISIBLE, line, transform);
+            }
         } catch (RuntimeException e) {
             // A broken frame must not crash the game; the overlay skips it and starts over with a fresh buffer.
             broke = true;

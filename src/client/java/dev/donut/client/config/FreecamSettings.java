@@ -6,6 +6,8 @@ public final class FreecamSettings {
     public boolean favorite = false;
     public double speed = 1.0;
     public double boostMultiplier = 3.0;
+    /** Freecam ends when the body takes damage, so it can't be killed unseen while the camera is away. */
+    public boolean exitWhenHurt = true;
 
     public void sanitize() {
         speed = Double.isFinite(speed) ? Math.clamp(speed, 0.1, 5.0) : 1.0;
