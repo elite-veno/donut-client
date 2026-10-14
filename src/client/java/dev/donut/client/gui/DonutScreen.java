@@ -811,6 +811,7 @@ public final class DonutScreen extends Screen {
         List<String> order = new ArrayList<>(GoNutsApi.groups());
         order.sort(Comparator.comparingInt(g -> GROUP_ORDER.contains(g) ? GROUP_ORDER.indexOf(g) : GROUP_ORDER.size()));
         List<Module> cards = new ArrayList<>();
+        cards.add(loadoutCard());
         for (String group : order) {
             List<Tuning.Setting> settings = GoNutsApi.settings().stream()
                     .filter(s -> s.group().equals(group) && !GONUTS_HIDDEN.contains(s.key())).toList();
@@ -834,6 +835,47 @@ public final class DonutScreen extends Screen {
                     d.note("Lists save when you press Enter or click elsewhere, amber ones on Enter twice. Esc cancels an edit.", DIM);
                 }), -1, null));
         return cards;
+    }
+
+    /** GoNuts's presets, each changing a set of settings in one go; Veno's, this client's own, comes first. */
+    private Module loadoutCard() {
+        List<GoNutsApi.Preset> presets = GoNutsApi.presets();
+        StringBuilder keywords = new StringBuilder("gonuts loadout tweaks preset presets");
+        for (GoNutsApi.Preset p : presets) keywords.append(' ').append(p.name());
+        String names = String.join(", ", presets.stream().map(GoNutsApi.Preset::name).toList());
+        return new Module("Loadout tweaks", presets.size() + " presets  ·  " + names, keywords.toString(), () -> false, null,
+                () -> true, "", c -> goNutsGuarded(c, d -> {
+                    d.section("Presets");
+                    for (GoNutsApi.Preset preset : presets) presetRow(d, preset, preset.name().equals("Veno"));
+                    replyNote(d);
+                    d.note("A preset changes the settings it covers and leaves the rest as they are. Apply arms it, and Confirm "
+                            + "within 8 seconds applies it.", DIM);
+                }), -1, null);
+    }
+
+    /**
+     * A preset's row: Apply arms it, and Confirm, a second click at least a second later, applies it and says how many
+     * settings changed. Default, which also puts the money limits and pay cap back, is amber throughout.
+     */
+    private void presetRow(Column c, GoNutsApi.Preset preset, boolean recommended) {
+        String name = preset.name(), id = "preset." + name;
+        boolean confirming = isArmed(id), resets = name.equals("Default");
+        String description = confirming ? "Click Confirm within 8 seconds to apply " + name
+                : preset.description().isBlank() ? "A preset by GoNuts's author" : preset.description();
+        if (confirming || resets) c.warnNext();
+        c.button(id, recommended ? name + " (recommended)" : name, description, confirming ? "Confirm" : "Apply", () -> {
+            long now = System.currentTimeMillis();
+            Long until = armed.get(id);
+            if (until == null || now >= until) {
+                armed.put(id, now + ARM_MILLIS);
+                return;
+            }
+            // A Confirm that appeared under the mouse a moment ago takes no click.
+            if (now - (until - ARM_MILLIS) < SETTLE_MILLIS) return;
+            armed.remove(id);
+            int changed = GoNutsApi.applyPreset(name);
+            reply(name + " applied: " + changed + (changed == 1 ? " setting" : " settings") + " changed.", false);
+        });
     }
 
     /** The GoNuts settings cards, or none if GoNuts cannot list them; the menu opens either way. */

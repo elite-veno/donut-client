@@ -143,6 +143,27 @@ final class GoNutsPagesCheck {
                 "The deny list was cut: " + GoNutsApi.text("items.deny").length() + " characters");
         GoNutsApi.setText("items.deny", original);
         GuiClicks.collapse(context, "Lists");
+
+        // A preset applies on Confirm, a second click at least a second after Apply; one click changes nothing.
+        GuiClicks.expand(context, "Loadout tweaks");
+        java.util.Map<String, Double> unchanged = values();
+        GuiClicks.click(context, "Loadout tweaks.preset.Veno");
+        require(values().equals(unchanged), "One click on Apply already applied Veno's preset");
+        GuiClicks.settle(context);
+        screenshot.accept("donut-02-clickgui-gonuts-loadout");
+        context.waitTicks(25);
+        GuiClicks.click(context, "Loadout tweaks.preset.Veno");
+        require(!values().equals(unchanged), "Confirm did not apply Veno's preset");
+        GuiClicks.settle(context);
+        screenshot.accept("donut-02-clickgui-gonuts-loadout-applied");
+        // Default puts every setting back.
+        GuiClicks.click(context, "Loadout tweaks.preset.Default");
+        context.waitTicks(25);
+        GuiClicks.click(context, "Loadout tweaks.preset.Default");
+        for (Tuning.Setting s : GoNutsApi.settings()) {
+            require(GoNutsApi.isDefault(s.key()), "Default left " + s.label() + " at " + GoNutsApi.get(s.key()));
+        }
+        GuiClicks.collapse(context, "Loadout tweaks");
         smallScreen(context);
     }
 
@@ -226,6 +247,13 @@ final class GoNutsPagesCheck {
         context.setScreen(() -> donut);
         context.waitForScreen(DonutScreen.class);
         GuiClicks.settle(context);
+    }
+
+    /** Every GoNuts setting's value, by key. */
+    private static java.util.Map<String, Double> values() {
+        java.util.Map<String, Double> values = new java.util.HashMap<>();
+        for (Tuning.Setting s : GoNutsApi.settings()) values.put(s.key(), GoNutsApi.get(s.key()));
+        return values;
     }
 
     /** Clicks the open screen's button labeled {@code label}, if it has one. */
