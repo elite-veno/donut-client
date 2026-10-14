@@ -4,9 +4,13 @@ import dev.donut.client.gui.DonutScreen;
 import dev.doughbay.fabric.GoNutsApi;
 import dev.doughbay.fabric.Tuning;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
+import net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.components.AbstractButton;
 import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.input.MouseButtonInfo;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
@@ -138,6 +142,96 @@ final class GoNutsPagesCheck {
                 "The deny list was cut: " + GoNutsApi.text("items.deny").length() + " characters");
         GoNutsApi.setText("items.deny", original);
         GuiClicks.collapse(context, "Lists");
+        smallScreen(context);
+    }
+
+    /** GoNuts's own screen's tabs, by the label on their buttons. */
+    private static final List<String> FULL_TABS = List.of("Dashboard", "Opportunities", "Markets", "Search", "Items", "Flips",
+            "Performance", "Rivals", "Orders", "Autopilot", "Activity", "Diagnostics", "Logs", "Payroll", "Settings", "About");
+
+    /**
+     * The GoNuts pages and GoNuts's own screen in the room a 2560x1440 screen leaves at the automatic GUI scale: scale 6,
+     * so 426x240. A 1280x720 window at scale 3 lays out the same.
+     */
+    private static void smallScreen(ClientGameTestContext context) {
+        DonutScreen donut = context.computeOnClient(GoNutsPagesCheck::screen);
+        context.getInput().resizeWindow(1280, 720);
+        context.runOnClient(client -> {
+            client.options.guiScale().set(0);
+            client.resizeGui();
+        });
+        context.waitTicks(2);
+        GuiClicks.click(context, "nav.gonuts");
+        GuiClicks.settle(context);
+        small(context, "gonuts-small-01-overview");
+        GuiClicks.reveal(context, "full");
+        small(context, "gonuts-small-02-overview-end");
+        GuiClicks.click(context, "nav.gonuts-settings");
+        GuiClicks.settle(context);
+        small(context, "gonuts-small-03-settings");
+        GuiClicks.expand(context, "Session");
+        small(context, "gonuts-small-04-session");
+        GuiClicks.collapse(context, "Session");
+
+        // GoNuts's screen picks its own scale; 1706x960 at the automatic scale (4, so 426x240) gives it the choices
+        // 2560x1440 does: 853x480 at its own scale.
+        context.getInput().resizeWindow(1706, 960);
+        context.runOnClient(Minecraft::resizeGui);
+        context.waitTicks(2);
+        double gameScale = context.computeOnClient(client -> (double) client.getWindow().getGuiScale());
+        context.runOnClient(client -> GoNutsApi.openFullScreen());
+        context.waitFor(client -> client.gui.screen() != null && !(client.gui.screen() instanceof DonutScreen), 100);
+        context.waitTicks(10);
+        large(context, "gonuts-small-full-00-opened");
+        // GoNuts first says what is new; its OK goes on to the screen itself.
+        for (int tries = 0; tries < 3 && context.computeOnClient(client -> pressButton(client, "OK")); tries++) context.waitTicks(10);
+        for (int i = 0; i < FULL_TABS.size(); i++) {
+            String tab = FULL_TABS.get(i);
+            context.runOnClient(client -> pressButton(client, tab));
+            context.waitTicks(10);
+            large(context, String.format("gonuts-small-full-%02d-%s", i + 1, tab.toLowerCase(java.util.Locale.ROOT)));
+        }
+
+        double screenScale = context.computeOnClient(client -> (double) client.getWindow().getGuiScale());
+        System.out.println("[GoNutsPagesCheck] Full GoNuts drew at GUI scale " + screenScale + " over the game's " + gameScale);
+        context.setScreen(() -> null);
+        context.waitTicks(2);
+        context.runOnClient(client -> require(client.getWindow().getGuiScale() == gameScale,
+                "Closing Full GoNuts left the GUI scale at " + client.getWindow().getGuiScale() + ", not " + gameScale));
+
+        context.getInput().resizeWindow(1280, 800);
+        context.runOnClient(client -> {
+            client.options.guiScale().set(1);
+            client.resizeGui();
+        });
+        context.setScreen(() -> donut);
+        context.waitForScreen(DonutScreen.class);
+        GuiClicks.settle(context);
+    }
+
+    /** Clicks the open screen's button labeled {@code label}, if it has one. */
+    private static boolean pressButton(Minecraft client, String label) {
+        var screen = client.gui.screen();
+        if (screen == null) return false;
+        for (var child : screen.children()) {
+            if (child instanceof AbstractButton button && button.getMessage().getString().equals(label)) {
+                var event = new MouseButtonEvent(button.getX() + button.getWidth() / 2.0, button.getY() + button.getHeight() / 2.0,
+                        new MouseButtonInfo(GLFW.GLFW_MOUSE_BUTTON_LEFT, 0));
+                screen.mouseClicked(event, false);
+                screen.mouseReleased(event);
+                return true;
+            }
+        }
+        System.out.println("[GoNutsPagesCheck] no button " + label + " on " + screen.getClass().getSimpleName());
+        return false;
+    }
+
+    private static void large(ClientGameTestContext context, String name) {
+        context.takeScreenshot(TestScreenshotOptions.of(name).withSize(1706, 960));
+    }
+
+    private static void small(ClientGameTestContext context, String name) {
+        context.takeScreenshot(TestScreenshotOptions.of(name).withSize(1280, 720));
     }
 
     /** A key pressed and let go, as a person types it; a held Enter counts once. */

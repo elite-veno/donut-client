@@ -219,6 +219,22 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     context.waitTicks(3);
                     context.runOnClient(client -> require(!GoNutsApi.hudDrawn().isEmpty(), "GoNuts's HUD preview drew nothing"));
                     screenshot(context, "donut-arraylist-01b-gonuts-preview");
+                    // The same at the scale a 2560x1440 screen gets from the automatic GUI scale: 6, so 426x240, as a
+                    // 1280x720 window at scale 3.
+                    context.getInput().resizeWindow(1280, 720);
+                    context.runOnClient(client -> {
+                        client.options.guiScale().set(0);
+                        client.resizeGui();
+                        GoNutsApi.hudPreview(5_000);
+                    });
+                    context.waitTicks(3);
+                    context.takeScreenshot(TestScreenshotOptions.of("donut-arraylist-01c-gonuts-preview-small").withSize(1280, 720));
+                    context.getInput().resizeWindow(1280, 800);
+                    context.runOnClient(client -> {
+                        client.options.guiScale().set(2);
+                        client.resizeGui();
+                    });
+                    context.waitTicks(3);
                     context.runOnClient(client -> {
                         int width = client.getWindow().getGuiScaledWidth();
                         List<int[]> reserved = GoNutsApi.hudReserved();
