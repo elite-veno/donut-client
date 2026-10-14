@@ -214,6 +214,11 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     setFinder(context, store, FULLBRIGHT, true);
                     screenshot(context, "donut-arraylist-01-active-scaled");
                     // GoNuts's HUD is told where the module list and the info panel are, and keeps its own surfaces off them.
+                    // Without a live market feed it draws nothing, so it previews its HUD with sample data.
+                    context.runOnClient(client -> GoNutsApi.hudPreview(5_000));
+                    context.waitTicks(3);
+                    context.runOnClient(client -> require(!GoNutsApi.hudDrawn().isEmpty(), "GoNuts's HUD preview drew nothing"));
+                    screenshot(context, "donut-arraylist-01b-gonuts-preview");
                     context.runOnClient(client -> {
                         int width = client.getWindow().getGuiScaledWidth();
                         List<int[]> reserved = GoNutsApi.hudReserved();

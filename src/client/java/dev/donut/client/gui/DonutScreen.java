@@ -578,12 +578,18 @@ public final class DonutScreen extends Screen {
         } else {
             String state = session.state().name();
             boolean stopped = state.equals("STOPPED"), paused = state.equals("PAUSED");
-            c.info("State", words(state), stopped ? MUTED : paused ? WARN : GOOD);
+            // A session the player stopped stays held, also across restarts, until Start or Resume.
+            c.info("State", words(state) + (GoNutsApi.heldByPlayer() ? ", by you" : ""), stopped ? MUTED : paused ? WARN : GOOD);
             String detail = session.detail() == null ? "" : session.detail();
             // "Automation session is stopped" only says the state again.
             if (!detail.isBlank() && !(stopped && detail.toLowerCase(Locale.ROOT).contains("stopped"))) c.note(detail, MUTED);
             c.info("Trades started", Integer.toString(session.tradesStarted()), TEXT);
             c.info("Committed", money(session.committedSpend()), TEXT);
+            GoNutsApi.Limits limits = GoNutsApi.limits();
+            boolean capped = limits.moneyOutCap() > 0;
+            c.info("Money out", money(limits.moneyOut()) + (capped ? " of " + money(limits.moneyOutCap()) : ""),
+                    capped && limits.moneyOut() >= limits.moneyOutCap() ? WARN : TEXT);
+            c.info("Biggest buy", money(limits.perPurchase()) + (limits.followsBank() ? "  ·  follows your bank" : ""), TEXT);
             c.info("Open listings", Integer.toString(session.openListings()), TEXT);
             long balance = GoNutsApi.balance();
             c.info("Balance", balance < 0 ? "Not read yet" : money(balance), balance < 0 ? MUTED : TEXT);
@@ -595,7 +601,13 @@ public final class DonutScreen extends Screen {
                 sessionActionAt = System.currentTimeMillis();
             }
             if (stopped) {
-                c.button("start", "Trading", "Starts trading on this client, within the limits in Settings", "Start", this::goNutsStart);
+                String ended = GoNutsApi.lastEndReason();
+                if (!ended.isBlank()) c.note("The last session ended: " + ended, MUTED);
+                // What would stop Start from going ahead shows before the click, with where to fix it.
+                String blocker = GoNutsApi.startBlocker();
+                if (blocker != null && !blocker.isBlank()) c.warnNext();
+                c.button("start", "Trading", blocker != null && !blocker.isBlank() ? blocker
+                        : "Starts trading on this client, within the limits in Settings", "Start", this::goNutsStart);
             } else if (paused && resumable) {
                 c.button("resume", "Trading", "Goes on with the paused session", "Resume", this::goNutsStart);
                 c.button("stop", "Or stop", "Stops trading on this client", "Stop", this::goNutsStop);
@@ -621,9 +633,13 @@ public final class DonutScreen extends Screen {
             // An amount of -1 is a rule this client has not worked a payment out for yet.
             String payment = pending.amount() < 0 ? "Its first payment has not been worked out on this client yet."
                     : "Its first payment: " + money(pending.amount()) + " to " + pending.name() + ", from " + money(pending.profit()) + " profit.";
-            c.note("The payroll rule for " + pending.name() + " waits for your approval. " + payment + " Approving lets the rule pay "
+            double percent = pending.percent();
+            String share = percent == Math.rint(percent) ? Long.toString((long) percent) : String.format(Locale.ROOT, "%.1f", percent);
+            String terms = percent > 0 ? " It pays " + share + "% of profit"
+                    + (pending.dailyCap() > 0 ? ", at most " + money(pending.dailyCap()) + " a day." : ".") : "";
+            c.note("The payroll rule for " + pending.name() + " waits for your approval. " + payment + terms + " Approving lets the rule pay "
                     + "on its own from now on, so check it on the full GoNuts screen if unsure.", WARN);
-            String shown = pending.ruleId() + "|" + pending.name() + "|" + pending.amount();
+            String shown = pending.ruleId() + "|" + pending.name() + "|" + pending.amount() + "|" + pending.percent() + "|" + pending.dailyCap();
             if (!shown.equals(pendingShown)) {
                 pendingShown = shown;
                 pendingShownAt = System.currentTimeMillis();
@@ -634,7 +650,7 @@ public final class DonutScreen extends Screen {
             c.button("confirmPay", "Approve rule " + pending.name(), confirming ? "Click Confirm within 8 seconds to approve it"
                     : "Nothing is paid until you approve", confirming ? "Confirm" : "Approve", () -> goNutsApprove(pending));
         }
-        long paid = GoNutsApi.paidToday(), cap = Math.round(GoNutsApi.get("pay.daily_cap"));
+        long paid = GoNutsApi.paidToday(), cap = GoNutsApi.dailyPayCap();
         // A cap of 0 means no limit at all.
         c.info("Paid out, last 24 h", money(paid) + (cap > 0 ? " of " + money(cap) : "  ·  no limit"),
                 cap <= 0 || paid >= cap ? WARN : TEXT);
@@ -658,6 +674,8 @@ public final class DonutScreen extends Screen {
         c.info("Updates", updates, updateState.equals("FAILED") ? WARN
                 : updateState.equals("NEWER") || updateState.equals("READY") ? accent() : LABEL);
         if (updateState.equals("FAILED") && update.detail() != null && !update.detail().isBlank()) c.note(update.detail(), MUTED);
+        String hook = GoNutsApi.webhookResult();
+        if (!hook.isBlank()) c.info("Status webhook", hook, hook.startsWith("Posted") ? LABEL : WARN);
         c.button("full", "Full GoNuts", "Markets, charts, payroll rules, presets and the web panel", "Open", () -> {
             if (GoNutsApi.session() == null) reply("GoNuts has not started yet.", true);
             else GoNutsApi.openFullScreen();
@@ -687,7 +705,8 @@ public final class DonutScreen extends Screen {
 
     private void goNutsStop() {
         String answer = GoNutsApi.stop();
-        reply(friendly(answer), refused(answer));
+        // Stop can leave the session paused rather than stopped, to keep an open position; that is worth noticing.
+        reply(friendly(answer), refused(answer) || answer.startsWith("Paused"));
     }
 
     /** GoNuts's answer in plain words: no "OK:" prefix, and states such as BID_DESK written out. */
@@ -706,6 +725,7 @@ public final class DonutScreen extends Screen {
         // The same rule and name, and the same amount whenever one was shown.
         if (now == null || now.ruleId() != shown.ruleId() || !now.name().equals(shown.name())
                 || shown.amount() >= 0 && now.amount() != shown.amount()
+                || now.percent() != shown.percent() || now.dailyCap() != shown.dailyCap()
                 || System.currentTimeMillis() - pendingShownAt < SETTLE_MILLIS) {
             armed.remove("confirmPay");
             reply("The payment waiting for approval changed; look again before approving.", true);
@@ -821,6 +841,15 @@ public final class DonutScreen extends Screen {
     private static void goNutsFailed(Throwable e) {
         if (!goNutsLogged) LOG.error("A GoNuts page failed", e);
         goNutsLogged = true;
+    }
+
+    /** Tells GoNuts whether this menu is open, so it holds its steps rather than covering the menu. */
+    private static void goNutsPanel(boolean open) {
+        try {
+            GoNutsApi.noteForeignPanel(open);
+        } catch (RuntimeException | LinkageError e) {
+            goNutsFailed(e);
+        }
     }
 
     /** GoNuts's risky features look through its files, so they are asked about once a second rather than every frame. */
@@ -1171,6 +1200,8 @@ public final class DonutScreen extends Screen {
         wh = Math.min(layoutH - 24, MAX_H);
         wx = (layoutW - ww) / 2;
         wy = (layoutH - wh) / 2;
+        // GoNuts finishes the step in hand, then waits instead of opening the auction house over this menu.
+        goNutsPanel(true);
         // A resize in the middle of a drag sets what the slider shows, rather than leaving it to a later release.
         // The key that opened the menu is still down; its repeats must not close the menu again.
         if (activationKey == null && openKeyHeld()) activationKey = InputConstants.getKey(keyMapping(OPEN_KEY).saveString());
@@ -2204,6 +2235,7 @@ public final class DonutScreen extends Screen {
 
     @Override
     public void removed() {
+        goNutsPanel(false);
         remember();
         commitText();
         commitDrafts();
