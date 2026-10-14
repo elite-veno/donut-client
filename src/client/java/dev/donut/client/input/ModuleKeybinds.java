@@ -11,7 +11,7 @@ import java.util.Set;
 
 /** The click GUI edits the same mappings exposed in Minecraft's Controls screen. */
 public final class ModuleKeybinds {
-    public static final int COUNT = 10;
+    public static final int COUNT = 11;
     private static final KeyMapping[] MODULES = new KeyMapping[COUNT];
     private static final boolean[] pressed = new boolean[COUNT];
     private static final Set<InputConstants.Key> heldInputs = new HashSet<>();
@@ -20,7 +20,7 @@ public final class ModuleKeybinds {
     private ModuleKeybinds() { }
 
     /**
-     * In module order: storage, spawner, freecam, debris, activity, Auto RTP, X-ray, Fullbright, entities, tunnels.
+     * In module order: storage, spawner, freecam, debris, activity, Auto RTP, X-ray, Fullbright, entities, tunnels, bases.
      * Modules without a mapping stay unbound.
      */
     public static void initialize(KeyMapping... modules) {

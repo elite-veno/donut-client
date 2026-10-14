@@ -78,7 +78,8 @@ public final class DonutClient implements ClientModInitializer {
         KeyMapping fullbrightKey = bind("toggle_fullbright", InputConstants.UNKNOWN.getValue(), category);
         KeyMapping entities = bind("toggle_entities", InputConstants.UNKNOWN.getValue(), category);
         KeyMapping tunnels = bind("toggle_tunnels", InputConstants.UNKNOWN.getValue(), category);
-        ModuleKeybinds.initialize(storage, spawner, camera, debris, activity, autoRtp, xrayKey, fullbrightKey, entities, tunnels);
+        KeyMapping bases = bind("toggle_bases", InputConstants.UNKNOWN.getValue(), category);
+        ModuleKeybinds.initialize(storage, spawner, camera, debris, activity, autoRtp, xrayKey, fullbrightKey, entities, tunnels, bases);
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             boolean inputBlocked = ModuleKeybinds.inputBlocked(client);
@@ -114,6 +115,9 @@ public final class DonutClient implements ClientModInitializer {
             }
             if (ModuleKeybinds.consumePress(client, 9)) {
                 if (!inputBlocked && client.gui.screen() == null && client.player != null) { config.tunnels.enabled = !config.tunnels.enabled; save(); }
+            }
+            if (ModuleKeybinds.consumePress(client, 10)) {
+                if (!inputBlocked && client.gui.screen() == null && client.player != null) { config.bases.enabled = !config.bases.enabled; save(); }
             }
             xray.tick(client);
             fullbright.tick();

@@ -319,6 +319,34 @@ public final class DonutClientGameTest implements FabricClientGameTest {
         server.runCommand("fill 29 64 33 37 65 35 minecraft:air");
         server.runCommand("kill @e[type=minecraft:chest_minecart]");
 
+        // BaseFinder: a shulker box and two signs mark a base chunk; what a village places beside it does not, and
+        // a shulker box sealed in stone, the way anti-xray buries its fakes, counts for nothing.
+        server.runCommand("fill 40 64 49 61 64 51 minecraft:smooth_stone");
+        server.runCommand("setblock 41 65 50 minecraft:lime_shulker_box");
+        server.runCommand("setblock 43 65 50 minecraft:oak_sign");
+        server.runCommand("setblock 44 65 50 minecraft:oak_sign");
+        server.runCommand("setblock 57 65 50 minecraft:lectern");
+        server.runCommand("setblock 58 65 50 minecraft:white_bed");
+        server.runCommand("setblock 59 65 50 minecraft:barrel");
+        server.runCommand("setblock 60 65 50 minecraft:bell");
+        server.runCommand("fill 72 63 49 74 65 51 minecraft:stone");
+        server.runCommand("setblock 73 64 50 minecraft:red_shulker_box");
+        context.runOnClient(client -> config.bases.enabled = true);
+        ChunkPos base = new ChunkPos(2, 3), village = new ChunkPos(3, 3), sealed = new ChunkPos(4, 3);
+        context.waitFor(client -> scanner.bases().stream().anyMatch(area -> area.chunk().equals(base)), 100);
+        context.waitTicks(20);
+        context.runOnClient(client -> {
+            var area = scanner.bases().stream().filter(found -> found.chunk().equals(base)).findFirst().orElseThrow();
+            require(area.score() == 10 && area.reasons().equals("shulker box, 2 signs"), "Unexpected base chunk " + area);
+            require(scanner.bases().stream().noneMatch(found -> found.chunk().equals(village)), "Village blocks marked a base: " + scanner.bases());
+            require(scanner.bases().stream().noneMatch(found -> found.chunk().equals(sealed)), "A buried shulker box counted: " + scanner.bases());
+            var line = scanner.summaries().stream().filter(summary -> summary.name().equals("Bases")).findFirst().orElseThrow();
+            require(line.count() == scanner.bases().size(), "Bases HUD line: " + line);
+            config.bases.enabled = false;
+        });
+        server.runCommand("fill 40 64 49 61 65 51 minecraft:air");
+        server.runCommand("fill 72 63 49 74 65 51 minecraft:air");
+
         // Spawners as they arrive with their chunk, the way a real server sends them: one whose timer was reset by
         // someone, and one the player lands next to, whose timer our own presence may start running.
         server.runCommand("forceload add 1195 1195 1215 1215");

@@ -59,6 +59,8 @@ public final class FinderSettings {
     public boolean items = false;
     /** ActivityFinder only: the amethyst growth a chunk needs before it is highlighted. */
     public double minActivity = 0.5;
+    /** BaseFinder only: the score a chunk needs before it is marked; one strong find such as a shulker box is 6. */
+    public double minBaseScore = 6;
     /** ActivityFinder only: draw squares on the surface with a guide down to the geode. */
     public boolean surfaceMarker = true;
     /** ActivityFinder only: scan every loaded chunk without distance fade, ignoring the range. */
@@ -95,6 +97,7 @@ public final class FinderSettings {
         lineWidth = clamp(lineWidth, 0.5, 5, defaults.lineWidth);
         minActivity = clamp(minActivity, 0, 1, defaults.minActivity);
         minLength = clamp(minLength, 4, 32, defaults.minLength);
+        minBaseScore = clamp(minBaseScore, 2, 30, defaults.minBaseScore);
         color &= 0xFFFFFF;
         chestColor &= 0xFFFFFF;
         shulkerColor &= 0xFFFFFF;

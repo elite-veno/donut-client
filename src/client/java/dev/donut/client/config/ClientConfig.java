@@ -9,6 +9,7 @@ public final class ClientConfig {
     public FinderSettings activity = activityDefaults();
     public FinderSettings tunnels = tunnelDefaults();
     public FinderSettings entities = entityDefaults();
+    public FinderSettings bases = baseDefaults();
     public XraySettings xray = new XraySettings();
     public FullbrightSettings fullbright = new FullbrightSettings();
     public FreecamSettings freecam = new FreecamSettings();
@@ -55,6 +56,16 @@ public final class ClientConfig {
         return settings;
     }
 
+    private static FinderSettings baseDefaults() {
+        FinderSettings settings = new FinderSettings();
+        settings.color = 0xFF7849;
+        settings.perTypeColors = false;
+        settings.fillOpacity = 0.06;
+        settings.range = 128;
+        settings.allLoadedChunks = true;
+        return settings;
+    }
+
     private static FinderSettings entityDefaults() {
         FinderSettings settings = new FinderSettings();
         settings.color = 0xFF5A5A;
@@ -85,6 +96,7 @@ public final class ClientConfig {
         if (activity == null) activity = activityDefaults();
         if (tunnels == null) tunnels = tunnelDefaults();
         if (entities == null) entities = entityDefaults();
+        if (bases == null) bases = baseDefaults();
         if (xray == null) xray = new XraySettings();
         if (fullbright == null) fullbright = new FullbrightSettings();
         if (freecam == null) freecam = new FreecamSettings();
@@ -97,6 +109,7 @@ public final class ClientConfig {
         activity.sanitize(activityDefaults());
         tunnels.sanitize(tunnelDefaults());
         entities.sanitize(entityDefaults());
+        bases.sanitize(baseDefaults());
         xray.sanitize();
         fullbright.sanitize();
         freecam.sanitize();

@@ -17,6 +17,7 @@ import dev.donut.client.config.ClientConfig;
 import dev.donut.client.config.FinderSettings;
 import dev.donut.client.config.RenderMode;
 import dev.donut.client.finder.ActivityArea;
+import dev.donut.client.finder.BaseArea;
 import dev.donut.client.finder.EntityKind;
 import dev.donut.client.finder.FinderScanner;
 import dev.donut.client.finder.FoundBlock;
@@ -142,7 +143,7 @@ public final class HighlightRenderer implements AutoCloseable {
 
     private boolean anyEnabled() {
         return config.storage.enabled || config.spawner.enabled || config.debris.enabled || config.activity.enabled
-                || config.tunnels.enabled || config.entities.enabled;
+                || config.tunnels.enabled || config.entities.enabled || config.bases.enabled;
     }
 
     private void extract(LevelExtractionContext context) {
@@ -190,6 +191,7 @@ public final class HighlightRenderer implements AutoCloseable {
         }
         if (config.tunnels.enabled) addTunnels(out);
         if (config.activity.enabled) addActivity(out);
+        if (config.bases.enabled) addBases(out);
         if (config.debris.enabled && config.debris.searchAreas) addDebrisAreas(out);
         if (config.entities.enabled || config.storage.enabled && config.storage.minecarts) addEntities(out);
         state.setData(frame, new Frame(List.copyOf(out.boxes), List.copyOf(out.tracers(MAX_TRACERS))));
@@ -278,6 +280,23 @@ public final class HighlightRenderer implements AutoCloseable {
                 out.box(area.bounds(), fill, outline, width, settings.throughWalls);
                 out.extras(settings, area.bounds(), settings.color, distance, visible, label);
             }
+        }
+    }
+
+    /** A chunk-wide box around the evidence, labelled with its score and strongest reasons. */
+    private void addBases(Extraction out) {
+        FinderSettings settings = config.bases;
+        double range = scanner.baseRange();
+        boolean fades = settings.distanceFade && !settings.allLoadedChunks;
+        for (BaseArea area : scanner.bases()) {
+            double distance = area.horizontalDistance(out.camera);
+            if (distance > range) continue;
+            double visible = fades ? fade(distance, range) : 1.0;
+            int fill = settings.mode != RenderMode.OUTLINE ? argb(settings.color, settings.fillOpacity * visible) : 0;
+            int outline = settings.mode != RenderMode.FILL ? argb(settings.color, settings.outlineOpacity * visible) : 0;
+            out.box(area.bounds(), fill, outline, (float) Math.clamp(settings.lineWidth, 0.5, 8.0), settings.throughWalls);
+            String label = out.labelling ? "Base? " + area.score() + ": " + area.reasons() : null;
+            out.extras(settings, area.bounds(), settings.color, distance, visible, label);
         }
     }
 

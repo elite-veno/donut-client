@@ -49,6 +49,9 @@ public final class FinderScanner implements ChunkEvents.Listener {
     private final ClientConfig config;
     private final DebrisIndex debris = new DebrisIndex();
     private final ActivityIndex activity = new ActivityIndex();
+    private final BaseIndex baseIndex = new BaseIndex();
+    private List<BaseArea> bases = List.of();
+    private double baseRange;
     private final TunnelIndex tunnelIndex = new TunnelIndex();
     /**
      * Whether each spawner looked activated the first time it was seen, before our own presence could run its timer.
@@ -86,6 +89,10 @@ public final class FinderScanner implements ChunkEvents.Listener {
     /** The horizontal reach ActivityFinder used for its last scan, in blocks. */
     public double activityRange() { return activityRange; }
     public ActivityStats activityStats() { return activityStats; }
+    /** Chunks that look like someone's base, nearest first. */
+    public List<BaseArea> bases() { return bases; }
+    /** The horizontal reach BaseFinder used for its last scan, in blocks. */
+    public double baseRange() { return baseRange; }
     public DebrisStats debrisStats() { return config.debris.enabled ? debris.stats() : DebrisStats.EMPTY; }
     /** Sections whose palette lists debris that anti-xray hid from their blocks, nearest first. */
     public List<SectionPos> debrisAreas() { return config.debris.enabled ? debris.areas() : List.of(); }
@@ -100,6 +107,8 @@ public final class FinderScanner implements ChunkEvents.Listener {
         tunnels = List.of();
         summaries = List.of();
         activityStats = ActivityStats.EMPTY;
+        bases = List.of();
+        baseIndex.clear();
         lastLevel = null;
         ticks = 0;
         debris.clear();
@@ -117,7 +126,7 @@ public final class FinderScanner implements ChunkEvents.Listener {
 
     private boolean anyEnabled() {
         return config.storage.enabled || config.spawner.enabled || config.debris.enabled || config.activity.enabled
-                || config.tunnels.enabled || config.entities.enabled;
+                || config.tunnels.enabled || config.entities.enabled || config.bases.enabled;
     }
 
     public void tick(Minecraft client) {
@@ -141,6 +150,9 @@ public final class FinderScanner implements ChunkEvents.Listener {
         activityRange = config.activity.allLoadedChunks ? loadedRange(client) : config.activity.range;
         if (config.activity.enabled) activity.tick(client.level, center, activityRange);
         else activity.clear();
+        baseRange = config.bases.allLoadedChunks ? loadedRange(client) : config.bases.range;
+        if (config.bases.enabled) baseIndex.tick(client.level, center, baseRange);
+        else baseIndex.clear();
         FinderSettings t = config.tunnels;
         tunnelIndex.configure((int) Math.round(t.minLength), t.tunnels, t.holes, t.staircases);
         // The index scans for every kind and length; turning one off only filters what it found.
@@ -183,6 +195,11 @@ public final class FinderScanner implements ChunkEvents.Listener {
         if (t.enabled) tunnelIndex.collect(origin, t.range, passages);
         passages.sort(Comparator.comparingDouble(segment -> TunnelIndex.distanceSqr(segment, origin)));
         tunnels = List.copyOf(passages.subList(0, Math.min(passages.size(), MAX_TARGETS)));
+
+        List<BaseArea> suspicious = new ArrayList<>();
+        if (config.bases.enabled) baseIndex.collect(client.level, origin, baseRange, config.bases.minBaseScore, suspicious);
+        suspicious.sort(Comparator.comparingDouble(area -> area.horizontalDistance(origin)));
+        bases = List.copyOf(suspicious);
         summaries = summarize(client, origin);
     }
 
@@ -329,6 +346,11 @@ public final class FinderScanner implements ChunkEvents.Listener {
                     : stats.scannedChunks() > 0 ? "no geodes nearby" : "";
             lines.add(new FinderSummary("Activity", areas.size(), nearest, config.activity.color, note, !stats.overworld()));
         }
+        if (config.bases.enabled) {
+            Vec3 nearest = bases.isEmpty() ? null : bases.getFirst().center();
+            int best = BaseIndex.best(bases);
+            lines.add(new FinderSummary("Bases", bases.size(), nearest, config.bases.color, best == 0 ? "" : "best " + best));
+        }
         if (config.entities.enabled) {
             int count = 0;
             Entity nearest = null, nearestPlayer = null;
@@ -378,6 +400,9 @@ public final class FinderScanner implements ChunkEvents.Listener {
         if (config.debris.enabled && debrisChanged) debris.markDirty(pos);
         if (config.debris.enabled && previous.is(Blocks.ANCIENT_DEBRIS) && !current.is(Blocks.ANCIENT_DEBRIS)) debris.debrisRemoved(pos);
         if (config.tunnels.enabled && TunnelIndex.matters(previous, current)) tunnelIndex.markDirty(pos);
+        if (config.bases.enabled && (BaseEvidence.ANY.test(previous) || BaseEvidence.ANY.test(current))) {
+            baseIndex.markDirty(SectionPos.blockToSectionCoord(pos.getX()), SectionPos.blockToSectionCoord(pos.getZ()));
+        }
         if (config.activity.enabled && (amethyst(previous) || amethyst(current))) {
             // A bud on the chunk's edge can belong to budding amethyst next door.
             int chunkX = SectionPos.blockToSectionCoord(pos.getX()), chunkZ = SectionPos.blockToSectionCoord(pos.getZ());
@@ -431,6 +456,7 @@ public final class FinderScanner implements ChunkEvents.Listener {
             debris.markDirty(new ChunkPos(pos.x(), pos.z() + 1));
         }
         if (config.tunnels.enabled) tunnelIndex.markDirty(pos);
+        if (config.bases.enabled) baseIndex.markDirty(pos.x(), pos.z());
         if (config.activity.enabled) {
             // Faces on the edges next to this chunk read as missing until it loads.
             activity.markDirty(pos.x(), pos.z());

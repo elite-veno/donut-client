@@ -29,6 +29,8 @@ The live scan in its settings shows the chunks scanned, buried and exposed debri
 
 **EntityFinder** outlines other players (labeled with their name), and optionally hostile mobs, other mobs and dropped items, through walls with tracers.
 
+**BaseFinder** marks chunks that look like someone's base. It scores each loaded chunk by what worldgen never places: shulker boxes, beacons, enchanting tables, conduits, netherite and diamond blocks, ender chests, lit nether portals, signs, redstone parts such as observers and comparators, concrete, a room of ten or more chests and barrels, and item frames and armor stands. Each kind has a weight and counts up to a cap, and the list was checked against every vanilla structure, so what villages, ancient cities, trial chambers and mansions place stays below the default score of 6 (one shulker box or beacon reaches it alone). Only blocks open to air count, because anti-xray's fake chests are always buried. A marked chunk gets a box around its evidence and a label such as "Base? 10: shulker box, 2 signs".
+
 **Xray** hides stone, deepslate, dirt, sand, gravel, Nether terrain, End stone and water (each group can be switched, lava too, and extra block ids added), so ores, chests, spawners, caves' contents and anything built stands out. Sideways deepslate stays visible because only players place it that way. Only exposed ores hides ores that touch no air, which removes anti-xray fake ores. X-ray brightens the world while it is on. It changes how chunks are drawn, not the blocks themselves, and works with Minecraft's own renderer (with Fabric API), not with Sodium.
 
 **Fullbright** lights every block fully without changing your brightness option, and by default removes distance, water, lava, blindness and darkness fog.

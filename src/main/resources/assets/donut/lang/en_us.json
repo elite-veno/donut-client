@@ -10,5 +10,6 @@
   "key.donut.toggle_xray": "Toggle Xray",
   "key.donut.toggle_fullbright": "Toggle Fullbright",
   "key.donut.toggle_entities": "Toggle EntityFinder",
-  "key.donut.toggle_tunnels": "Toggle TunnelFinder"
+  "key.donut.toggle_tunnels": "Toggle TunnelFinder",
+  "key.donut.toggle_bases": "Toggle BaseFinder"
 }
