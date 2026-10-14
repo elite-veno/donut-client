@@ -17,6 +17,7 @@ import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.input.KeyEvent;
 import org.lwjgl.glfw.GLFW;
 
@@ -219,37 +220,27 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     context.waitTicks(3);
                     context.runOnClient(client -> require(!GoNutsApi.hudDrawn().isEmpty(), "GoNuts's HUD preview drew nothing"));
                     screenshot(context, "donut-arraylist-01b-gonuts-preview");
-                    // The same at the scale a 2560x1440 screen gets from the automatic GUI scale: 6, so 426x240, as a
-                    // 1280x720 window at scale 3.
-                    context.getInput().resizeWindow(1280, 720);
+                    // The same where the user plays: a 2560x1440 screen at the automatic GUI scale, 6, leaves 426x240, and
+                    // GoNuts draws its HUD scaled down to fit beside Donut's.
+                    context.getInput().resizeWindow(2560, 1440);
                     context.runOnClient(client -> {
                         client.options.guiScale().set(0);
                         client.resizeGui();
                         GoNutsApi.hudPreview(5_000);
                     });
                     context.waitTicks(3);
-                    context.takeScreenshot(TestScreenshotOptions.of("donut-arraylist-01c-gonuts-preview-small").withSize(1280, 720));
+                    context.runOnClient(client -> require(client.getWindow().getGuiScale() == 6,
+                            "A 2560x1440 window got GUI scale " + client.getWindow().getGuiScale() + ", not 6"));
+                    context.runOnClient(ModuleKeybindGameTest::requireHudApart);
+                    context.takeScreenshot(TestScreenshotOptions.of("donut-arraylist-01c-gonuts-preview-1440p").withSize(2560, 1440));
                     context.getInput().resizeWindow(1280, 800);
                     context.runOnClient(client -> {
                         client.options.guiScale().set(2);
                         client.resizeGui();
+                        GoNutsApi.hudPreview(5_000);
                     });
                     context.waitTicks(3);
-                    context.runOnClient(client -> {
-                        int width = client.getWindow().getGuiScaledWidth();
-                        List<int[]> reserved = GoNutsApi.hudReserved();
-                        require(reserved.stream().anyMatch(r -> r[0] + r[2] == width - 2 && r[1] == 2 && r[3] > 0 && r[3] % 13 == 0),
-                                "The module list's area is not reserved from GoNuts's HUD");
-                        require(reserved.stream().anyMatch(r -> r[0] == 2 && r[1] == 2 && r[3] > 0 && r[3] % 13 == 0),
-                                "The info panel's area is not reserved from GoNuts's HUD");
-                        for (int[] drawn : GoNutsApi.hudDrawn()) {
-                            for (int[] r : reserved) {
-                                boolean apart = drawn[0] >= r[0] + r[2] || r[0] >= drawn[0] + drawn[2]
-                                        || drawn[1] >= r[1] + r[3] || r[1] >= drawn[1] + drawn[3];
-                                require(apart, "GoNuts drew " + Arrays.toString(drawn) + " over Donut's HUD at " + Arrays.toString(r));
-                            }
-                        }
-                    });
+                    context.runOnClient(ModuleKeybindGameTest::requireHudApart);
                     context.getInput().pressKey(GLFW.GLFW_KEY_F1);
                     context.runOnClient(client -> require(client.gui.hud.isHidden(), "F1 did not hide the HUD"));
                     context.runOnClient(client -> require(GoNutsApi.hudReserved().isEmpty(),
@@ -349,6 +340,24 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                 "The selected key was not assigned to module " + module));
     }
 
+
+    /** GoNuts's HUD draws, Donut's module list and info panel are reserved from it, and it keeps off them. */
+    private static void requireHudApart(Minecraft client) {
+        int width = client.getWindow().getGuiScaledWidth();
+        List<int[]> reserved = GoNutsApi.hudReserved();
+        require(!GoNutsApi.hudDrawn().isEmpty(), "GoNuts's HUD preview drew nothing at GUI scale " + client.getWindow().getGuiScale());
+        require(reserved.stream().anyMatch(r -> r[0] + r[2] == width - 2 && r[1] == 2 && r[3] > 0 && r[3] % 13 == 0),
+                "The module list's area is not reserved from GoNuts's HUD");
+        require(reserved.stream().anyMatch(r -> r[0] == 2 && r[1] == 2 && r[3] > 0 && r[3] % 13 == 0),
+                "The info panel's area is not reserved from GoNuts's HUD");
+        for (int[] drawn : GoNutsApi.hudDrawn()) {
+            for (int[] r : reserved) {
+                boolean apart = drawn[0] >= r[0] + r[2] || r[0] >= drawn[0] + drawn[2]
+                        || drawn[1] >= r[1] + r[3] || r[1] >= drawn[1] + drawn[3];
+                require(apart, "GoNuts drew " + Arrays.toString(drawn) + " over Donut's HUD at " + Arrays.toString(r));
+            }
+        }
+    }
 
     private static void screenshot(ClientGameTestContext context, String name) {
         context.takeScreenshot(TestScreenshotOptions.of(name).withSize(1280, 800));
