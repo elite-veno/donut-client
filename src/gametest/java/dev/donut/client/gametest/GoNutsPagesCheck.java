@@ -38,6 +38,25 @@ final class GoNutsPagesCheck {
         });
         screenshot.accept("donut-02-clickgui-gonuts");
 
+        // The web panel takes a PIN of 4 to 8 digits, and one click on its switch does not turn it on. Nothing here turns
+        // it on: a panel in the test client would take the port of the one in the player's own game.
+        context.runOnClient(client -> require(GoNutsApi.webPanel() != null, "GoNuts has no web panel"));
+        boolean pinBefore = context.computeOnClient(client -> GoNutsApi.webPanel().pinSet());
+        GuiClicks.click(context, "web.pin");
+        context.runOnClient(client -> {
+            DonutScreen screen = screen(client);
+            type(screen, "12");
+            press(screen, GLFW.GLFW_KEY_ENTER, 0);
+            require(GoNutsApi.webPanel().pinSet() == pinBefore, "A two-digit PIN was taken");
+        });
+        GuiClicks.settle(context);
+        screenshot.accept("donut-02-clickgui-gonuts-webpanel");
+        context.runOnClient(client -> press(screen(client), GLFW.GLFW_KEY_ESCAPE, 0));
+        if (!context.computeOnClient(client -> GoNutsApi.webPanel().on())) {
+            GuiClicks.click(context, "web.on");
+            context.runOnClient(client -> require(!GoNutsApi.webPanel().on(), "One click switched the web panel on"));
+        }
+
         GuiClicks.click(context, "nav.gonuts-settings");
         GuiClicks.settle(context);
         screenshot.accept("donut-02-clickgui-gonuts-settings");

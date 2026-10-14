@@ -677,6 +677,8 @@ public final class DonutScreen extends Screen {
         if (risky.isEmpty()) c.note("Nothing that spends money or acts for this account is on.", MUTED);
         else c.note("On, and able to spend money or act for this account: " + String.join(", ", risky) + ".", WARN);
 
+        webPanel(c);
+
         c.section("GoNuts");
         var update = GoNutsApi.updateStatus();
         String updateState = update.state().name();
@@ -698,6 +700,70 @@ public final class DonutScreen extends Screen {
         c.button("full", "Full GoNuts", "Markets, charts, payroll rules, presets and the web panel", "Open", () -> {
             if (GoNutsApi.session() == null) reply("GoNuts has not started yet.", true);
             else GoNutsApi.openFullScreen();
+        });
+    }
+
+    /**
+     * GoNuts's web panel: a page in the browser, behind a PIN, that starts and stops trading and shows the profit. The PIN
+     * saves on a second Enter and switches the panel on; switching it on, or letting phones in, takes a second click,
+     * and switching either off takes one.
+     */
+    private void webPanel(Column c) {
+        c.section("Web panel");
+        var panel = GoNutsApi.webPanel();
+        if (panel == null) {
+            c.note("GoNuts has not started its web panel yet.", MUTED);
+            return;
+        }
+        c.info("State", panel.state(), panel.running() ? GOOD : panel.on() ? WARN : LABEL);
+        List<String> addresses = panel.addresses();
+        for (int i = 0; i < addresses.size(); i++) {
+            String address = addresses.get(i);
+            c.button("web.open." + i, address, i == 0 ? "This computer" : "Phones and computers on your Wi-Fi", "Open",
+                    () -> net.minecraft.util.Util.getPlatform().openUri(address));
+        }
+        if (panel.lockout() != null && !panel.lockout().isBlank()) c.note(panel.lockout(), WARN);
+        c.hintNext("4 to 8 digits; 6 or more to let phones in");
+        c.confirmNext(pin -> pin.strip().matches("\\d{4,8}") ? new Confirm(true, "set this PIN and switch the web panel on")
+                : new Confirm(false, "A PIN is 4 to 8 digits"));
+        c.field("web.pin", "PIN", panel.pinSet() ? "Set; type a new one to change it" : "Set one to switch the web panel on",
+                () -> "", pin -> {
+                    if (pin.isBlank()) return;
+                    String problem = GoNutsApi.setWebPanelPin(pin.strip());
+                    reply(problem == null ? "PIN set; the web panel is on." : "PIN not set: " + problem + ".", problem != null);
+                }, true, 8, 110);
+        webSwitch(c, "web.on", "Web panel", panel.pinSet() ? "The page at the addresses above, behind the PIN" : "Set a PIN first",
+                panel.on(), () -> {
+                    if (!panel.on() && !panel.pinSet()) return "set a PIN first";
+                    GoNutsApi.setWebPanelOn(!panel.on());
+                    return null;
+                });
+        webSwitch(c, "web.phones", "Phones on your Wi-Fi", "Other devices at home may open it too; needs a PIN of 6 or more digits",
+                panel.phones(), () -> GoNutsApi.setWebPanelPhones(!panel.phones()));
+        c.note("The page starts and stops trading and shows profit, settings, presets and item lists. Settings that move money "
+                + "stay in the game.", DIM);
+    }
+
+    /**
+     * A web panel switch: turning it on takes a second click within eight seconds, turning it off one. {@code flip}
+     * says why it could not, or returns null.
+     */
+    private void webSwitch(Column c, String key, String label, String description, boolean on, Supplier<String> flip) {
+        String id = key + "=on";
+        boolean confirming = !on && isArmed(id);
+        if (!on) c.warnNext();
+        c.toggle(key, label, confirming ? "Click again within 8 seconds to turn it on" : description, () -> on, () -> {
+            if (!on) {
+                long now = System.currentTimeMillis();
+                Long until = armed.remove(id);
+                if (until == null || now >= until) {
+                    armed.put(id, now + ARM_MILLIS);
+                    reply(label + ": click again within 8 seconds to turn it on.", true, ARM_MILLIS);
+                    return;
+                }
+            }
+            String problem = flip.get();
+            reply(problem == null ? label + (on ? " off." : " on.") : label + ": " + problem + ".", problem != null);
         });
     }
 
@@ -2624,9 +2690,9 @@ public final class DonutScreen extends Screen {
             round(graphics, bx, by, boxW, 20, 6, FIELD);
             outline(graphics, bx, by, boxW, 20, 6, focused ? accent() : over ? EDGE_HOVER : EDGE);
             String value = focused ? textBuffer : getter.get();
-            // Secrets show only their last four characters, also while they are edited.
-            if (secret) value = value.isEmpty() ? "" : "*".repeat(Math.min(12, Math.max(0, value.length() - 4)))
-                    + value.substring(Math.max(0, value.length() - 4));
+            // Secrets show only their last four characters, also while they are edited; a short one, such as a PIN, none.
+            if (secret) value = value.length() <= 8 ? "*".repeat(value.length())
+                    : "*".repeat(Math.min(12, value.length() - 4)) + value.substring(value.length() - 4);
             if (focused) {
                 // The end stays in view while typing; selected text is highlighted, and a cursor blinks after it otherwise.
                 String shown = tail(value, Size.BASE, boxW - 20);
