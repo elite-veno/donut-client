@@ -129,6 +129,26 @@ class ConfigStoreTest {
     }
 
     @Test
+    void seedEstimatesSavedOnByAnOlderVersionStartOff() throws IOException {
+        Path old = directory.resolve("old.json"), current = directory.resolve("current.json");
+        Files.writeString(old, """
+                {"schemaVersion":1,"debris":{"seedEstimates":true,"enabled":true}}
+                """);
+        Files.writeString(current, """
+                {"schemaVersion":2,"debris":{"seedEstimates":true}}
+                """);
+
+        ClientConfig migrated = new ConfigStore(old).load();
+        ClientConfig kept = new ConfigStore(current).load();
+
+        assertFalse(migrated.debris.seedEstimates, "estimates proved wrong on DonutSMP, so older files start without them");
+        assertFalse(migrated.debris.enabled, "DebrisFinder is turned off with them");
+        assertEquals(ClientConfig.SCHEMA_VERSION, migrated.schemaVersion);
+        assertTrue(kept.debris.seedEstimates, "a choice made since then stays");
+        assertFalse(new ClientConfig().debris.seedEstimates);
+    }
+
+    @Test
     void oneBadSectionResetsOnlyThatModule() throws IOException {
         Path path = directory.resolve("donut-client.json");
         Files.writeString(path, """

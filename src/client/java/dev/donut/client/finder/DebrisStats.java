@@ -47,4 +47,11 @@ public record DebrisStats(boolean nether, int scannedChunks, int buried, int exp
 
     /** The seed is this Nether's, yet debris lies elsewhere: the server seeds its ore placement separately. */
     public boolean oresRandomized() { return bedrockReady() && !bedrockMismatch() && debrisMismatch(); }
+
+    /**
+     * Estimate spots the server revealed came up empty too often to keep drawing them: at least three misses, and
+     * fewer than half as many hits. Worldgen fills a spot it tried unless air was next to it, so a seed that places this
+     * server's debris rarely misses.
+     */
+    public static boolean seedSpotsEmpty(int hits, int misses) { return misses >= 3 && hits * 2 < misses; }
 }

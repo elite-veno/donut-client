@@ -1,7 +1,8 @@
 package dev.donut.client.config;
 
 public final class ClientConfig {
-    public int schemaVersion = 1;
+    public static final int SCHEMA_VERSION = 2;
+    public int schemaVersion = SCHEMA_VERSION;
     public FinderSettings storage = new FinderSettings();
     public FinderSettings spawner = spawnerDefaults();
     public FinderSettings debris = debrisDefaults();
@@ -64,6 +65,17 @@ public final class ClientConfig {
         settings.range = 128;
         settings.tracers = true;
         return settings;
+    }
+
+    /** Brings a file saved by an older version up to date. */
+    public void migrate(int savedVersion) {
+        // Version 2: seed estimates turned out wrong on DonutSMP, whose debris has its own seed, and there is no other way
+        // to find debris the server hides, so DebrisFinder is turned off; it can still be switched on for exposed debris.
+        if (savedVersion < 2) {
+            debris.enabled = false;
+            debris.seedEstimates = false;
+        }
+        schemaVersion = SCHEMA_VERSION;
     }
 
     public void sanitize() {

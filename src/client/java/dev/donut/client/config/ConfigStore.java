@@ -71,6 +71,7 @@ public final class ConfigStore {
             }
         }
         ClientConfig result = GSON.fromJson(merged, ClientConfig.class);
+        result.migrate(savedVersion(file));
         result.sanitize();
         if (!failed.isEmpty()) {
             boolean kept = backUp();
@@ -78,6 +79,15 @@ public final class ConfigStore {
                     + (kept ? ". The old file was kept beside it." : ".");
         }
         return result;
+    }
+
+    /** The version the file was saved with; files from before versions were counted are version 1. */
+    private static int savedVersion(JsonObject file) {
+        try {
+            return file.has("schemaVersion") ? file.get("schemaVersion").getAsInt() : 1;
+        } catch (RuntimeException e) {
+            return 1;
+        }
     }
 
     /** The file laid over the defaults, object by object; anything else in the file replaces the default. */

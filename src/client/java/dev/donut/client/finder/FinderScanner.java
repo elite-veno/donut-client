@@ -131,6 +131,11 @@ public final class FinderScanner implements ChunkEvents.Listener {
         Vec3 origin = FreecamController.enabled() ? FreecamController.getInstance().position() : client.player.position();
         ChunkPos center = ChunkPos.containing(BlockPos.containing(origin));
         // The chunk indexes spread their block scans over every tick, so they run before the cadence check.
+        // Hits and misses belong to the seed they were counted for.
+        if (!config.debris.seed.equals(config.debris.seedCountsFor)) {
+            config.debris.seedCountsFor = config.debris.seed;
+            config.debris.seedHits = config.debris.seedMisses = 0;
+        }
         if (config.debris.enabled) debris.tick(client.level, center, config.debris.range, debrisSeed(client));
         else debris.clear();
         activityRange = config.activity.allLoadedChunks ? loadedRange(client) : config.activity.range;
@@ -155,7 +160,8 @@ public final class FinderScanner implements ChunkEvents.Listener {
         List<FoundBlock> found = new ArrayList<>(), debrisFound = new ArrayList<>();
         if (config.storage.enabled || config.spawner.enabled) collectBlockEntities(client, center, origin, found);
         if (config.debris.enabled) {
-            debris.collect(client.level, origin, config.debris.range, config.debris.filterFakes, config.debris.searchAreas, debrisFound);
+            debris.collect(client.level, origin, config.debris.range, config.debris.filterFakes, config.debris.searchAreas,
+                    estimatesTrusted(), debrisFound);
         }
         Comparator<FoundBlock> nearest = Comparator.comparingDouble(target -> target.pos().distToCenterSqr(origin));
         found.sort(nearest);
@@ -178,6 +184,12 @@ public final class FinderScanner implements ChunkEvents.Listener {
         passages.sort(Comparator.comparingDouble(segment -> TunnelIndex.distanceSqr(segment, origin)));
         tunnels = List.copyOf(passages.subList(0, Math.min(passages.size(), MAX_TARGETS)));
         summaries = summarize(client, origin);
+    }
+
+    /** Estimates stop once spots the server revealed came up empty, or real debris keeps turning up elsewhere. */
+    private boolean estimatesTrusted() {
+        FinderSettings d = config.debris;
+        return !DebrisStats.seedSpotsEmpty(d.seedHits, d.seedMisses) && !debris.stats().debrisMismatch();
     }
 
     /** Singleplayer knows its own seed; on a server, DebrisFinder uses the one typed in its settings. */
@@ -290,7 +302,11 @@ public final class FinderScanner implements ChunkEvents.Listener {
             boolean warn = stats.bedrockMismatch() || stats.oresRandomized() || stats.seedMismatch()
                     || stats.offSeedChunks() > 0 && stats.seedChunks() == 0;
             int areaCount = config.debris.searchAreas ? stats.searchAreas() : 0;
+            int hits = config.debris.seedHits, judged = hits + config.debris.seedMisses;
+            boolean empty = config.debris.seedEstimates && DebrisStats.seedSpotsEmpty(hits, config.debris.seedMisses);
+            warn |= empty;
             String note = stats.bedrockMismatch() ? "seed is not this Nether's" : stats.oresRandomized() ? "server randomizes debris"
+                    : empty ? "seed spots came up empty (" + hits + " of " + judged + ")"
                     : stats.seedMismatch() ? "seed doesn't match" : stats.offSeedChunks() > 0 && stats.seedChunks() == 0 ? "area not from seed"
                     : stats.estimates() > 0 ? "+" + stats.estimates() + " by seed"
                     : areaCount > 0 ? areaCount + (areaCount == 1 ? " search area" : " search areas")
@@ -385,6 +401,11 @@ public final class FinderScanner implements ChunkEvents.Listener {
         boolean isDebris = state.is(Blocks.ANCIENT_DEBRIS);
         // This runs before the update applies, so the level still shows what the client had.
         boolean alreadyShown = level.getBlockState(pos).is(Blocks.ANCIENT_DEBRIS) && !debris.inFakedChunk(pos);
+        switch (debris.reveal(pos, state)) {
+            case HIT -> config.debris.seedHits++;
+            case MISS -> config.debris.seedMisses++;
+            case NONE -> { }
+        }
         // Anti-xray sends the real block once a neighbor is mined; a newly confirmed debris was just revealed. Paper
         // also resends debris that was in plain sight, which is no news.
         if (debris.confirm(pos, isDebris)) {

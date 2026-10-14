@@ -92,6 +92,8 @@ final class DebrisIndex {
     private DebrisPredictor.Bedrock bedrock;
     private DebrisStats stats = DebrisStats.EMPTY;
     private List<SectionPos> areas = List.of();
+    /** Estimate spots already counted as a hit or a miss. */
+    private final LongSet judged = new LongOpenHashSet();
     /** Debris and estimate outcomes already written to the live log. */
     private final LongSet logged = new LongOpenHashSet();
     private final LongSet loggedAreas = new LongOpenHashSet();
@@ -104,6 +106,7 @@ final class DebrisIndex {
         confirmed.clear();
         stale.clear();
         everListed.clear();
+        judged.clear();
         logged.clear();
         loggedAreas.clear();
         areas = List.of();
@@ -153,6 +156,20 @@ final class DebrisIndex {
         return chunk != null && chunk.faked();
     }
 
+    enum Reveal { NONE, HIT, MISS }
+
+    /**
+     * The server sends real blocks in block updates, including those it hid around a block just mined. At an estimate
+     * spot in a seed chunk that tells whether the seed's debris is really there.
+     */
+    Reveal reveal(BlockPos pos, BlockState state) {
+        if (seed.isEmpty() || state.isAir()) return Reveal.NONE;
+        DebrisChunk chunk = chunks.get(SectionPos.blockToSectionCoord(pos.getX()), SectionPos.blockToSectionCoord(pos.getZ()));
+        if (chunk == null || !chunk.estimates().contains(pos) || !Boolean.TRUE.equals(followsSeed(chunk))) return Reveal.NONE;
+        if (!judged.add(pos.asLong())) return Reveal.NONE;
+        return DEBRIS.test(state) ? Reveal.HIT : Reveal.MISS;
+    }
+
     /** @return true the first time the server confirms debris at this position */
     boolean confirm(BlockPos pos, boolean debris) {
         if (!debris) { confirmed.remove(pos.asLong()); return false; }
@@ -164,7 +181,9 @@ final class DebrisIndex {
     /** Search areas in range, from the last collect. */
     List<SectionPos> areas() { return areas; }
 
-    void collect(ClientLevel level, Vec3 origin, double range, boolean filterFakes, boolean searchAreas, List<FoundBlock> found) {
+    /** @param estimates whether to draw seed estimates; counting and checking the seed goes on either way */
+    void collect(ClientLevel level, Vec3 origin, double range, boolean filterFakes, boolean searchAreas, boolean estimates,
+                 List<FoundBlock> found) {
         double rangeSqr = range * range;
         boolean nether = nether(level), seeded = nether && seed.isPresent();
         BlockPos.MutableBlockPos neighbor = new BlockPos.MutableBlockPos();
@@ -217,7 +236,7 @@ final class DebrisIndex {
             for (LongIterator iterator = chunk.attempts().iterator(); iterator.hasNext(); ) {
                 if (level.getBlockState(BlockPos.of(iterator.nextLong())).isAir()) counts[13]++;
             }
-            for (BlockPos pos : chunk.estimates()) {
+            for (BlockPos pos : estimates ? chunk.estimates() : List.<BlockPos>of()) {
                 if (confirmed.contains(pos.asLong())) { logOutcome(pos, "debris"); continue; }
                 if (pos.distToCenterSqr(origin) > rangeSqr || !LoadedChunks.has(level, pos)) continue;
                 // On a server whose palettes give hidden debris away, a section whose palette lacks it holds none.

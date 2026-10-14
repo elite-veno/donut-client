@@ -47,7 +47,8 @@ class VisionSettingsTest {
 
         assertTrue(loaded.storage.enabled);
         assertTrue(loaded.storage.barrels && loaded.storage.hoppers && loaded.storage.furnaces);
-        assertTrue(loaded.debris.enabled);
+        // A file from before version 2 gets DebrisFinder turned off; its other settings stay.
+        assertFalse(loaded.debris.enabled);
         assertTrue(loaded.debris.filterFakes);
         assertEquals(0x7EDD8E, loaded.debris.color);
         // Fields the file lacks get DebrisFinder's own defaults, not the generic ones.

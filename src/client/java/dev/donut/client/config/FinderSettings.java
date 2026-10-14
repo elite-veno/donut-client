@@ -31,8 +31,17 @@ public final class FinderSettings {
     public boolean filterFakes = true;
     /** DebrisFinder only: play a sound when debris appears from a block update, such as while mining. */
     public boolean notify = true;
-    /** DebrisFinder only: mark the netherrack where the world seed placed debris that the server hides. */
-    public boolean seedEstimates = true;
+    /**
+     * DebrisFinder only: mark the netherrack where the world seed placed debris that the server hides. Off by default:
+     * DonutSMP gives its debris its own secret seed, so estimates there mark empty spots.
+     */
+    public boolean seedEstimates = false;
+    /**
+     * DebrisFinder only: estimate spots the server revealed while mining, with debris and without, counted for
+     * {@link #seedCountsFor}. Once they keep coming up empty, estimates stop.
+     */
+    public int seedHits = 0, seedMisses = 0;
+    public String seedCountsFor = "";
     /** DebrisFinder only: the server's world seed, as typed when creating a world. Singleplayer uses its own. */
     public String seed = "6608149111735331168";
     /** DebrisFinder only: outline 16-block sections whose block palette still lists debris that anti-xray hid. */
@@ -77,6 +86,9 @@ public final class FinderSettings {
     public void sanitize(FinderSettings defaults) {
         if (mode == null) mode = defaults.mode;
         if (seed == null) seed = "";
+        if (seedCountsFor == null) seedCountsFor = "";
+        seedHits = Math.max(0, seedHits);
+        seedMisses = Math.max(0, seedMisses);
         range = clamp(range, 16, 256, defaults.range);
         outlineOpacity = clamp(outlineOpacity, 0, 1, defaults.outlineOpacity);
         fillOpacity = clamp(fillOpacity, 0, 1, defaults.fillOpacity);

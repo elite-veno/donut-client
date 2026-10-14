@@ -57,7 +57,11 @@ public final class DebrisSeedGameTest implements FabricClientGameTest {
         context.getInput().resizeWindow(1280, 800);
 
         try {
-            context.runOnClient(client -> config.debris.seed = SEED);
+            context.runOnClient(client -> {
+                config.debris.seed = SEED;
+                // Off by default, since DonutSMP seeds its debris separately; this world follows the seed.
+                config.debris.seedEstimates = true;
+            });
             try (var server = context.worldBuilder().adjustSettings(creator -> creator.setSeed(SEED)).createServer();
                  var connection = server.connect()) {
                 verify(context, server, connection, scanner, "server");

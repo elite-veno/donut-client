@@ -21,6 +21,7 @@ Every finder can draw **tracers**, lines from your crosshair to each highlight, 
 
 - A chunk with far more buried debris than worldgen places is treated as faked. Only its exposed debris, which anti-xray never touches, and debris the server confirms with a block update are drawn; the rest is counted as hidden fakes.
 - When a server hides buried debris, its settings say so. Mining reveals debris within a couple of blocks; DebrisFinder lights it up at once and plays a sound with its coordinates (Reveal alert).
+- Seed estimates (off by default) mark buried netherrack where the world seed placed debris, in chunks whose gravel and blackstone show they follow that seed. A server can give its debris a seed of its own, and DonutSMP does, so the estimates check themselves: every estimate spot the server reveals while you mine counts as a hit or a miss, and once they keep coming up empty the estimates stop and the HUD says so.
 
 The live scan in its settings shows the chunks scanned, buried and exposed debris, and hidden fakes.
 
