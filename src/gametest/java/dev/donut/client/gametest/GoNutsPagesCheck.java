@@ -1,6 +1,7 @@
 package dev.donut.client.gametest;
 
 import dev.donut.client.gui.DonutScreen;
+import dev.doughbay.fabric.DoughBayScreen;
 import dev.doughbay.fabric.GoNutsApi;
 import dev.doughbay.fabric.Tuning;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
@@ -145,9 +146,25 @@ final class GoNutsPagesCheck {
         smallScreen(context);
     }
 
-    /** GoNuts's own screen's tabs, by the label on their buttons. */
-    private static final List<String> FULL_TABS = List.of("Dashboard", "Opportunities", "Markets", "Search", "Items", "Flips",
-            "Performance", "Rivals", "Orders", "Autopilot", "Activity", "Diagnostics", "Logs", "Payroll", "Settings", "About");
+    /**
+     * GoNuts's own screen's tabs, by the label on their buttons, read from its Tab enum so tabs its author adds are shot
+     * too.
+     */
+    private static List<String> fullTabs() {
+        for (Class<?> type : DoughBayScreen.class.getDeclaredClasses()) {
+            if (!type.isEnum() || !type.getSimpleName().equals("Tab")) continue;
+            try {
+                var label = type.getDeclaredField("label");
+                label.setAccessible(true);
+                List<String> tabs = new java.util.ArrayList<>();
+                for (Object tab : type.getEnumConstants()) tabs.add((String) label.get(tab));
+                return tabs;
+            } catch (ReflectiveOperationException e) {
+                throw new AssertionError("GoNuts's tabs have no label to read", e);
+            }
+        }
+        throw new AssertionError("GoNuts's screen has no Tab enum");
+    }
 
     /**
      * The GoNuts pages and GoNuts's own screen in the room a 2560x1440 screen leaves at the automatic GUI scale: scale 6,
@@ -185,11 +202,13 @@ final class GoNutsPagesCheck {
         large(context, "gonuts-small-full-00-opened");
         // GoNuts first says what is new; its OK goes on to the screen itself.
         for (int tries = 0; tries < 3 && context.computeOnClient(client -> pressButton(client, "OK")); tries++) context.waitTicks(10);
-        for (int i = 0; i < FULL_TABS.size(); i++) {
-            String tab = FULL_TABS.get(i);
-            context.runOnClient(client -> pressButton(client, tab));
+        List<String> tabs = fullTabs();
+        for (int i = 0; i < tabs.size(); i++) {
+            String tab = tabs.get(i);
+            // Every tab has its button at this size; one that does not fit is as broken as one drawn over another.
+            require(context.computeOnClient(client -> pressButton(client, tab)), "Full GoNuts shows no " + tab + " tab button");
             context.waitTicks(10);
-            large(context, String.format("gonuts-small-full-%02d-%s", i + 1, tab.toLowerCase(java.util.Locale.ROOT)));
+            large(context, String.format("gonuts-small-full-%02d-%s", i + 1, tab.toLowerCase(java.util.Locale.ROOT).replace(' ', '-')));
         }
 
         double screenScale = context.computeOnClient(client -> (double) client.getWindow().getGuiScale());
