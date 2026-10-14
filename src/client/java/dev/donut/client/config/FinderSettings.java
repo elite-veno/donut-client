@@ -71,15 +71,18 @@ public final class FinderSettings {
     /** EntityFinder: dropped items. */
     public int itemColor = 0xFFFFFF;
 
-    public void sanitize() {
-        if (mode == null) mode = RenderMode.BOTH;
+    public void sanitize() { sanitize(new FinderSettings()); }
+
+    /** Invalid numbers fall back to this module's own defaults. */
+    public void sanitize(FinderSettings defaults) {
+        if (mode == null) mode = defaults.mode;
         if (seed == null) seed = "";
-        range = clamp(range, 16, 256, 96);
-        outlineOpacity = clamp(outlineOpacity, 0, 1, 0.9);
-        fillOpacity = clamp(fillOpacity, 0, 1, 0.16);
-        lineWidth = clamp(lineWidth, 0.5, 5, 1.5);
-        minActivity = clamp(minActivity, 0, 1, 0.5);
-        minLength = clamp(minLength, 4, 32, 10);
+        range = clamp(range, 16, 256, defaults.range);
+        outlineOpacity = clamp(outlineOpacity, 0, 1, defaults.outlineOpacity);
+        fillOpacity = clamp(fillOpacity, 0, 1, defaults.fillOpacity);
+        lineWidth = clamp(lineWidth, 0.5, 5, defaults.lineWidth);
+        minActivity = clamp(minActivity, 0, 1, defaults.minActivity);
+        minLength = clamp(minLength, 4, 32, defaults.minLength);
         color &= 0xFFFFFF;
         chestColor &= 0xFFFFFF;
         shulkerColor &= 0xFFFFFF;

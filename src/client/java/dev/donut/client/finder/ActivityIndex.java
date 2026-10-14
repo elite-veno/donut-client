@@ -26,7 +26,8 @@ final class ActivityIndex {
     private static final Predicate<BlockState> BUDDING = state -> state.is(Blocks.BUDDING_AMETHYST);
     private static final Direction[] DIRECTIONS = Direction.values();
 
-    private final ChunkIndex<ActivityArea> chunks = new ChunkIndex<>(ActivityIndex::scan, 16);
+    /** Block changes and chunk loads mark chunks for a rescan, so the periodic refresh is only a safety net. */
+    private final ChunkIndex<ActivityArea> chunks = new ChunkIndex<>(ActivityIndex::scan, 16, 200);
 
     void clear() { chunks.clear(); }
 
@@ -49,19 +50,22 @@ final class ActivityIndex {
     /** Chunks beyond the range, such as the area a teleport just left, are not counted. */
     ActivityStats stats(boolean overworld, Vec3 origin, double range) {
         int[] amethyst = new int[2];
-        ActivityArea[] best = new ActivityArea[1];
+        ActivityArea[] best = new ActivityArea[2];
         chunks.forEach(raw -> {
             if (raw.horizontalDistance(origin) > range) return;
             amethyst[0]++;
             amethyst[1] += raw.budding();
             ActivityArea area = judge(raw);
-            // Of equal scores, the nearest is the one worth going to.
-            if (best[0] == null || area.score() > best[0].score()
-                    || area.score() == best[0].score() && area.horizontalDistance(origin) < best[0].horizontalDistance(origin)) {
-                best[0] = area;
-            }
+            if (better(area, best[0], origin)) best[0] = area;
+            if (area.chance() <= ActivityStats.CERTAIN_CHANCE && better(area, best[1], origin)) best[1] = area;
         });
-        return new ActivityStats(overworld, chunks.size(), amethyst[0], amethyst[1], best[0]);
+        return new ActivityStats(overworld, chunks.size(), amethyst[0], amethyst[1], best[0], best[1]);
+    }
+
+    /** Of equal scores, the nearest is the one worth going to. */
+    private static boolean better(ActivityArea area, ActivityArea than, Vec3 origin) {
+        return than == null || area.score() > than.score()
+                || area.score() == than.score() && area.horizontalDistance(origin) < than.horizontalDistance(origin);
     }
 
     /**
@@ -112,7 +116,7 @@ final class ActivityIndex {
                         for (Direction direction : DIRECTIONS) {
                             BlockPos next = pos.relative(direction);
                             // An unloaded neighbor reads as air, which would count as an empty face.
-                            if (!level.hasChunkAt(next)) continue;
+                            if (!LoadedChunks.has(level, next)) continue;
                             BlockState neighbor = level.getBlockState(next);
                             int stage = stage(neighbor);
                             // A bud belongs to the block it grows away from.

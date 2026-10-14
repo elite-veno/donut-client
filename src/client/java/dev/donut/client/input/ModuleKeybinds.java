@@ -54,8 +54,18 @@ public final class ModuleKeybinds {
         while (mapping.consumeClick()) clicked = true;
         boolean firstPress = clicked && !pressed[index];
         // A short press released between ticks still has a queued click and fires once.
-        pressed[index] = isHeld(client, InputConstants.getKey(mapping.saveString())) && (pressed[index] || clicked);
+        pressed[index] = isHeld(client, mapping) && (pressed[index] || clicked);
         return firstPress;
+    }
+
+    /**
+     * Whether the mapping's key is physically held. A toggle mapping's isDown is its toggle state instead, but GLFW can
+     * only poll by key symbol, so a key bound by scancode alone relies on the mapping, which key events keep current.
+     */
+    public static boolean isHeld(Minecraft client, KeyMapping mapping) {
+        InputConstants.Key key = InputConstants.getKey(mapping.saveString());
+        if (key.getType() == InputConstants.Type.SCANCODE) return mapping.isDown();
+        return isHeld(client, key);
     }
 
     /** Keep the input that assigned a binding or closed the menu from toggling a module. */

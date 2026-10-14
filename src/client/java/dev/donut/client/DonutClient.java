@@ -27,16 +27,21 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.ChatScreen;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import org.lwjgl.glfw.GLFW;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class DonutClient implements ClientModInitializer {
     public static final String MOD_ID = "donut";
+    private static final Logger LOGGER = LoggerFactory.getLogger("Donut");
     private ConfigStore store;
     private ClientConfig config;
     private FinderScanner scanner;
+    private boolean configProblemShown;
 
     @Override
     public void onInitializeClient() {
@@ -51,13 +56,21 @@ public final class DonutClient implements ClientModInitializer {
         XrayController xray = new XrayController(config);
         FullbrightController fullbright = new FullbrightController(config);
         AutoRtpController rtp = new AutoRtpController(config, scanner, this::save);
-        ClientReceiveMessageEvents.GAME.register((message, overlay) -> rtp.onServerMessage(message.getString()));
+        ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
+            // This runs inside packet handling, where an exception disconnects the player.
+            try {
+                rtp.onServerMessage(message.getString());
+            } catch (RuntimeException e) {
+                LOGGER.error("Auto RTP could not read a server message", e);
+            }
+        });
 
         KeyMapping.Category category = KeyMapping.Category.register(Identifier.fromNamespaceAndPath(MOD_ID, "client"));
         KeyMapping open = bind("open_gui", GLFW.GLFW_KEY_RIGHT_SHIFT, category);
         KeyMapping storage = bind("toggle_storage", InputConstants.UNKNOWN.getValue(), category);
         KeyMapping spawner = bind("toggle_spawner", InputConstants.UNKNOWN.getValue(), category);
-        KeyMapping camera = bind("toggle_freecam", GLFW.GLFW_KEY_F6, category);
+        // F6 is vanilla's debug options key.
+        KeyMapping camera = bind("toggle_freecam", GLFW.GLFW_KEY_F7, category);
         KeyMapping debris = bind("toggle_debris", InputConstants.UNKNOWN.getValue(), category);
         KeyMapping activity = bind("toggle_activity", InputConstants.UNKNOWN.getValue(), category);
         KeyMapping autoRtp = bind("toggle_auto_rtp", InputConstants.UNKNOWN.getValue(), category);
@@ -123,7 +136,9 @@ public final class DonutClient implements ClientModInitializer {
         });
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath(MOD_ID, "finder_info"), (graphics, delta) -> {
             Minecraft client = Minecraft.getInstance();
-            if (client.player == null || client.gui.screen() != null || client.gui.hud.isHidden()) return;
+            // Typing in chat keeps the labels: they are often what is being typed about.
+            boolean chatting = client.gui.screen() instanceof ChatScreen;
+            if (client.player == null || client.gui.screen() != null && !chatting || client.gui.hud.isHidden()) return;
             FinderHud.render(graphics, client, config, scanner);
         });
         // GoNuts's own HUD keeps its panel, alerts and nearby-player list off both.
@@ -131,9 +146,21 @@ public final class DonutClient implements ClientModInitializer {
         FinderHud.reserveSpace(config, scanner);
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> xray.close());
 
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> client.execute(() -> {
+            // A damaged settings file is otherwise only in the log.
+            if (configProblemShown || store.problem().isEmpty() || client.player == null) return;
+            configProblemShown = true;
+            client.player.sendSystemMessage(Component.literal("[Donut] " + store.problem()).withStyle(net.minecraft.ChatFormatting.YELLOW));
+        }));
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
-            scanner.clear();
-            freecam.disable();
+            // Fabric can fire this on the network thread when the connection drops. The tick handlers notice the
+            // missing world on their own as well, so a task that a disconnect drops costs nothing.
+            Runnable cleanup = () -> {
+                scanner.clear();
+                freecam.disable();
+            };
+            if (client.isSameThread()) cleanup.run();
+            else client.execute(cleanup);
         });
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
             freecam.disable();

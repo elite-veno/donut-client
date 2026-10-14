@@ -116,7 +116,7 @@ class DumpAnalysisTest {
         System.out.println(line);
     }
 
-    /** Gravel and blackstone blob centers that hold their block, per chunk: 4 tries each, unless in basalt deltas. */
+    /** Gravel and blackstone blob centers that hold their block, per chunk: 2 tries each, unless in basalt deltas. */
     private static Map<Long, Integer> oreMap(Dump dump) {
         Map<Long, Integer> hits = new HashMap<>();
         int[] total = new int[4];

@@ -6,6 +6,8 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.state.BlockState;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Block and chunk changes the client receives, forwarded from {@code ClientLevelMixin} on the client thread. */
 public final class ChunkEvents {
@@ -20,7 +22,9 @@ public final class ChunkEvents {
         default void chunkLoaded(ClientLevel level, ChunkPos pos) { }
     }
 
+    private static final Logger LOGGER = LoggerFactory.getLogger("Donut/Finder");
     private static final List<Listener> LISTENERS = new CopyOnWriteArrayList<>();
+    private static boolean failed;
 
     private ChunkEvents() { }
 
@@ -28,15 +32,40 @@ public final class ChunkEvents {
 
     public static void unregister(Listener listener) { LISTENERS.remove(listener); }
 
+    // These run inside packet handling, where an exception disconnects the player; a finder bug must not.
     public static void blockChanged(ClientLevel level, BlockPos pos, BlockState previous, BlockState current) {
-        for (Listener listener : LISTENERS) listener.blockChanged(level, pos, previous, current);
+        for (Listener listener : LISTENERS) {
+            try {
+                listener.blockChanged(level, pos, previous, current);
+            } catch (RuntimeException e) {
+                failed(e);
+            }
+        }
     }
 
     public static void serverBlock(ClientLevel level, BlockPos pos, BlockState state) {
-        for (Listener listener : LISTENERS) listener.serverBlock(level, pos, state);
+        for (Listener listener : LISTENERS) {
+            try {
+                listener.serverBlock(level, pos, state);
+            } catch (RuntimeException e) {
+                failed(e);
+            }
+        }
     }
 
     public static void chunkLoaded(ClientLevel level, ChunkPos pos) {
-        for (Listener listener : LISTENERS) listener.chunkLoaded(level, pos);
+        for (Listener listener : LISTENERS) {
+            try {
+                listener.chunkLoaded(level, pos);
+            } catch (RuntimeException e) {
+                failed(e);
+            }
+        }
+    }
+
+    private static void failed(RuntimeException e) {
+        if (failed) return;
+        failed = true;
+        LOGGER.error("A finder failed on a block or chunk update; later failures are not logged", e);
     }
 }

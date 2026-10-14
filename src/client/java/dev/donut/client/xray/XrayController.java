@@ -39,7 +39,7 @@ public final class XrayController {
     /** Whether a neighbor may be missing from the mesh, so the face against it must be drawn. */
     public static boolean mayHide(BlockState state) {
         Filter filter = active;
-        return filter != null && (filter.hides(state) || filter.exposedOresOnly && isOre(state));
+        return filter != null && (filter.hides(state) || filter.exposedOresOnly && fakeable(state));
     }
 
     /** The state to render at this position: air when X-ray hides it. */
@@ -47,7 +47,7 @@ public final class XrayController {
         Filter filter = active;
         if (filter == null || state.isAir()) return state;
         if (filter.hides(state)) return Blocks.AIR.defaultBlockState();
-        if (filter.exposedOresOnly && isOre(state) && !exposed(region, pos)) return Blocks.AIR.defaultBlockState();
+        if (filter.exposedOresOnly && fakeable(state) && !exposed(region, pos)) return Blocks.AIR.defaultBlockState();
         return state;
     }
 
@@ -86,6 +86,14 @@ public final class XrayController {
                 || state.is(Blocks.NETHER_QUARTZ_ORE) || state.is(Blocks.ANCIENT_DEBRIS);
     }
 
+    /**
+     * What anti-xray scatters through buried stone besides ores: Paper's hidden-block lists also name raw ore blocks,
+     * and worldgen buries those only in ore veins, which the server disguises like any ore.
+     */
+    static boolean fakeable(BlockState state) {
+        return isOre(state) || state.is(Blocks.RAW_IRON_BLOCK) || state.is(Blocks.RAW_COPPER_BLOCK) || state.is(Blocks.RAW_GOLD_BLOCK);
+    }
+
     /** Anti-xray plugins only replace blocks whose six neighbors all conduct redstone, like stone. */
     private static boolean exposed(BlockGetter region, BlockPos pos) {
         BlockPos.MutableBlockPos neighbor = new BlockPos.MutableBlockPos();
@@ -100,7 +108,15 @@ public final class XrayController {
         Set<Block> hidden = Collections.newSetFromMap(new IdentityHashMap<>());
         if (s.stone()) Collections.addAll(hidden, Blocks.STONE, Blocks.GRANITE, Blocks.DIORITE, Blocks.ANDESITE,
                 Blocks.DEEPSLATE, Blocks.TUFF, Blocks.CALCITE, Blocks.SMOOTH_BASALT, Blocks.BEDROCK, Blocks.DRIPSTONE_BLOCK,
-                Blocks.POINTED_DRIPSTONE, Blocks.INFESTED_STONE, Blocks.INFESTED_DEEPSLATE);
+                Blocks.POINTED_DRIPSTONE, Blocks.INFESTED_STONE, Blocks.INFESTED_DEEPSLATE,
+                // 26.2's sulfur caves are walled with sulfur and cinnabar instead of stone; the deep dark with sculk,
+                // at diamond level; badlands with terracotta.
+                Blocks.SULFUR, Blocks.POTENT_SULFUR, Blocks.CINNABAR, Blocks.SULFUR_SPIKE, Blocks.SCULK);
+        // By name, not tag: tags are bound only once a world loads, and X-ray can be set up before that.
+        if (s.stone()) BuiltInRegistries.BLOCK.forEach(block -> {
+            String name = BuiltInRegistries.BLOCK.getKey(block).getPath();
+            if (name.equals("terracotta") || name.endsWith("_terracotta") && !name.endsWith("glazed_terracotta")) hidden.add(block);
+        });
         if (s.soil()) Collections.addAll(hidden, Blocks.DIRT, Blocks.COARSE_DIRT, Blocks.ROOTED_DIRT, Blocks.GRASS_BLOCK,
                 Blocks.PODZOL, Blocks.MYCELIUM, Blocks.MUD, Blocks.GRAVEL, Blocks.SAND, Blocks.RED_SAND, Blocks.SANDSTONE,
                 Blocks.RED_SANDSTONE, Blocks.CLAY, Blocks.SNOW_BLOCK);

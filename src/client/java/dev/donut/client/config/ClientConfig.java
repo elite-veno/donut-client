@@ -20,6 +20,8 @@ public final class ClientConfig {
     private static FinderSettings spawnerDefaults() {
         FinderSettings settings = new FinderSettings();
         settings.color = 0xFF779C;
+        // Amber, so an activated spawner stands out from the pink ones even faded in a dark cave.
+        settings.secondaryColor = 0xFFB347;
         settings.perTypeColors = false;
         return settings;
     }
@@ -77,12 +79,12 @@ public final class ClientConfig {
         if (rtp == null) rtp = new RtpSettings();
         if (hud == null) hud = new HudSettings();
         if (gui == null) gui = new GuiSettings();
-        storage.sanitize();
-        spawner.sanitize();
-        debris.sanitize();
-        activity.sanitize();
-        tunnels.sanitize();
-        entities.sanitize();
+        storage.sanitize(new FinderSettings());
+        spawner.sanitize(spawnerDefaults());
+        debris.sanitize(debrisDefaults());
+        activity.sanitize(activityDefaults());
+        tunnels.sanitize(tunnelDefaults());
+        entities.sanitize(entityDefaults());
         xray.sanitize();
         fullbright.sanitize();
         freecam.sanitize();

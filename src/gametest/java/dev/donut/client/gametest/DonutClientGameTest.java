@@ -6,6 +6,7 @@ import dev.donut.client.finder.ActivityArea;
 import dev.donut.client.finder.FinderScanner;
 import dev.donut.client.finder.FoundBlock;
 import dev.donut.client.finder.TargetKind;
+import dev.donut.client.finder.ChunkEvents;
 import dev.donut.client.finder.TunnelDetector;
 import dev.donut.client.fullbright.FullbrightController;
 import dev.donut.client.gui.FinderHud;
@@ -116,8 +117,9 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             GuiClicks.click(context, "nav.theme");
             GuiClicks.settle(context);
             screenshot(context, "donut-02-clickgui-theme");
-            // Reset puts a module's settings back on a second click, and leaves it on or off as it was.
-            boolean fullbrightOn = context.computeOnClient(client -> config.fullbright.enabled);
+            // Reset puts a module's settings back on a second click, and leaves it on: a Reset that also reset the switch
+            // would turn it off.
+            context.runOnClient(client -> config.fullbright.enabled = true);
             GuiClicks.expand(context, "Fullbright");
             GuiClicks.click(context, "Fullbright.noFog");
             context.runOnClient(client -> require(!config.fullbright.noFog, "Remove fog did not switch off"));
@@ -126,8 +128,9 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             GuiClicks.settle(context);
             screenshot(context, "donut-02-clickgui-reset-confirm");
             GuiClicks.click(context, "Fullbright.reset");
-            context.runOnClient(client -> require(config.fullbright.noFog && config.fullbright.enabled == fullbrightOn,
-                    "Reset did not restore Fullbright's settings, or changed its switch"));
+            context.runOnClient(client -> require(config.fullbright.noFog && config.fullbright.enabled,
+                    "Reset did not restore Fullbright's settings, or turned it off"));
+            context.runOnClient(client -> config.fullbright.enabled = false);
             GuiClicks.collapse(context, "Fullbright");
             GoNutsPagesCheck.run(context, name -> screenshot(context, name));
             context.runOnClient(client -> client.gui.screen().onClose());
@@ -263,8 +266,15 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             context.runOnClient(client -> {
                 scanner.clear();
                 renderer.close();
+                // Later suites must not feed chunk events to this scanner.
+                ChunkEvents.unregister(scanner);
             });
         }
+    }
+
+    /** Each chunk reports its own piece of a passage; the pieces of one kind add up to its whole length. */
+    private static int lengthOf(java.util.List<TunnelDetector.Segment> segments, TunnelDetector.Kind kind) {
+        return segments.stream().filter(segment -> segment.kind() == kind).mapToInt(TunnelDetector.Segment::length).sum();
     }
 
     private static net.minecraft.client.Minecraft mc() { return net.minecraft.client.Minecraft.getInstance(); }
@@ -288,6 +298,46 @@ public final class DonutClientGameTest implements FabricClientGameTest {
                     "A spawner with a used timer was not marked as activated");
             require(scanner.snapshot().stream().anyMatch(target -> target.pos().equals(fresh) && !target.flagged()),
                     "An untouched spawner was marked as activated");
+        });
+
+        // Copper chests are chests, a double chest is one find, and a chest minecart counts as storage.
+        server.runCommand("fill 29 64 33 37 64 35 minecraft:smooth_stone");
+        server.runCommand("setblock 30 65 34 minecraft:copper_chest");
+        server.runCommand("setblock 32 65 34 minecraft:chest[facing=north,type=left]");
+        server.runCommand("setblock 33 65 34 minecraft:chest[facing=north,type=right]");
+        server.runCommand("summon minecraft:chest_minecart 36 65 34");
+        BlockPos copper = new BlockPos(30, 65, 34), left = new BlockPos(32, 65, 34), right = new BlockPos(33, 65, 34);
+        context.waitFor(client -> scanner.snapshot().stream().anyMatch(target -> target.pos().equals(copper))
+                && scanner.snapshot().stream().anyMatch(target -> target.pos().equals(left)), 60);
+        context.runOnClient(client -> {
+            require(scanner.snapshot().stream().anyMatch(target -> target.pos().equals(copper) && target.kind() == TargetKind.CHEST),
+                    "A copper chest was not found as a chest");
+            require(scanner.snapshot().stream().noneMatch(target -> target.pos().equals(right)), "A double chest counted twice");
+            var storage = scanner.summaries().stream().filter(line -> line.name().equals("Storage")).findFirst().orElseThrow();
+            require(storage.count() == scanner.storageCount() + 1, "The chest minecart was not counted: " + storage);
+        });
+        server.runCommand("fill 29 64 33 37 65 35 minecraft:air");
+        server.runCommand("kill @e[type=minecraft:chest_minecart]");
+
+        // Spawners as they arrive with their chunk, the way a real server sends them: one whose timer was reset by
+        // someone, and one the player lands next to, whose timer our own presence may start running.
+        server.runCommand("forceload add 1195 1195 1215 1215");
+        server.runCommand("fill 1195 64 1195 1215 64 1215 minecraft:smooth_stone");
+        server.runCommand("setblock 1198 65 1198 minecraft:spawner{Delay:300s}");
+        server.runCommand("setblock 1208 65 1208 minecraft:spawner");
+        server.runCommand("forceload remove 1195 1195 1215 1215");
+        server.runCommand("tp @a 1205.5 65 1205.5 180 30");
+        BlockPos reset = new BlockPos(1198, 65, 1198), landed = new BlockPos(1208, 65, 1208);
+        context.waitFor(client -> scanner.snapshot().stream().anyMatch(target -> target.pos().equals(reset))
+                && scanner.snapshot().stream().anyMatch(target -> target.pos().equals(landed)), 200);
+        context.waitTicks(40);
+        context.runOnClient(client -> {
+            require(scanner.snapshot().stream().anyMatch(target -> target.pos().equals(reset) && target.flagged()),
+                    "A spawner that arrived with a reset timer was not marked as activated");
+            require(scanner.snapshot().stream().anyMatch(target -> target.pos().equals(landed) && !target.flagged()),
+                    "Our own presence marked a spawner as activated");
+            var spawners = scanner.summaries().stream().filter(line -> line.name().equals("Spawners")).findFirst().orElseThrow();
+            require(spawners.note().equals("1 activated"), "Spawner HUD note: " + spawners);
         });
 
         // Anti-xray engine mode 2 fills buried stone with fake ores, sent inside chunk data. Build such a chunk
@@ -332,17 +382,32 @@ public final class DonutClientGameTest implements FabricClientGameTest {
             config.tunnels.enabled = true;
             config.tunnels.tracers = true;
         });
-        context.waitFor(client -> scanner.tunnels().size() >= 3, 200);
+        context.waitFor(client -> lengthOf(scanner.tunnels(), TunnelDetector.Kind.TUNNEL) >= 14
+                && lengthOf(scanner.tunnels(), TunnelDetector.Kind.HOLE) >= 19 && lengthOf(scanner.tunnels(), TunnelDetector.Kind.STAIRS) >= 6, 200);
         context.waitTicks(20);
-        context.runOnClient(client -> require(scanner.tunnels().size() == 3, "Unexpected passages: " + scanner.tunnels()));
         context.runOnClient(client -> {
-            for (TunnelDetector.Segment segment : scanner.tunnels()) {
+            var found = scanner.tunnels();
+            // The tunnel and the staircase cross the chunk border at x -33/-32, so each shows as two pieces.
+            require(lengthOf(found, TunnelDetector.Kind.TUNNEL) == 14 && lengthOf(found, TunnelDetector.Kind.HOLE) == 19
+                    && lengthOf(found, TunnelDetector.Kind.STAIRS) == 6, "Unexpected passages: " + found);
+            for (TunnelDetector.Segment segment : found) {
                 switch (segment.kind()) {
-                    case TUNNEL -> require(segment.length() == 14 && segment.x() == -38 && segment.y() == 42, "Unexpected tunnel " + segment);
-                    case HOLE -> require(segment.length() == 19 && segment.y() == 32, "Unexpected hole " + segment);
-                    case STAIRS -> require(segment.length() == 6 && segment.dy() == -1, "Unexpected staircase " + segment);
+                    case TUNNEL -> require(segment.total() == 14 && segment.x() >= -38 && segment.x() <= -25 && segment.y() == 42,
+                            "Unexpected tunnel " + segment);
+                    case HOLE -> require(segment.total() == 19 && segment.length() == 19 && segment.y() == 32, "Unexpected hole " + segment);
+                    case STAIRS -> require(segment.total() == 6 && segment.dy() == -1, "Unexpected staircase " + segment);
                 }
             }
+            require(found.stream().filter(s -> s.kind() == TunnelDetector.Kind.TUNNEL).count() == 2,
+                    "The tunnel should be one piece per chunk: " + found);
+        });
+        // Changing what counts is a filter over what was found, so it shows at once.
+        context.runOnClient(client -> config.tunnels.holes = false);
+        context.waitTicks(11);
+        context.runOnClient(client -> {
+            require(lengthOf(scanner.tunnels(), TunnelDetector.Kind.HOLE) == 0 && lengthOf(scanner.tunnels(), TunnelDetector.Kind.TUNNEL) == 14,
+                    "Turning holes off should hide only the hole: " + scanner.tunnels());
+            config.tunnels.holes = true;
         });
 
         // X-ray hides the stone, so the passages and their highlights show from outside.
@@ -357,7 +422,14 @@ public final class DonutClientGameTest implements FabricClientGameTest {
                     net.minecraft.core.Direction.Axis.X);
             require(!XrayController.filter(client.level, BlockPos.ZERO, sideways).isAir(), "X-ray hid sideways deepslate");
             require(FullbrightController.effectiveGamma(0.5) > 1, "X-ray did not brighten the world");
+            // 26.2's sulfur caves are walled with sulfur and cinnabar instead of stone.
+            require(XrayController.filter(client.level, BlockPos.ZERO, Blocks.SULFUR.defaultBlockState()).isAir()
+                    && XrayController.filter(client.level, BlockPos.ZERO, Blocks.CINNABAR.defaultBlockState()).isAir(),
+                    "X-ray did not hide sulfur cave rock");
         });
+        // The lightmap itself, not only the helper: the mixin has to reach it.
+        context.runOnClient(client -> require(client.gameRenderer.gameRenderState().lightmapRenderState.brightness > 1,
+                "X-ray did not brighten the lightmap"));
         world.getConnection().waitForChunksRender(false);
         context.waitTicks(2);
         screenshot(context, "donut-09-tunnels-xray");
@@ -382,8 +454,15 @@ public final class DonutClientGameTest implements FabricClientGameTest {
         context.waitFor(client -> scanner.summaries().stream()
                 .anyMatch(line -> line.name().equals("Entities") && line.count() >= 2));
         context.waitTicks(3);
-        context.runOnClient(client -> require(!dev.donut.client.render.HighlightRenderer.labels().isEmpty(),
-                "No labels were projected for visible highlights"));
+        context.runOnClient(client -> {
+            // Chests are in view too, so the check names the mobs: EntityFinder itself must draw them.
+            var labels = dev.donut.client.render.HighlightRenderer.labels();
+            require(labels.stream().anyMatch(label -> label.text().startsWith("Pig ")), "No label for the pig: " + labels);
+            require(labels.stream().anyMatch(label -> label.text().startsWith("Husk ")), "No label for the husk: " + labels);
+        });
+        context.runOnClient(client -> config.entities.passives = false);
+        context.waitFor(client -> scanner.summaries().stream().anyMatch(line -> line.name().equals("Entities") && line.count() == 1), 40);
+        context.runOnClient(client -> config.entities.passives = true);
         screenshot(context, "donut-10-entities-tracers-labels");
 
         // Fullbright at midnight, with and without fog.
@@ -396,6 +475,8 @@ public final class DonutClientGameTest implements FabricClientGameTest {
         context.waitTicks(3);
         context.runOnClient(client -> require(FullbrightController.effectiveGamma(0.5) > 1 && FullbrightController.noFog(),
                 "Fullbright did not apply"));
+        context.runOnClient(client -> require(client.gameRenderer.gameRenderState().lightmapRenderState.brightness > 1,
+                "Fullbright did not reach the lightmap"));
         screenshot(context, "donut-11-fullbright-midnight");
         context.runOnClient(client -> config.fullbright.enabled = false);
         context.waitTicks(3);

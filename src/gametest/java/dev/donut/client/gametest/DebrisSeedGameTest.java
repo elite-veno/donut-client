@@ -3,6 +3,7 @@ package dev.donut.client.gametest;
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.finder.ChunkDump;
 import dev.donut.client.finder.ChunkEvents;
+import dev.donut.client.finder.LoadedChunks;
 import dev.donut.client.finder.DebrisStats;
 import dev.donut.client.finder.FinderScanner;
 import dev.donut.client.finder.FoundBlock;
@@ -164,7 +165,7 @@ public final class DebrisSeedGameTest implements FabricClientGameTest {
         int radius = 10;
         for (int cx = center.x() - radius; cx <= center.x() + radius; cx++) {
             for (int cz = center.z() - radius; cz <= center.z() + radius; cz++) {
-                if (!level.hasChunk(cx, cz)) continue;
+                if (!level.getChunkSource().hasChunk(cx, cz)) continue;
                 for (BlockPos pos : BlockPos.betweenClosed(cx * 16, 0, cz * 16, cx * 16 + 15, 127, cz * 16 + 15)) {
                     if (level.getBlockState(pos).is(Blocks.ANCIENT_DEBRIS) && buried(level, pos)) buried.add(pos.immutable());
                 }
@@ -176,10 +177,14 @@ public final class DebrisSeedGameTest implements FabricClientGameTest {
         return buried;
     }
 
-    /** Anti-xray leaves a block alone when any neighbor lets light or redstone through, as DebrisFinder assumes. */
+    /**
+     * Anti-xray leaves a block alone when any neighbor lets light or redstone through, as DebrisFinder assumes. The
+     * server knows the neighbors this client hasn't loaded; they are netherrack nearly always, so they don't expose it.
+     */
     private static boolean buried(ClientLevel level, BlockPos pos) {
         for (Direction direction : Direction.values()) {
             BlockPos neighbor = pos.relative(direction);
+            if (!LoadedChunks.has(level, neighbor)) continue;
             if (!level.getBlockState(neighbor).isRedstoneConductor(level, neighbor)) return false;
         }
         return true;

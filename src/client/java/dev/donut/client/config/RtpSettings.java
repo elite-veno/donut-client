@@ -26,7 +26,10 @@ public final class RtpSettings {
 
     private static String clean(String value, String fallback) {
         if (value == null) return fallback;
-        String stripped = value.strip();
+        // The server kicks a client that sends a section sign or a control character, every attempt.
+        StringBuilder allowed = new StringBuilder();
+        value.codePoints().filter(c -> c != '\u00a7' && c >= ' ' && c != 127).limit(256).forEach(allowed::appendCodePoint);
+        String stripped = allowed.toString().strip();
         while (stripped.startsWith("/")) stripped = stripped.substring(1).strip();
         return stripped.isEmpty() ? fallback : stripped;
     }

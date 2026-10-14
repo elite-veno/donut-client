@@ -30,6 +30,7 @@ class DebrisPredictorTest {
         var placed = lookup.lookupOrThrow(Registries.PLACED_FEATURE);
         int large = step.indexMapping().applyAsInt(placed.getOrThrow(OrePlacements.ORE_ANCIENT_DEBRIS_LARGE).value());
         int small = step.indexMapping().applyAsInt(placed.getOrThrow(OrePlacements.ORE_ANCIENT_DEBRIS_SMALL).value());
+        // Expected first: the vanilla registries are the truth the constants must match.
         assertEquals(large, DebrisPredictor.LARGE_INDEX);
         assertEquals(small, DebrisPredictor.SMALL_INDEX);
         assertEquals(step.indexMapping().applyAsInt(placed.getOrThrow(OrePlacements.ORE_MAGMA).value()), FeatureProbe.MAGMA.index());

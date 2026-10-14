@@ -19,6 +19,7 @@ public final class RtpLoop {
         NO_TELEPORT("the command did not teleport you three times in a row"),
         NO_AMETHYST("three areas in a row had no budding amethyst; the server may hide it"),
         NOT_OVERWORLD("the teleport did not land in the Overworld, the only place geodes generate"),
+        ACTIVITY_OFF("ActivityFinder was turned off"),
         HURT("you took damage"),
         MENU_MISSING("the command opened a menu without the configured item"),
         GONUTS_BUSY("GoNuts is trading; stop its session first"),
@@ -39,8 +40,9 @@ public final class RtpLoop {
     /** Longer cooldowns are more likely misread chat than a real refusal. */
     static final int MAX_COOLDOWN = 15 * 60;
     private static final int GIVE_UP_AFTER = 3;
+    /** "5m30s" and "1.5 seconds" too; more than six digits is not a cooldown. */
     private static final Pattern DURATION = Pattern.compile(
-            "(\\d+)\\s*(h|hours?|hrs?|m|min|mins|minutes?|s|sec|secs|seconds?)\\b");
+            "(?<![\\d.])(\\d{1,6}(?:\\.\\d+)?)\\s*(h|hours?|hrs?|m|min|mins|minutes?|s|sec|secs|seconds?)(?![a-z])");
 
     private int intervalTicks = 20 * 20, scanTicks = 8 * 20, maxAttempts = 25;
     private Phase phase = Phase.IDLE;
@@ -142,15 +144,20 @@ public final class RtpLoop {
         }
     }
 
-    /** The server refused the teleport for now; the attempt does not count and the next one waits it out. */
-    public void serverCooldown(long tick, int seconds) {
-        if (phase == Phase.IDLE || tick - sentAt > NOTICE_WINDOW) return;
+    /**
+     * The server refused the teleport for now; the attempt does not count and the next one waits it out.
+     *
+     * @return whether the notice counted
+     */
+    public boolean serverCooldown(long tick, int seconds) {
+        if (phase == Phase.IDLE || tick - sentAt > NOTICE_WINDOW) return false;
         if (phase == Phase.AWAIT_TELEPORT) {
             attempts--;
             refused = true;
             phase = Phase.COOLDOWN;
         }
         nextSend = Math.max(nextSend, tick + (Math.min(seconds, MAX_COOLDOWN) + 1) * 20L);
+        return true;
     }
 
     /**
@@ -195,19 +202,20 @@ public final class RtpLoop {
         String text = message.toLowerCase(Locale.ROOT);
         // "Please wait 5 seconds, don't move" is a teleport countdown, not a refusal.
         if (text.contains("don't move") || text.contains("do not move")) return -1;
-        boolean refusal = text.contains("cooldown") || text.contains("again in")
+        // DonutSMP's command rate limit: "You need to wait another 1.5 seconds to execute a command".
+        boolean refusal = text.contains("cooldown") || text.contains("again in") || text.contains("wait another")
                 || text.contains("wait") && text.contains("before");
         if (!refusal) return -1;
         Matcher matcher = DURATION.matcher(text);
-        int seconds = 0;
+        double seconds = 0;
         boolean found = false;
         while (matcher.find()) {
-            int amount = Integer.parseInt(matcher.group(1));
+            double amount = Double.parseDouble(matcher.group(1));
             char unit = matcher.group(2).charAt(0);
             seconds += unit == 'h' ? amount * 3600 : unit == 'm' ? amount * 60 : amount;
             found = true;
         }
-        return found ? seconds : -1;
+        return found ? (int) Math.min(Math.ceil(seconds), Integer.MAX_VALUE / 40) : -1;
     }
 
     /** Whether a menu item is the one to click, by its name or any lore line, ignoring case. */

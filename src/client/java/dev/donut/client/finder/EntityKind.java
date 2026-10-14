@@ -8,7 +8,7 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.entity.vehicle.minecart.AbstractMinecartContainer;
+import net.minecraft.world.entity.vehicle.ContainerEntity;
 
 /** Entities that EntityFinder, and StorageFinder for minecarts, can highlight. */
 public enum EntityKind {
@@ -16,7 +16,8 @@ public enum EntityKind {
 
     public static EntityKind of(Entity entity) {
         if (entity instanceof Player) return entity == Minecraft.getInstance().player ? null : PLAYER;
-        if (entity instanceof AbstractMinecartContainer) return STORAGE_MINECART;
+        // Chest and hopper minecarts, and chest boats and rafts.
+        if (entity instanceof ContainerEntity) return STORAGE_MINECART;
         if (entity instanceof ItemEntity) return ITEM;
         if (entity instanceof Enemy) return HOSTILE;
         if (entity instanceof Mob) return PASSIVE;

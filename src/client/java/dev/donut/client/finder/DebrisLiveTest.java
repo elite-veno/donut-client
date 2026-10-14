@@ -51,6 +51,7 @@ public final class DebrisLiveTest {
             LOGGER.warn("[DebrisLiveTest] could not delete {}", marker, e);
         }
         if (!requested) return;
+        DebrisIndex.enableLiveLog();
         DebrisLiveTest test = new DebrisLiveTest(config, scanner);
         ClientTickEvents.END_CLIENT_TICK.register(test::tick);
         LOGGER.info("[DebrisLiveTest] armed; waiting for a server");

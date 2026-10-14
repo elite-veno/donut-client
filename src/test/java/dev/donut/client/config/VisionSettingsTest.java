@@ -50,6 +50,11 @@ class VisionSettingsTest {
         assertTrue(loaded.debris.enabled);
         assertTrue(loaded.debris.filterFakes);
         assertEquals(0x7EDD8E, loaded.debris.color);
+        // Fields the file lacks get DebrisFinder's own defaults, not the generic ones.
+        assertEquals(0xFF7AC6, loaded.debris.secondaryColor);
+        assertEquals(0xFFB347, loaded.debris.tertiaryColor);
+        assertFalse(loaded.debris.perTypeColors);
+        assertEquals(64, loaded.storage.range);
         assertNotNull(loaded.xray);
         assertNotNull(loaded.fullbright);
         assertNotNull(loaded.hud);

@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 
 class TunnelDetectorTest {
     /** Solid rock with dug-out cells; outside its bounds nothing is known, like an unloaded chunk. */
-    private static final class Rock implements TunnelDetector.Grid {
+    private static class Rock implements TunnelDetector.Grid {
         final int size;
         final Set<Long> air = new HashSet<>();
 
@@ -128,5 +128,58 @@ class TunnelDetectorTest {
         assertEquals(2, new TunnelDetector.Segment(TunnelDetector.Kind.TUNNEL, 0, 0, 0, 1, 0, 0, 1).cellHeight());
         assertEquals(1, new TunnelDetector.Segment(TunnelDetector.Kind.HOLE, 0, 0, 0, 0, 1, 0, 1).cellHeight());
         assertEquals(3, new TunnelDetector.Segment(TunnelDetector.Kind.STAIRS, 0, 0, 0, 1, -1, 0, 1).cellHeight());
+    }
+
+    @Test
+    void longTunnelsAreNotCutShort() {
+        Rock rock = new Rock(230);
+        for (int x = 5; x < 205; x++) { rock.dig(x, 10, 20); rock.dig(x, 11, 20); }
+
+        List<TunnelDetector.Segment> found = rock.scan(10);
+
+        assertEquals(List.of(new TunnelDetector.Segment(TunnelDetector.Kind.TUNNEL, 5, 10, 20, 1, 0, 0, 200)), found);
+    }
+
+    @Test
+    void eachAreaReportsItsOwnPieceMeasuredOverTheWholeTunnel() {
+        // Only columns 16 to 31 are scanned, like one chunk; the tunnel starts in the chunk before it.
+        Rock rock = new Rock(40) {
+            @Override public boolean inside(int x, int z) { return x >= 16 && x < 32; }
+        };
+        for (int x = 10; x < 30; x++) { rock.dig(x, 10, 20); rock.dig(x, 11, 20); }
+        TunnelDetector detector = new TunnelDetector(rock, 18);
+        List<TunnelDetector.Segment> found = new ArrayList<>();
+        for (int x = 16; x < 32; x++) {
+            for (int y = 0; y < 40; y++) {
+                for (int z = 0; z < 40; z++) detector.scanCell(x, y, z, true, true, true, found);
+            }
+        }
+
+        // 14 of its 20 cells lie here; only the whole length reaches 18.
+        assertEquals(List.of(new TunnelDetector.Segment(TunnelDetector.Kind.TUNNEL, 16, 10, 20, 1, 0, 0, 14, 20)), found);
+    }
+
+    @Test
+    void aBranchMineCorridorSurvivesItsSideTunnels() {
+        Rock rock = new Rock(40);
+        for (int x = 5; x < 25; x++) { rock.dig(x, 10, 20); rock.dig(x, 11, 20); }
+        // Side tunnels every four blocks, each opening the corridor's wall at one cell.
+        for (int x = 8; x < 23; x += 4) {
+            for (int z = 21; z < 26; z++) { rock.dig(x, 10, z); rock.dig(x, 11, z); }
+        }
+
+        List<TunnelDetector.Segment> found = rock.scan(10);
+
+        assertTrue(found.contains(new TunnelDetector.Segment(TunnelDetector.Kind.TUNNEL, 5, 10, 20, 1, 0, 0, 20)), found.toString());
+    }
+
+    @Test
+    void twoWideCorridorsStillDoNotCount() {
+        Rock rock = new Rock(40);
+        for (int x = 5; x < 25; x++) {
+            for (int z = 20; z < 22; z++) { rock.dig(x, 10, z); rock.dig(x, 11, z); }
+        }
+
+        assertTrue(rock.scan(10).stream().noneMatch(segment -> segment.kind() == TunnelDetector.Kind.TUNNEL && segment.dx() == 1));
     }
 }

@@ -1,12 +1,11 @@
 package dev.donut.client.finder;
 
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -30,7 +29,8 @@ final class ChunkIndex<T> {
     private final int chunksPerTick;
     /** Indexed chunks are also rescanned periodically, as a safety net for missed updates. */
     private final int refreshTicks;
-    private final Map<Long, Scan<T>> scans = new HashMap<>();
+    /** Keyed by packed chunk position, without boxing: several thousand lookups a tick at high render distances. */
+    private final Long2ObjectOpenHashMap<Scan<T>> scans = new Long2ObjectOpenHashMap<>();
     private final LongLinkedOpenHashSet dirty = new LongLinkedOpenHashSet();
     private int[] offsets = new int[0];
     private double offsetsRange = -1;
@@ -138,8 +138,8 @@ final class ChunkIndex<T> {
     }
 
     private void prune(ClientLevel level, ChunkPos center, double range) {
-        scans.entrySet().removeIf(entry -> {
-            int x = ChunkPos.getX(entry.getKey()), z = ChunkPos.getZ(entry.getKey());
+        scans.long2ObjectEntrySet().removeIf(entry -> {
+            int x = ChunkPos.getX(entry.getLongKey()), z = ChunkPos.getZ(entry.getLongKey());
             return !withinRange(x - center.x(), z - center.z(), range)
                     || level.getChunkSource().getChunk(x, z, ChunkStatus.FULL, false) != entry.getValue().chunk;
         });

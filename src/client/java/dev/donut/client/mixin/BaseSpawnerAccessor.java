@@ -9,4 +9,8 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 public interface BaseSpawnerAccessor {
     @Accessor("spawnDelay")
     int donut$getSpawnDelay();
+
+    /** How close a player has to be for the timer to run; the server sends it with the timer. */
+    @Accessor("requiredPlayerRange")
+    int donut$getRequiredPlayerRange();
 }

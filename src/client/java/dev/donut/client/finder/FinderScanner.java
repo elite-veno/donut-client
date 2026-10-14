@@ -2,11 +2,14 @@ package dev.donut.client.finder;
 
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.config.FinderSettings;
+import dev.donut.client.freecam.FreecamController;
 import dev.donut.client.mixin.BaseSpawnerAccessor;
 import it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.OptionalLong;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
@@ -15,12 +18,21 @@ import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.sounds.SoundEvents;
+import net.minecraft.util.Util;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.ChestBlock;
+import net.minecraft.world.level.block.TrialSpawnerBlock;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.SpawnerBlockEntity;
+import net.minecraft.world.level.block.entity.TrialSpawnerBlockEntity;
+import net.minecraft.world.level.block.entity.trialspawner.TrialSpawnerState;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.dimension.BuiltinDimensionTypes;
@@ -28,18 +40,22 @@ import net.minecraft.world.phys.Vec3;
 
 /** Reads only blocks and block entities already sent to the client; never requests chunks. */
 public final class FinderScanner implements ChunkEvents.Listener {
+    /** Per finder: block entities, and debris, each keep their nearest this many, so fake debris can't crowd out chests. */
     public static final int MAX_TARGETS = 4096;
     /** A spawner's timer starts at this value and only runs while a player is within its range. */
     private static final int NATURAL_SPAWN_DELAY = 20;
-    private static final double SPAWNER_PLAYER_RANGE = 17;
     private static FinderScanner instance;
 
     private final ClientConfig config;
     private final DebrisIndex debris = new DebrisIndex();
     private final ActivityIndex activity = new ActivityIndex();
     private final TunnelIndex tunnelIndex = new TunnelIndex();
-    /** Whether each spawner looked activated the first time it was seen, before our own presence could run its timer. */
-    private final Long2BooleanOpenHashMap spawnerFirstSight = new Long2BooleanOpenHashMap();
+    /**
+     * Whether each spawner looked activated the first time it was seen, before our own presence could run its timer.
+     * Kept per dimension for the whole connection: a spawner we ran ourselves must not count once we come back.
+     */
+    private final Map<ResourceKey<Level>, Long2BooleanOpenHashMap> spawnerSight = new HashMap<>();
+    private Long2BooleanOpenHashMap spawnerFirstSight = new Long2BooleanOpenHashMap();
     private final List<BlockPos> revealed = new ArrayList<>();
     private List<FoundBlock> targets = List.of();
     private List<ActivityArea> areas = List.of();
@@ -89,8 +105,14 @@ public final class FinderScanner implements ChunkEvents.Listener {
         debris.clear();
         activity.clear();
         tunnelIndex.clear();
-        spawnerFirstSight.clear();
         revealed.clear();
+        lastNotice = Long.MIN_VALUE / 2;
+    }
+
+    private void useLevel(ClientLevel level) {
+        clear();
+        lastLevel = level;
+        spawnerFirstSight = spawnerSight.computeIfAbsent(level.dimension(), key -> new Long2BooleanOpenHashMap());
     }
 
     private boolean anyEnabled() {
@@ -99,12 +121,15 @@ public final class FinderScanner implements ChunkEvents.Listener {
     }
 
     public void tick(Minecraft client) {
-        if (client.level == null || client.player == null) { clear(); return; }
-        if (client.level != lastLevel) {
+        if (client.level == null || client.player == null) {
             clear();
-            lastLevel = client.level;
+            spawnerSight.clear();
+            return;
         }
-        ChunkPos center = client.player.chunkPosition();
+        if (client.level != lastLevel) useLevel(client.level);
+        // In Freecam the finds follow the camera, which is where they are drawn.
+        Vec3 origin = FreecamController.enabled() ? FreecamController.getInstance().position() : client.player.position();
+        ChunkPos center = ChunkPos.containing(BlockPos.containing(origin));
         // The chunk indexes spread their block scans over every tick, so they run before the cadence check.
         if (config.debris.enabled) debris.tick(client.level, center, config.debris.range, debrisSeed(client));
         else debris.clear();
@@ -113,6 +138,7 @@ public final class FinderScanner implements ChunkEvents.Listener {
         else activity.clear();
         FinderSettings t = config.tunnels;
         tunnelIndex.configure((int) Math.round(t.minLength), t.tunnels, t.holes, t.staircases);
+        // The index scans for every kind and length; turning one off only filters what it found.
         if (t.enabled) tunnelIndex.tick(client.level, center, t.range);
         else tunnelIndex.clear();
         announceRevealed(client);
@@ -126,12 +152,18 @@ public final class FinderScanner implements ChunkEvents.Listener {
             return;
         }
         if (ticks++ % 10 != 0) return;
-        var origin = client.player.position();
-        List<FoundBlock> found = new ArrayList<>();
-        if (config.storage.enabled || config.spawner.enabled) collectBlockEntities(client, origin, found);
-        if (config.debris.enabled) debris.collect(client.level, origin, config.debris.range, config.debris.filterFakes, found);
-        found.sort(Comparator.comparingDouble(target -> target.pos().distToCenterSqr(origin)));
-        targets = List.copyOf(found.subList(0, Math.min(found.size(), MAX_TARGETS)));
+        List<FoundBlock> found = new ArrayList<>(), debrisFound = new ArrayList<>();
+        if (config.storage.enabled || config.spawner.enabled) collectBlockEntities(client, center, origin, found);
+        if (config.debris.enabled) {
+            debris.collect(client.level, origin, config.debris.range, config.debris.filterFakes, config.debris.searchAreas, debrisFound);
+        }
+        Comparator<FoundBlock> nearest = Comparator.comparingDouble(target -> target.pos().distToCenterSqr(origin));
+        found.sort(nearest);
+        debrisFound.sort(nearest);
+        List<FoundBlock> all = new ArrayList<>(found.subList(0, Math.min(found.size(), MAX_TARGETS)));
+        all.addAll(debrisFound.subList(0, Math.min(debrisFound.size(), MAX_TARGETS)));
+        all.sort(nearest);
+        targets = List.copyOf(all);
 
         List<ActivityArea> grown = new ArrayList<>();
         if (config.activity.enabled) activity.collect(origin, activityRange, config.activity.minActivity, grown);
@@ -161,27 +193,29 @@ public final class FinderScanner implements ChunkEvents.Listener {
         return (radius * Math.sqrt(2) + 1) * 16;
     }
 
-    private void collectBlockEntities(Minecraft client, Vec3 origin, List<FoundBlock> found) {
+    private void collectBlockEntities(Minecraft client, ChunkPos center, Vec3 origin, List<FoundBlock> found) {
         double range = Math.max(config.storage.enabled ? config.storage.range : 0,
                 config.spawner.enabled ? config.spawner.range : 0);
         int radius = (int) Math.ceil(range / 16.0);
-        int centerX = client.player.chunkPosition().x();
-        int centerZ = client.player.chunkPosition().z();
+        int centerX = center.x();
+        int centerZ = center.z();
         for (int x = centerX - radius; x <= centerX + radius; x++) {
             for (int z = centerZ - radius; z <= centerZ + radius; z++) {
                 var chunk = client.level.getChunkSource().getChunk(x, z, ChunkStatus.FULL, false);
                 if (chunk == null) continue;
                 for (var entity : chunk.getBlockEntities().values()) {
                     if (entity.isRemoved()) continue;
-                    TargetKind kind = TargetKind.from(entity.getBlockState());
+                    BlockState state = entity.getBlockState();
+                    TargetKind kind = TargetKind.from(state);
                     if (kind == null) continue;
                     FinderSettings settings = kind.settings(config);
                     if (!settings.enabled || !kind.included(settings)) continue;
+                    // A double chest is one find; the renderer draws both halves as one box.
+                    if (state.getBlock() instanceof ChestBlock && state.getValue(ChestBlock.TYPE) == ChestType.RIGHT) continue;
                     var pos = entity.getBlockPos();
                     double distanceSqr = pos.distToCenterSqr(origin);
                     if (distanceSqr <= settings.range * settings.range) {
-                        boolean activated = entity instanceof SpawnerBlockEntity spawner
-                                && activated(pos, spawner, distanceSqr);
+                        boolean activated = kind.isSpawner() && activated(entity, client.player.distanceToSqr(Vec3.atCenterOf(pos)));
                         found.add(new FoundBlock(pos.immutable(), kind, activated));
                     }
                 }
@@ -189,32 +223,41 @@ public final class FinderScanner implements ChunkEvents.Listener {
         }
     }
 
-    /**
-     * Worldgen spawners keep a timer of 20 ticks until a player comes within 16 blocks. Any other value
-     * means someone spent time next to it, or placed it. Spawners are normally read as their chunk arrives,
-     * before our own presence can run the timer. One seen only later counts when its timer was reset,
-     * which only a nearby player causes, or ran down while we were too far away to cause it.
-     */
-    private boolean activated(BlockPos pos, SpawnerBlockEntity spawner, double distanceSqr) {
-        long key = pos.asLong();
+    private boolean activated(BlockEntity entity, double playerDistanceSqr) {
+        long key = entity.getBlockPos().asLong();
         if (spawnerFirstSight.containsKey(key)) return spawnerFirstSight.get(key);
-        int delay = spawnDelay(spawner);
-        boolean activated = delay > NATURAL_SPAWN_DELAY
-                || delay != NATURAL_SPAWN_DELAY && distanceSqr > SPAWNER_PLAYER_RANGE * SPAWNER_PLAYER_RANGE;
+        boolean activated = firstSight(entity, playerDistanceSqr);
         spawnerFirstSight.put(key, activated);
         return activated;
     }
 
-    private static int spawnDelay(SpawnerBlockEntity spawner) {
-        return ((BaseSpawnerAccessor) spawner.getSpawner()).donut$getSpawnDelay();
+    /**
+     * Worldgen spawners keep a timer of 20 ticks until a player comes within range (16 blocks). A higher value means
+     * the timer was reset, which only a nearby player causes; a lower one that it ran, which our own presence can do
+     * too. Spawners are normally read as their chunk arrives, before we can have run them. A trial spawner shows a
+     * cleared trial, or an ominous one, in its block state.
+     */
+    private static boolean firstSight(BlockEntity entity, double playerDistanceSqr) {
+        if (entity instanceof SpawnerBlockEntity spawner) {
+            BaseSpawnerAccessor timer = (BaseSpawnerAccessor) spawner.getSpawner();
+            int delay = timer.donut$getSpawnDelay();
+            double range = timer.donut$getRequiredPlayerRange() + 1;
+            return delay > NATURAL_SPAWN_DELAY || delay != NATURAL_SPAWN_DELAY && playerDistanceSqr > range * range;
+        }
+        if (entity instanceof TrialSpawnerBlockEntity) {
+            BlockState state = entity.getBlockState();
+            return state.getValue(TrialSpawnerBlock.STATE) == TrialSpawnerState.COOLDOWN || state.getValue(TrialSpawnerBlock.OMINOUS);
+        }
+        return false;
     }
 
     /** The timers exactly as the server sent them; no client tick has run them yet. */
     private void recordSpawners(LevelChunk chunk) {
+        var player = Minecraft.getInstance().player;
         for (var entity : chunk.getBlockEntities().values()) {
-            if (entity instanceof SpawnerBlockEntity spawner) {
-                spawnerFirstSight.putIfAbsent(entity.getBlockPos().asLong(), spawnDelay(spawner) != NATURAL_SPAWN_DELAY);
-            }
+            if (!(entity instanceof SpawnerBlockEntity) && !(entity instanceof TrialSpawnerBlockEntity)) continue;
+            double distanceSqr = player == null ? Double.MAX_VALUE : player.distanceToSqr(Vec3.atCenterOf(entity.getBlockPos()));
+            spawnerFirstSight.putIfAbsent(entity.getBlockPos().asLong(), firstSight(entity, distanceSqr));
         }
     }
 
@@ -234,7 +277,8 @@ public final class FinderScanner implements ChunkEvents.Listener {
             lines.add(blockSummary("Storage", TargetKind::isStorage, config.storage.color, carts, nearestCart, origin));
         }
         if (config.spawner.enabled) {
-            long activated = targets.stream().filter(FoundBlock::flagged).count();
+            long activated = config.spawner.activatedSpawners
+                    ? targets.stream().filter(t -> t.kind().isSpawner() && t.flagged()).count() : 0;
             FinderSummary spawners = blockSummary("Spawners", TargetKind::isSpawner, config.spawner.color, 0, null, origin);
             lines.add(activated == 0 ? spawners : new FinderSummary(spawners.name(), spawners.count(), spawners.nearest(),
                     spawners.color(), activated + " activated"));
@@ -243,29 +287,35 @@ public final class FinderScanner implements ChunkEvents.Listener {
             DebrisStats stats = debris.stats();
             // The nearest estimate is worth heading for too, but the count is debris the server shows.
             FinderSummary found = blockSummary("Debris", TargetKind::isDebris, config.debris.color, 0, null, origin);
+            boolean warn = stats.bedrockMismatch() || stats.oresRandomized() || stats.seedMismatch()
+                    || stats.offSeedChunks() > 0 && stats.seedChunks() == 0;
+            int areaCount = config.debris.searchAreas ? stats.searchAreas() : 0;
             String note = stats.bedrockMismatch() ? "seed is not this Nether's" : stats.oresRandomized() ? "server randomizes debris"
                     : stats.seedMismatch() ? "seed doesn't match" : stats.offSeedChunks() > 0 && stats.seedChunks() == 0 ? "area not from seed"
-                    : stats.estimates() > 0 ? "+" + stats.estimates() + " by seed" : stats.searchAreas() > 0 ? stats.searchAreas() + " search areas"
+                    : stats.estimates() > 0 ? "+" + stats.estimates() + " by seed"
+                    : areaCount > 0 ? areaCount + (areaCount == 1 ? " search area" : " search areas")
                     : stats.allDugOut() ? "seed spots dug out"
-                    : stats.fakedChunks() > 0 ? "anti-xray fakes hidden" : stats.likelyHidden() ? "hidden until mined" : "";
-            lines.add(new FinderSummary(found.name(), (int) debrisCount(), found.nearest(), found.color(), note));
+                    : stats.hiddenFakes() > 0 ? "anti-xray fakes hidden"
+                    : stats.fakedChunks() > 0 && !config.debris.filterFakes ? "incl. anti-xray fakes"
+                    : stats.likelyHidden() ? "hidden until mined" : "";
+            lines.add(new FinderSummary(found.name(), (int) debrisCount(), found.nearest(), found.color(), note, warn));
         }
         if (config.tunnels.enabled) {
-            Vec3 nearest = tunnels.isEmpty() ? null : center(tunnels.getFirst());
+            Vec3 nearest = tunnels.isEmpty() ? null : TunnelIndex.nearestPoint(tunnels.getFirst(), origin);
             lines.add(new FinderSummary("Tunnels", tunnels.size(), nearest, config.tunnels.color, ""));
         }
         if (config.activity.enabled) {
             Vec3 nearest = areas.isEmpty() ? null : Vec3.atCenterOf(areas.getFirst().chunk().getMiddleBlockPosition(areas.getFirst().surfaceY()));
             ActivityStats stats = activityStats;
             String note = !stats.overworld() ? "not Overworld"
-                    : stats.best() != null ? "best " + Math.round(stats.best().score() * 100) + "%"
-                    : stats.scannedChunks() > 0 ? "no amethyst loaded" : "";
-            lines.add(new FinderSummary("Activity", areas.size(), nearest, config.activity.color, note));
+                    : stats.best() != null && stats.best().score() > 0 ? "best " + Math.round(stats.best().score() * 100) + "%"
+                    : stats.best() != null ? "no growth beyond worldgen"
+                    : stats.scannedChunks() > 0 ? "no geodes nearby" : "";
+            lines.add(new FinderSummary("Activity", areas.size(), nearest, config.activity.color, note, !stats.overworld()));
         }
         if (config.entities.enabled) {
             int count = 0;
-            Vec3 nearest = null;
-            String nearestName = "";
+            Entity nearest = null, nearestPlayer = null;
             double rangeSqr = config.entities.range * config.entities.range;
             for (Entity entity : client.level.entitiesForRendering()) {
                 EntityKind kind = EntityKind.of(entity);
@@ -273,12 +323,15 @@ public final class FinderScanner implements ChunkEvents.Listener {
                 double distanceSqr = entity.distanceToSqr(origin);
                 if (distanceSqr > rangeSqr) continue;
                 count++;
-                if (nearest == null || distanceSqr < nearest.distanceToSqr(origin)) {
-                    nearest = entity.position();
-                    nearestName = kind == EntityKind.PLAYER ? entity.getName().getString() : "";
+                if (nearest == null || distanceSqr < nearest.distanceToSqr(origin)) nearest = entity;
+                if (kind == EntityKind.PLAYER && (nearestPlayer == null || distanceSqr < nearestPlayer.distanceToSqr(origin))) {
+                    nearestPlayer = entity;
                 }
             }
-            lines.add(new FinderSummary("Entities", count, nearest, config.entities.color, nearestName));
+            // A player is what the line is for; a pig in between must not hide one.
+            Entity shown = nearestPlayer != null ? nearestPlayer : nearest;
+            lines.add(new FinderSummary("Entities", count, shown == null ? null : shown.position(), config.entities.color,
+                    shown == null ? "" : shown.getName().getString()));
         }
         return List.copyOf(lines);
     }
@@ -308,7 +361,7 @@ public final class FinderScanner implements ChunkEvents.Listener {
         boolean debrisChanged = previous.is(Blocks.ANCIENT_DEBRIS) || current.is(Blocks.ANCIENT_DEBRIS);
         if (config.debris.enabled && debrisChanged) debris.markDirty(pos);
         if (config.debris.enabled && previous.is(Blocks.ANCIENT_DEBRIS) && !current.is(Blocks.ANCIENT_DEBRIS)) debris.debrisRemoved(pos);
-        if (config.tunnels.enabled) tunnelIndex.markDirty(pos);
+        if (config.tunnels.enabled && TunnelIndex.matters(previous, current)) tunnelIndex.markDirty(pos);
         if (config.activity.enabled && (amethyst(previous) || amethyst(current))) {
             // A bud on the chunk's edge can belong to budding amethyst next door.
             int chunkX = SectionPos.blockToSectionCoord(pos.getX()), chunkZ = SectionPos.blockToSectionCoord(pos.getZ());
@@ -343,16 +396,18 @@ public final class FinderScanner implements ChunkEvents.Listener {
     @Override
     public void chunkLoaded(ClientLevel level, ChunkPos pos) {
         // A new world's first chunks arrive before the first tick sees it.
-        if (level != lastLevel) {
-            clear();
-            lastLevel = level;
-        }
+        if (level != lastLevel) useLevel(level);
         LevelChunk chunk = level.getChunkSource().getChunk(pos.x(), pos.z(), ChunkStatus.FULL, false);
         if (chunk != null) recordSpawners(chunk);
         // Chunk data can be resent in place, which keeps the same chunk object.
         if (config.debris.enabled) {
             debris.chunkReloaded(level, pos);
             debris.markDirty(pos);
+            // Debris on the edge next to this chunk read as exposed while it was missing.
+            debris.markDirty(new ChunkPos(pos.x() - 1, pos.z()));
+            debris.markDirty(new ChunkPos(pos.x() + 1, pos.z()));
+            debris.markDirty(new ChunkPos(pos.x(), pos.z() - 1));
+            debris.markDirty(new ChunkPos(pos.x(), pos.z() + 1));
         }
         if (config.tunnels.enabled) tunnelIndex.markDirty(pos);
         if (config.activity.enabled) {
@@ -378,9 +433,9 @@ public final class FinderScanner implements ChunkEvents.Listener {
         }
         revealed.clear();
         if (nearest == null) return;
-        long now = client.level.getGameTime();
+        long now = Util.getMillis();
         // A whole vein can be revealed by one mined block; one ping is enough.
-        if (now - lastNotice >= 10) {
+        if (now - lastNotice >= 500) {
             client.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.NOTE_BLOCK_PLING.value(), 1.6f, 0.9f));
             lastNotice = now;
         }

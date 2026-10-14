@@ -233,6 +233,26 @@ class RtpLoopTest {
     }
 
     @Test
+    void compactDecimalAndHugeDurationsAreReadSafely() {
+        assertEquals(330, RtpLoop.cooldownSeconds("Cooldown: 5m30s"));
+        assertEquals(90, RtpLoop.cooldownSeconds("You can use this again in 1min30s"));
+        // DonutSMP's command rate limit.
+        assertEquals(2, RtpLoop.cooldownSeconds("You need to wait another 1.5 seconds to execute a command"));
+        // Chat can carry any number; one that overflows an int must not throw inside packet handling.
+        assertEquals(-1, RtpLoop.cooldownSeconds("rtp cooldown 99999999999s lol"));
+    }
+
+    @Test
+    void aCooldownNoticeReportsWhetherItCounted() {
+        started(5);
+        assertFalse(loop.serverCooldown(tick, 30), "nothing was sent yet");
+        run(1, false, 0, false);
+        assertTrue(loop.serverCooldown(tick, 30));
+        tick += RtpLoop.NOTICE_WINDOW + 1;
+        assertFalse(loop.serverCooldown(tick, 30), "too long after the command");
+    }
+
+    @Test
     void menuItemsMatchByNameOrLoreIgnoringCase() {
         assertTrue(RtpLoop.matchesMenuItem("OVERWORLD", List.of(), "Overworld"));
         assertTrue(RtpLoop.matchesMenuItem("Random Teleport", List.of("Click to go to the overworld"), "Overworld"));

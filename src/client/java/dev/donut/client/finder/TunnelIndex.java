@@ -8,7 +8,9 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
@@ -26,14 +28,12 @@ final class TunnelIndex {
 
     void clear() { chunks.clear(); }
 
-    /** Changing what counts as a passage rescans every chunk. */
+    /** Chunks are scanned for every kind at the shortest length, so changing these filters shows at once. */
     void configure(int minLength, boolean tunnels, boolean holes, boolean stairs) {
-        if (minLength == this.minLength && tunnels == this.tunnels && holes == this.holes && stairs == this.stairs) return;
         this.minLength = minLength;
         this.tunnels = tunnels;
         this.holes = holes;
         this.stairs = stairs;
-        chunks.clear();
     }
 
     void tick(ClientLevel level, ChunkPos center, double range) { chunks.tick(level, center, range); }
@@ -48,38 +48,57 @@ final class TunnelIndex {
         chunks.markDirty(x, z + 1);
     }
 
-    void markDirty(ChunkPos pos) { chunks.markDirty(pos.x(), pos.z()); }
+    /** A chunk that loads completes the passages its neighbors' edges cut short. */
+    void markDirty(ChunkPos pos) {
+        chunks.markDirty(pos.x(), pos.z());
+        chunks.markDirty(pos.x() - 1, pos.z());
+        chunks.markDirty(pos.x() + 1, pos.z());
+        chunks.markDirty(pos.x(), pos.z() - 1);
+        chunks.markDirty(pos.x(), pos.z() + 1);
+    }
+
+    /** Only a block that turns open or solid can change a passage; growing crops and redstone don't. */
+    static boolean matters(BlockState previous, BlockState current) {
+        return solid(previous) != solid(current) || open(previous) != open(current);
+    }
 
     void collect(Vec3 origin, double range, List<TunnelDetector.Segment> found) {
         double rangeSqr = range * range;
+        int minSteps = Math.max(4, minLength / 2);
         chunks.forEach(segments -> {
             for (TunnelDetector.Segment segment : segments) {
-                if (distanceSqr(segment, origin) <= rangeSqr) found.add(segment);
+                boolean wanted = switch (segment.kind()) {
+                    case TUNNEL -> tunnels && segment.total() >= minLength;
+                    case HOLE -> holes && segment.total() >= minLength;
+                    case STAIRS -> stairs && segment.total() >= minSteps;
+                };
+                if (wanted && distanceSqr(segment, origin) <= rangeSqr) found.add(segment);
             }
         });
     }
 
-    /** From the origin to the nearest cell of the segment. */
-    static double distanceSqr(TunnelDetector.Segment segment, Vec3 origin) {
-        double best = Double.MAX_VALUE;
-        // Long passages are sampled every few cells; close enough for range checks and sorting.
-        int step = Math.max(1, segment.length() / 16);
-        for (int i = 0; i < segment.length(); i += step) {
-            double dx = segment.x() + segment.dx() * i + 0.5 - origin.x;
-            double dy = segment.y() + segment.dy() * i + segment.cellHeight() / 2.0 - origin.y;
-            double dz = segment.z() + segment.dz() * i + 0.5 - origin.z;
-            best = Math.min(best, dx * dx + dy * dy + dz * dz);
-        }
-        return best;
+    /** The point of the segment's center line closest to the origin. */
+    static Vec3 nearestPoint(TunnelDetector.Segment segment, Vec3 origin) {
+        double x = segment.x() + 0.5, y = segment.y() + segment.cellHeight() / 2.0, z = segment.z() + 0.5;
+        int dx = segment.dx(), dy = segment.dy(), dz = segment.dz();
+        double along = ((origin.x - x) * dx + (origin.y - y) * dy + (origin.z - z) * dz) / (dx * dx + dy * dy + dz * dz);
+        along = Math.clamp(along, 0, segment.length() - 1);
+        return new Vec3(x + dx * along, y + dy * along, z + dz * along);
     }
 
-    private static boolean open(BlockState state) { return !state.blocksMotion() && state.getFluidState().isEmpty(); }
+    static double distanceSqr(TunnelDetector.Segment segment, Vec3 origin) { return nearestPoint(segment, origin).distanceToSqr(origin); }
 
-    private static boolean solid(BlockState state) { return state.blocksMotion(); }
+    /** Signs, pressure plates and the like count as walls for blocksMotion but have nothing to collide with. */
+    private static boolean solid(BlockState state) {
+        return state.blocksMotion() && !state.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO).isEmpty();
+    }
+
+    private static boolean open(BlockState state) { return !solid(state) && state.getFluidState().isEmpty(); }
 
     private List<TunnelDetector.Segment> scan(LevelChunk chunk) {
         ChunkGrid grid = new ChunkGrid(chunk);
-        TunnelDetector detector = new TunnelDetector(grid, minLength);
+        // Every kind at the shortest length; collect() applies the settings.
+        TunnelDetector detector = new TunnelDetector(grid, 4);
         List<TunnelDetector.Segment> found = new ArrayList<>();
         int minX = chunk.getPos().getMinBlockX(), minZ = chunk.getPos().getMinBlockZ();
         for (int y = grid.minY; y < grid.maxY; y++) {
@@ -87,11 +106,19 @@ final class TunnelIndex {
             if (grid.airSections[(y - grid.minY) >> 4]) continue;
             for (int z = 0; z < 16; z++) {
                 for (int x = 0; x < 16; x++) {
-                    if (grid.localOpen(x, y, z)) detector.scanCell(minX + x, y, minZ + z, tunnels, holes, stairs, found);
+                    if (grid.localOpen(x, y, z)) detector.scanCell(minX + x, y, minZ + z, true, true, true, found);
                 }
             }
         }
+        found.removeIf(segment -> segment.kind() == TunnelDetector.Kind.HOLE && igloo(chunk.getLevel(), segment));
         return found.isEmpty() ? null : List.copyOf(found);
+    }
+
+    /** An igloo's basement ladder shaft is a 1x1 hole walled with stone bricks, up to 30 deep. */
+    private static boolean igloo(Level level, TunnelDetector.Segment hole) {
+        BlockPos middle = new BlockPos(hole.x(), hole.y() + hole.length() / 2, hole.z());
+        return level.getBlockState(middle.north()).is(Blocks.STONE_BRICKS) && level.getBlockState(middle.south()).is(Blocks.STONE_BRICKS)
+                && level.getBlockState(middle.east()).is(Blocks.STONE_BRICKS) && level.getBlockState(middle.west()).is(Blocks.STONE_BRICKS);
     }
 
     /** The chunk's blocks as two bit sets, with ordinary level reads for neighboring chunks. */
@@ -137,6 +164,10 @@ final class TunnelIndex {
 
         boolean localOpen(int x, int y, int z) { return get(openBits, index(x, y, z)); }
 
+        @Override public boolean inside(int x, int z) {
+            return SectionPos.blockToSectionCoord(x) == chunkX && SectionPos.blockToSectionCoord(z) == chunkZ;
+        }
+
         @Override public boolean open(int x, int y, int z) { return read(x, y, z, true); }
 
         @Override public boolean solid(int x, int y, int z) { return read(x, y, z, false); }
@@ -148,7 +179,7 @@ final class TunnelIndex {
             }
             outside.set(x, y, z);
             // Unknown blocks are neither, so a passage can't be confirmed through an unloaded chunk.
-            if (!level.hasChunkAt(outside)) return false;
+            if (!LoadedChunks.has(level, outside)) return false;
             BlockState state = level.getBlockState(outside);
             return open ? TunnelIndex.open(state) : TunnelIndex.solid(state);
         }

@@ -4,6 +4,7 @@ import dev.donut.client.config.ClientConfig;
 import dev.donut.client.config.FinderSettings;
 import net.minecraft.world.level.block.AbstractFurnaceBlock;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -42,8 +43,9 @@ public enum TargetKind {
     }
 
     public static TargetKind from(BlockState state) {
-        if (state.is(Blocks.CHEST)) return CHEST;
         if (state.is(Blocks.TRAPPED_CHEST)) return TRAPPED_CHEST;
+        // The copper chests are chests too, one block per oxidation stage.
+        if (state.getBlock() instanceof ChestBlock) return CHEST;
         if (state.is(Blocks.ENDER_CHEST)) return ENDER_CHEST;
         if (state.getBlock() instanceof ShulkerBoxBlock) return SHULKER;
         if (state.is(Blocks.DROPPER)) return DROPPER;

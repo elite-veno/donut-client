@@ -95,8 +95,10 @@ class AmethystGrowthTest {
 
     @Test
     void largeChunksUseTheNormalApproximation() {
-        assertEquals(0, AmethystGrowth.score(100, 150, 120));
-        assertEquals((400 - 87.5) / (600 - 87.5), AmethystGrowth.score(100, 150, 400), 1e-9);
+        // Beyond EXACT_LIMIT budding blocks, so the approximation decides, not the exact table.
+        assertTrue(400 > AmethystGrowth.EXACT_LIMIT);
+        assertEquals(0, AmethystGrowth.score(400, 600, 420));
+        assertEquals((1600 - 350.0) / (2400 - 350.0), AmethystGrowth.score(400, 600, 1600), 1e-9);
     }
 
     @Test

@@ -129,6 +129,26 @@ class ConfigStoreTest {
     }
 
     @Test
+    void oneBadSectionResetsOnlyThatModule() throws IOException {
+        Path path = directory.resolve("donut-client.json");
+        Files.writeString(path, """
+                {"storage":{"enabled":true,"range":64},"tunnels":{"range":"far"},"xray":{"enabled":true}}
+                """);
+        ConfigStore store = new ConfigStore(path);
+
+        ClientConfig loaded = store.load();
+
+        assertTrue(loaded.storage.enabled);
+        assertEquals(64, loaded.storage.range);
+        assertTrue(loaded.xray.enabled);
+        assertEquals(128, loaded.tunnels.range, "the bad section falls back to TunnelFinder's own defaults");
+        assertTrue(store.problem().contains("tunnels"), store.problem());
+        try (var files = Files.list(directory)) {
+            assertTrue(files.anyMatch(file -> file.getFileName().toString().startsWith("donut-client.json.invalid-")));
+        }
+    }
+
+    @Test
     void jsonNullIsRecoveredAndBackedUp() throws IOException {
         Path path = directory.resolve("donut.json");
         Files.writeString(path, "null");

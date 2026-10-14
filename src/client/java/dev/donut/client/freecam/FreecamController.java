@@ -1,7 +1,9 @@
 package dev.donut.client.freecam;
 
+import dev.donut.client.GoNutsGate;
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.config.FreecamSettings;
+import dev.donut.client.input.ModuleKeybinds;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -16,11 +18,18 @@ import net.minecraft.world.phys.Vec3;
 public final class FreecamController {
     private static FreecamController instance;
     private final ClientConfig config;
+    /** The body keeps the sneak it had: standing up would show its nametag through walls and drop it off ledges. */
+    private boolean sneaking;
     private final ClientInput neutralInput = new ClientInput() {
-        @Override public void tick() { keyPresses = Input.EMPTY; moveVector = Vec2.ZERO; }
+        @Override public void tick() {
+            keyPresses = sneaking ? new Input(false, false, false, false, false, true, false) : Input.EMPTY;
+            moveVector = Vec2.ZERO;
+        }
         // Vanilla auto-jump can call this after input.tick(). It must stay neutral too.
         @Override public void makeJump() { }
     };
+    /** Toggle Sneak and Toggle Sprint states when Freecam started; keys pressed while flying must not change them. */
+    private boolean savedSneakToggle, savedSprintToggle;
     private LocalPlayer player;
     private ClientLevel level;
     private ClientInput savedInput;
@@ -61,10 +70,23 @@ public final class FreecamController {
             client.player.sendOverlayMessage(Component.literal("Release the item before enabling Freecam."));
             return;
         }
+        // The body would keep gliding with nobody steering it.
+        if (client.player.isFallFlying()) {
+            client.player.sendOverlayMessage(Component.literal("Land before enabling Freecam."));
+            return;
+        }
+        // GoNuts clicks through the crosshair, which Freecam takes away.
+        if (GoNutsGate.busy()) {
+            client.player.sendOverlayMessage(Component.literal("GoNuts is trading; stop its session before enabling Freecam."));
+            return;
+        }
         settings().sanitize();
         player = client.player;
         level = client.level;
         savedInput = player.input;
+        sneaking = savedInput.keyPresses.shift();
+        savedSneakToggle = client.options.keyShift.isDown();
+        savedSprintToggle = client.options.keySprint.isDown();
         neutralInput.tick();
         player.input = neutralInput;
         position = player.getEyePosition();
@@ -79,7 +101,11 @@ public final class FreecamController {
 
     public void disable() {
         if (player != null && player.input == neutralInput && savedInput != null) player.input = savedInput;
-        if (active) suppressActions(Minecraft.getInstance());
+        if (active) {
+            Minecraft client = Minecraft.getInstance();
+            suppressActions(client);
+            releaseMovement(client);
+        }
         active = false;
         settings().enabled = false;
         player = null;
@@ -88,21 +114,32 @@ public final class FreecamController {
     }
 
     public void tick(Minecraft client) {
-        if (active && !isActive()) { disable(); return; }
+        if (active && !isActive()) {
+            disable();
+            // Death, a dimension change or another camera ended it; say so rather than vanish.
+            if (client.player != null) client.player.sendOverlayMessage(Component.literal("Freecam off"));
+            return;
+        }
         if (settings().enabled != active) setEnabled(settings().enabled);
         if (!isActive()) return;
+        if (GoNutsGate.busy()) {
+            disable();
+            client.player.sendOverlayMessage(Component.literal("Freecam off: GoNuts started trading"));
+            return;
+        }
         suppressActions(client);
         previousPosition = position;
         if (client.gui.screen() != null || client.isPaused()) return;
         var options = client.options;
         double forward = axis(options.keyUp, options.keyDown);
         double strafe = axis(options.keyRight, options.keyLeft);
-        double vertical = axis(options.keyJump, options.keyShift);
+        // Sneak and sprint report their toggle state when set to Toggle; flying needs the key itself.
+        double vertical = (options.keyJump.isDown() ? 1 : 0) - (ModuleKeybinds.isHeld(client, options.keyShift) ? 1 : 0);
         Vec3 look = Vec3.directionFromRotation(pitch, yaw);
         double radians = Math.toRadians(yaw);
         Vec3 motion = look.scale(forward).add(-Math.cos(radians) * strafe, vertical, -Math.sin(radians) * strafe);
         if (motion.lengthSqr() > 1.0e-8) {
-            double speed = settings().speed * (options.keySprint.isDown() ? settings().boostMultiplier : 1);
+            double speed = settings().speed * (ModuleKeybinds.isHeld(client, options.keySprint) ? settings().boostMultiplier : 1);
             Vec3 next = position.add(motion.normalize().scale(speed));
             // Keep all render matrices finite and within Minecraft's supported horizontal world bounds.
             position = new Vec3(Math.clamp(next.x, -29_999_984, 29_999_984),
@@ -112,6 +149,14 @@ public final class FreecamController {
 
     public Vec3 interpolatedPosition(float partialTick) {
         return previousPosition.lerp(position, Math.clamp(partialTick, 0, 1));
+    }
+
+    /** One wheel notch changes the speed by a tenth, within the setting's limits. */
+    public void scroll(double notches) {
+        if (!isActive() || notches == 0) return;
+        settings().speed = settings().speed * Math.pow(1.1, Math.signum(notches));
+        settings().sanitize();
+        player.sendOverlayMessage(Component.literal("Freecam speed %.1f".formatted(settings().speed)));
     }
 
     /** Arguments have already been sensitivity-scaled by Minecraft's mouse handler. */
@@ -136,8 +181,32 @@ public final class FreecamController {
         for (KeyMapping slot : options.keyHotbarSlots) release(slot);
     }
 
+    /**
+     * Keys held when Freecam ends move the body only after a fresh press, and toggled sneak and sprint return to how
+     * they were when it started.
+     */
+    private void releaseMovement(Minecraft client) {
+        var options = client.options;
+        for (KeyMapping key : new KeyMapping[] {options.keyUp, options.keyDown, options.keyLeft, options.keyRight, options.keyJump}) {
+            key.setDown(false);
+        }
+        restore(options.keyShift, options.toggleCrouch().get(), savedSneakToggle);
+        restore(options.keySprint, options.toggleSprint().get(), savedSprintToggle);
+    }
+
+    private static void restore(KeyMapping key, boolean toggle, boolean saved) {
+        if (!toggle) {
+            key.setDown(false);
+            return;
+        }
+        // In toggle mode a press flips the state.
+        if (key.isDown() != saved) key.setDown(true);
+    }
+
     private static void release(KeyMapping key) {
         key.setDown(false);
+        // Set to Toggle, setDown(false) does nothing and a press flips it: turn a toggled attack or use off.
+        if (key.isDown()) key.setDown(true);
         while (key.consumeClick()) { }
     }
 }

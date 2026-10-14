@@ -21,13 +21,14 @@ import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import dev.donut.client.finder.ChunkEvents;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ChunkPos;
 
 /**
  * Runs Auto RTP against the integrated server. A relative teleport stands in for /rtp, and a client-side
- * chest menu stands in for an RTP plugin's world picker. This suite must stay last: its controller replaces
- * the production one returned by {@link AutoRtpController#getInstance()}.
+ * chest menu stands in for an RTP plugin's world picker. Its controller replaces the production one returned by
+ * {@link AutoRtpController#getInstance()}, so no later suite may rely on that.
  */
 public final class AutoRtpGameTest implements FabricClientGameTest {
     private static final ChunkPos GEODE = new ChunkPos(0, -51);
@@ -128,7 +129,8 @@ public final class AutoRtpGameTest implements FabricClientGameTest {
             context.runOnClient(client -> controller.setEnabled(true));
             context.waitFor(client -> controller.phase() == RtpLoop.Phase.AWAIT_TELEPORT);
             openMenu(context, 42, "Teleport", Items.COMPASS, "Spawn", Items.NETHERRACK, "Nether");
-            context.waitFor(client -> controller.result() == RtpLoop.Result.MENU_MISSING, 40);
+            // Items can arrive late, so a menu without a match gets the rest of the 10 s window before the run gives up.
+            context.waitFor(client -> controller.result() == RtpLoop.Result.MENU_MISSING, 10 * 20 + 40);
             context.setScreen(() -> null);
 
             // The settings page shows the outcome of the last run.
@@ -145,6 +147,8 @@ public final class AutoRtpGameTest implements FabricClientGameTest {
                 controller.setEnabled(false);
                 scanner.clear();
                 renderer.close();
+                // Later suites must not feed chunk events to this scanner.
+                ChunkEvents.unregister(scanner);
             });
         }
     }

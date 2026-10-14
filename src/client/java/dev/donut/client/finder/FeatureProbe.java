@@ -63,6 +63,8 @@ public final class FeatureProbe {
     private static boolean exposed(Level level, BlockPos pos) {
         for (Direction direction : Direction.values()) {
             BlockPos neighbor = pos.relative(direction);
+            // An unloaded neighbor reads as void air, which proves nothing.
+            if (!LoadedChunks.has(level, neighbor)) continue;
             if (!level.getBlockState(neighbor).isRedstoneConductor(level, neighbor)) return true;
         }
         return false;
