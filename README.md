@@ -64,6 +64,25 @@ Install JDK 25 and put GoNuts next to this repository (`../Gonuts`) on its `loca
 
 The finished mod, with GoNuts inside, is written to `build/libs/donut-client-2.0.0.jar`.
 
+### Sale builds and keys
+
+Copies sold through Lemon Squeezy need a key. Build them with the product's id:
+
+```powershell
+.\gradlew.bat build -PlicenseProductId=<product id>
+```
+
+That jar is written to `build/sale/` instead, so it never replaces the key-free jar in `build/libs`. Without `-PlicenseProductId`, the mod needs no key at all, and that's how the gametests and your own installs run.
+
+A sale copy stays locked until a key for that product passes. While it's locked:
+- every module is off;
+- module keys do nothing;
+- the menu shows only its **Key** page, which also opens by itself on the title screen.
+
+Paste the key from the purchase email into the Key page and press Enter. Donut checks the key with Lemon Squeezy's License API, then activates it on this PC. A key from any other product is refused. The key and this PC's activation are saved in `config/donut-license.json`.
+
+Donut checks the key again at every start and every six hours, and locks the moment the key runs out. If the key server can't be reached, a key that passed within the last three days keeps working. While locked, settings aren't saved, so a player's own module choices come back as soon as a key passes. `-PlicenseBuyUrl` changes where the Key page's **Buy a key** button leads (by default, the landing page at elite-veno.github.io/donut-client-site).
+
 ## License
 
 MIT. The bundled Inter font uses the SIL Open Font License. GoNuts is MIT licensed (Copyright (c) 2026 cody-raves); its notice ships in the jar as `LICENSE_doughbay`, and the libraries it carries (Jackson, sqlite-jdbc) keep their Apache 2.0 notices inside their own jars.

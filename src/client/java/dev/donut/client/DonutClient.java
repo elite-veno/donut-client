@@ -11,9 +11,12 @@ import dev.donut.client.gui.DonutScreen;
 import dev.donut.client.gui.FinderHud;
 import dev.donut.client.gui.ModuleArrayList;
 import dev.donut.client.input.ModuleKeybinds;
+import dev.donut.client.license.License;
+import dev.donut.client.license.ModuleSuspension;
 import dev.donut.client.render.HighlightRenderer;
 import dev.donut.client.rtp.AutoRtpController;
 import dev.donut.client.xray.XrayController;
+import dev.doughbay.fabric.GoNutsApi;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -28,6 +31,7 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.ChatScreen;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -35,13 +39,16 @@ import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.function.Supplier;
+
 public final class DonutClient implements ClientModInitializer {
     public static final String MOD_ID = "donut";
     private static final Logger LOGGER = LoggerFactory.getLogger("Donut");
     private ConfigStore store;
     private ClientConfig config;
     private FinderScanner scanner;
-    private boolean configProblemShown;
+    private License license;
+    private boolean configProblemShown, lockShown, keyAsked;
 
     @Override
     public void onInitializeClient() {
@@ -64,6 +71,32 @@ public final class DonutClient implements ClientModInitializer {
                 LOGGER.error("Auto RTP could not read a server message", e);
             }
         });
+        Supplier<Screen> menu = () -> new DonutScreen(config, this::save, scanner::activityStats, rtp::status, license);
+
+        // A sale build stays off until a key passes: its modules are suspended and the menu shows only the Key page.
+        license = License.load(FabricLoader.getInstance().getConfigDir(), task -> Minecraft.getInstance().execute(task),
+                () -> "Donut Client: " + Minecraft.getInstance().getUser().getName());
+        ModuleSuspension suspension = new ModuleSuspension();
+        boolean[] wasLocked = {false};
+        license.onChange(() -> {
+            boolean locked = license.locked();
+            if (locked) {
+                suspension.suspend(config);
+                freecam.disable();
+                if (config.rtp.enabled) rtp.setEnabled(false);
+            } else {
+                suspension.resume(config);
+            }
+            // GoNuts locks with Donut, including while a saved key is being checked, so nothing trades before it passes.
+            GoNutsApi.setLocked(!locked ? null : license.state() == License.State.CHECKING ? "Checking the Donut Client key..."
+                    : "Donut Client needs a key: press Right Shift to enter it.");
+            if (locked == wasLocked[0]) return;
+            wasLocked[0] = locked;
+            // An open menu is rebuilt, so it gains or loses its pages with the key.
+            Minecraft client = Minecraft.getInstance();
+            if (client != null && client.gui != null && client.gui.screen() instanceof DonutScreen) client.gui.setScreen(menu.get());
+        });
+        license.start();
 
         KeyMapping.Category category = KeyMapping.Category.register(Identifier.fromNamespaceAndPath(MOD_ID, "client"));
         KeyMapping open = bind("open_gui", GLFW.GLFW_KEY_RIGHT_SHIFT, category);
@@ -82,10 +115,13 @@ public final class DonutClient implements ClientModInitializer {
         ModuleKeybinds.initialize(storage, spawner, camera, debris, activity, autoRtp, xrayKey, fullbrightKey, entities, tunnels, bases);
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            license.tick();
             boolean inputBlocked = ModuleKeybinds.inputBlocked(client);
             while (open.consumeClick()) {
-                if (!inputBlocked && client.gui.screen() == null) client.gui.setScreen(new DonutScreen(config, this::save, scanner::activityStats, rtp::status));
+                if (!inputBlocked && client.gui.screen() == null) client.gui.setScreen(menu.get());
             }
+            // Without a key the menu still opens, to take one, but module keys do nothing.
+            inputBlocked |= license.locked();
             if (ModuleKeybinds.consumePress(client, 0)) {
                 if (!inputBlocked && client.gui.screen() == null && client.player != null) { config.storage.enabled = !config.storage.enabled; save(); }
             }
@@ -127,9 +163,13 @@ public final class DonutClient implements ClientModInitializer {
 
         ScreenEvents.AFTER_INIT.register((client, screen, width, height) -> {
             if (screen instanceof TitleScreen) {
-                Screens.getWidgets(screen).add(Button.builder(Component.literal("Donut"), button ->
-                        client.gui.setScreen(new DonutScreen(config, this::save, scanner::activityStats, rtp::status)))
+                Screens.getWidgets(screen).add(Button.builder(Component.literal("Donut"), button -> client.gui.setScreen(menu.get()))
                         .bounds(width - 66, height - 28, 58, 20).build());
+                // A locked copy asks for its key once per start, on the title screen.
+                if (license.locked() && !keyAsked) {
+                    keyAsked = true;
+                    client.execute(() -> client.gui.setScreen(menu.get()));
+                }
             }
         });
 
@@ -151,6 +191,11 @@ public final class DonutClient implements ClientModInitializer {
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> xray.close());
 
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> client.execute(() -> {
+            if (license.locked() && !lockShown && client.player != null) {
+                lockShown = true;
+                client.player.sendSystemMessage(Component.literal("[Donut] Donut Client needs a key: press Right Shift to enter it.")
+                        .withStyle(net.minecraft.ChatFormatting.YELLOW));
+            }
             // A damaged settings file is otherwise only in the log.
             if (configProblemShown || store.problem().isEmpty() || client.player == null) return;
             configProblemShown = true;
@@ -177,5 +222,9 @@ public final class DonutClient implements ClientModInitializer {
         return KeyMappingHelper.registerKeyMapping(new KeyMapping("key.donut." + name, InputConstants.Type.KEYSYM, key, category));
     }
 
-    private void save() { store.save(config); }
+    /** Not while locked: the modules are switched off then, and the file keeps the player's own choices. */
+    private void save() {
+        if (license != null && license.locked()) return;
+        store.save(config);
+    }
 }

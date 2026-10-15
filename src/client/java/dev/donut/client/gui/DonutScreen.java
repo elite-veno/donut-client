@@ -9,6 +9,7 @@ import dev.donut.client.finder.ActivityStats;
 import dev.donut.client.finder.DebrisStats;
 import dev.donut.client.finder.FinderScanner;
 import dev.donut.client.input.ModuleKeybinds;
+import dev.donut.client.license.License;
 import dev.doughbay.fabric.GoNutsApi;
 import dev.doughbay.fabric.Payroll;
 import dev.doughbay.fabric.Tuning;
@@ -76,6 +77,8 @@ public final class DonutScreen extends Screen {
     private final Runnable save;
     private final Supplier<ActivityStats> activityStats;
     private final Supplier<String> rtpStatus;
+    /** A sale build's key, or null when this build needs none. */
+    private final License license;
     private final String version;
     private final List<NavGroup> groups = new ArrayList<>();
     private final Map<String, Page> pages = new LinkedHashMap<>();
@@ -150,13 +153,27 @@ public final class DonutScreen extends Screen {
     }
 
     public DonutScreen(ClientConfig config, Runnable save, Supplier<ActivityStats> activityStats, Supplier<String> rtpStatus) {
+        this(config, save, activityStats, rtpStatus, null);
+    }
+
+    /** With a sale build's {@code license}: a Key page, and while it is locked, only that page. */
+    public DonutScreen(ClientConfig config, Runnable save, Supplier<ActivityStats> activityStats, Supplier<String> rtpStatus,
+                       License license) {
         super(Component.literal("Donut Client"));
         this.config = config;
         this.save = save;
         this.activityStats = activityStats;
         this.rtpStatus = rtpStatus;
+        this.license = license != null && license.required() ? license : null;
         version = FabricLoader.getInstance().getModContainer("donut")
                 .map(mod -> "v" + mod.getMetadata().getVersion().getFriendlyString()).orElse("");
+        if (this.license != null && this.license.locked()) {
+            group("Donut Client", page("license", "Key", "donut", "Unlock Donut Client and GoNuts", this::drawLicense));
+            pageId = "license";
+            detailName = null;
+            content.scroll = content.scrollTarget = 0;
+            return;
+        }
         group("Modules",
                 page("finders", "Finders", "search", List.of(storage(), spawners(), debris(), tunnels(), entities(), activity(), bases())),
                 page("render", "Render", "eye", List.of(xray(), fullbright(), freecam())),
@@ -177,9 +194,10 @@ public final class DonutScreen extends Screen {
                         c -> goNutsGuarded(c, this::drawGoNuts)).heading("GoNuts"),
                 new Page("gonuts-settings", "Settings", "sliders", "Every GoNuts setting, by group; changes save at once",
                         goNutsCards(), null, "GoNuts settings"));
-        group("General",
-                page("keybinds", "Keybinds", "keyboard", "Keys that turn modules on or off", this::drawKeybinds),
-                page("theme", "Theme", "palette", "Colors and effects", this::drawTheme));
+        Page keybinds = page("keybinds", "Keybinds", "keyboard", "Keys that turn modules on or off", this::drawKeybinds);
+        Page theme = page("theme", "Theme", "palette", "Colors and effects", this::drawTheme);
+        if (this.license == null) group("General", keybinds, theme);
+        else group("General", keybinds, theme, page("license", "Key", "donut", "Your Donut Client key", this::drawLicense));
         if (!pages.containsKey(pageId)) pageId = "finders";
         // Configs from before this design carry the winter theme's colors; they move to its mint once.
         if (config.gui.theme == null) {
@@ -742,6 +760,42 @@ public final class DonutScreen extends Screen {
                 panel.phones(), () -> GoNutsApi.setWebPanelPhones(!panel.phones()));
         c.note("The page starts and stops trading and shows profit, settings, presets and item lists. Settings that move money "
                 + "stay in the game.", DIM);
+    }
+
+    /**
+     * A sale build's key: its state, a field that checks and activates a pasted key on Enter, and where to buy one. The
+     * check runs in the background; when the key passes, the menu is rebuilt with every page.
+     */
+    private void drawLicense(Column c) {
+        c.section(license.locked() ? "Unlock Donut Client" : "Your key");
+        License.State state = license.state();
+        boolean active = state == License.State.ACTIVE;
+        c.info("State", switch (state) {
+            case ACTIVE -> "Active";
+            case CHECKING -> "Checking...";
+            default -> "Locked";
+        }, active ? GOOD : state == License.State.CHECKING ? LABEL : WARN);
+        if (!license.message().isBlank()) c.note(license.message(), active ? LABEL : state == License.State.CHECKING ? MUTED : WARN);
+        if (!license.maskedKey().isEmpty()) c.info("Key", license.maskedKey(), LABEL);
+        if (active && license.expiresAt() != null) {
+            c.info("Runs until", java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH)
+                    .withZone(java.time.ZoneId.systemDefault()).format(license.expiresAt()), LABEL);
+        }
+        if (!active) {
+            c.hintNext("Paste the key from your purchase email");
+            c.field("license.key", "Key", "Paste it here and press Enter", () -> "", key -> { if (!key.isBlank()) license.activate(key); },
+                    false, 64, 220);
+        }
+        if (!active && !license.maskedKey().isEmpty() && state != License.State.CHECKING) {
+            c.button("license.retry", "Check again", "Ask the key server about your saved key once more", "Check", license::recheck);
+        }
+        if (!license.buyUrl().isEmpty()) {
+            c.button("license.buy", "Buy a key", "Two months of Donut Client and GoNuts", "Open",
+                    () -> net.minecraft.util.Util.getPlatform().openUri(license.buyUrl()));
+        }
+        c.note(license.locked() ? "Every module and GoNuts stay off until a key passes. The key is checked at every start "
+                + "and keeps working for 3 days without internet." : "The key is checked at every start and "
+                + "keeps working for 3 days without internet.", DIM);
     }
 
     /**

@@ -47,9 +47,21 @@ fabricApi {
     }
 }
 
+// A sale build: -PlicenseProductId=<Lemon Squeezy product id> makes the mod ask for a key of that product. Its jar goes to
+// build/sale, so it never takes the place of the key-free build/libs jar that gets installed and tested.
+def licenseProductId = (findProperty('licenseProductId') ?: '').toString().trim()
+def licenseBuyUrl = (findProperty('licenseBuyUrl') ?: 'https://elite-veno.github.io/donut-client-site/').toString().trim()
+
 processResources {
     inputs.property 'version', project.version
+    inputs.property 'licenseProductId', licenseProductId
+    inputs.property 'licenseBuyUrl', licenseBuyUrl
     filesMatching('fabric.mod.json') { expand 'version': project.version }
+    filesMatching('donut-license.properties') { expand 'productId': licenseProductId, 'buyUrl': licenseBuyUrl }
+}
+
+if (!licenseProductId.isEmpty()) {
+    tasks.named('jar') { destinationDirectory = layout.buildDirectory.dir('sale') }
 }
 
 tasks.withType(JavaCompile).configureEach {
