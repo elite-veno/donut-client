@@ -30,12 +30,13 @@ import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * ChunkFinder against real worldgen. Freshly generated chunks, a few thousand of them, must show no sign of players,
  * only structures: that checks what the plant clocks take worldgen to leave, and which blocks only builds have. Cactus
  * random ticks grew before anyone came near, a crafting table and a dug hole must each be a sign that spots keep away
- * from, and cactus placed and left alone must vouch for a spot.
+ * from, cactus placed and left alone must vouch for a spot, and after /rtp no spot may be offered near the landing.
  */
 public final class GoodChunkGameTest implements FabricClientGameTest {
     /** DonutSMP's seed, so the plants are the kind its overworld has. */
@@ -46,6 +47,8 @@ public final class GoodChunkGameTest implements FabricClientGameTest {
     private static final int GROWN_X = 9000, GROWN_Z = 9000, FRESH_X = -9000, FRESH_Z = 9000, PAD_Y = 230;
     /** Where a crafting table is left, and a hole dug 64 blocks east of it, on ground nobody else has been near. */
     private static final int TRACE_X = 9000, TRACE_Z = -9000;
+    /** Where a pretend /rtp lands: the fresh stop with the most spots. */
+    private static final int RTP_X = 3000, RTP_Z = 0;
 
     @Override
     public void runTest(ClientGameTestContext context) {
@@ -202,6 +205,32 @@ public final class GoodChunkGameTest implements FabricClientGameTest {
             require(!freshSign, "The untouched pad was read as a sign");
             require(vouched != null, "The untouched pad did not vouch for a spot");
             overlook(context, server, FRESH_X, FRESH_Z, "donut-chunkfinder-fresh-pad");
+
+            // /rtp lands the player where the fresh sweep found the most spots: none may be offered within the RTP distance
+            // of the landing, and the way out is shown.
+            context.runOnClient(client -> client.player.connection.sendCommand("rtp"));
+            teleport(context, server, RTP_X, 120, RTP_Z);
+            settle(context, scanner);
+            List<GoodChunk> atLanding = context.computeOnClient(client -> scanner.goodChunks());
+            Vec3 travel = context.computeOnClient(client -> scanner.travelTarget());
+            int landings = context.computeOnClient(client -> scanner.rtpZones(client).size());
+            double rtpDistance = config.chunks.rtpDistance;
+            log("rtp landing: %d landings noted, %d spots, travel to %s", landings, atLanding.size(), travel);
+            require(landings == 1, "The /rtp landing was not noted: " + landings);
+            require(atLanding.isEmpty(), "Spots offered next to the /rtp landing: " + atLanding.size());
+            require(travel != null && Math.hypot(travel.x - RTP_X, travel.z - RTP_Z) >= rtpDistance,
+                    "No way out of the RTP zone: " + travel);
+            teleport(context, server, (int) Math.round(travel.x), 120, (int) Math.round(travel.z));
+            settle(context, scanner);
+            List<GoodChunk> outThere = context.computeOnClient(client -> scanner.goodChunks());
+            Vec3 stillTravel = context.computeOnClient(client -> scanner.travelTarget());
+            log("past the RTP distance: %d spots%s, travel %s", outThere.size(),
+                    outThere.isEmpty() ? "" : ", best " + describe(outThere.getFirst()), stillTravel);
+            require(stillTravel == null, "Still pointed onward at the travel target: " + stillTravel);
+            for (GoodChunk spot : outThere) {
+                double fromLanding = Math.hypot(spot.center().x - RTP_X, spot.center().z - RTP_Z);
+                require(fromLanding >= rtpDistance, "A spot " + Math.round(fromLanding) + " blocks from the /rtp landing");
+            }
         } finally {
             active.set(false);
             context.runOnClient(client -> {

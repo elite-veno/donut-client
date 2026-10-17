@@ -152,8 +152,10 @@ final class GoodChunkIndex {
      * Judges every scanned chunk and picks spots around {@code origin}.
      *
      * @param self the player, whose own presence is no sign
+     * @param rtpZones random teleport landings in this world, which spots keep the setting's RTP distance from
      */
-    void collect(ClientLevel level, Entity self, Vec3 origin, FinderSettings settings, List<GoodChunk> spots, List<ChunkSign> signs) {
+    void collect(ClientLevel level, Entity self, Vec3 origin, FinderSettings settings, List<RtpZones.Zone> rtpZones,
+                 List<GoodChunk> spots, List<ChunkSign> signs) {
         // Live signs first: what is in sight now, by chunk.
         Long2ObjectOpenHashMap<String> live = new Long2ObjectOpenHashMap<>();
         LongSet structures = new LongOpenHashSet();
@@ -207,8 +209,12 @@ final class GoodChunkIndex {
 
         int clearance = (int) Math.round(settings.minClearance);
         ChunkPos center = ChunkPos.containing(BlockPos.containing(origin));
-        for (SpotPicker.Spot spot : SpotPicker.pick(cells, clearance, settings.maxUnseen, center.x(), center.z(), MAX_SPOTS)) {
+        // Spots near a random teleport landing are dropped after picking; more are picked so enough are left.
+        for (SpotPicker.Spot spot : SpotPicker.pick(cells, clearance, settings.maxUnseen, center.x(), center.z(), MAX_SPOTS * 4)) {
+            if (spots.size() == MAX_SPOTS) break;
             Scan scan = chunks.get(spot.x(), spot.z());
+            double x = scan.chunk.getMinBlockX() + 8, z = scan.chunk.getMinBlockZ() + 8;
+            if (settings.rtpDistance > 0 && RtpZones.distance(rtpZones, x, z) < settings.rtpDistance) continue;
             spots.add(new GoodChunk(scan.chunk, scan.sight.surfaceY, spot.area().detectChance(CONFIDENCE_MINUTES), spot.clear(),
                     spot.area().clocks(), spot.unseenMinutes(), scan.sight.caves));
         }

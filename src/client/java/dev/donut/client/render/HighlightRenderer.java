@@ -331,6 +331,13 @@ public final class HighlightRenderer implements AutoCloseable {
             String label = !out.labelling ? null : (i == 0 ? "Best chunk" : "Good chunk") + ", clear " + spot.clearance();
             out.extras(settings, square, settings.color, distance, 1.0, label);
         }
+        Vec3 travel = scanner.travelTarget();
+        if (travel != null && spots.isEmpty() && out.labelling) {
+            // Far beyond the loaded area: only a label, and a tracer when tracers are on.
+            AABB target = new AABB(travel.x - 0.5, travel.y, travel.z - 0.5, travel.x + 0.5, travel.y + 2, travel.z + 0.5);
+            double distance = Math.hypot(travel.x - out.camera.x, travel.z - out.camera.z);
+            out.extras(settings, target, settings.color, distance, 1.0, "Leave the RTP zone");
+        }
         if (!settings.showSigns) return;
         int signFill = settings.mode != RenderMode.OUTLINE ? argb(settings.secondaryColor, settings.fillOpacity * 0.6) : 0;
         int signOutline = settings.mode != RenderMode.FILL ? argb(settings.secondaryColor, settings.outlineOpacity * 0.5) : 0;

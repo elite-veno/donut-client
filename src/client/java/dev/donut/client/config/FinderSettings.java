@@ -71,6 +71,8 @@ public final class FinderSettings {
     public double ignoreVisitsUnder = 2;
     /** ChunkFinder only: the most of a spot's underground that may be open cave, water or lava, from 0 to 1. */
     public double maxCaves = 0.05;
+    /** ChunkFinder only: how far from every random teleport landing a spot must be, in blocks; 0 turns it off. */
+    public double rtpDistance = 2000;
     /** ChunkFinder only: also mark the chunks spots keep away from, with why. */
     public boolean showSigns = true;
     /** ActivityFinder only: scan every loaded chunk without distance fade, ignoring the range. */
@@ -112,6 +114,7 @@ public final class FinderSettings {
         maxUnseen = clamp(maxUnseen, 1, 60, defaults.maxUnseen);
         ignoreVisitsUnder = clamp(ignoreVisitsUnder, 0, 30, defaults.ignoreVisitsUnder);
         maxCaves = clamp(maxCaves, 0, 0.3, defaults.maxCaves);
+        rtpDistance = clamp(rtpDistance, 0, 10000, defaults.rtpDistance);
         color &= 0xFFFFFF;
         chestColor &= 0xFFFFFF;
         shulkerColor &= 0xFFFFFF;

@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
 import net.minecraft.ChatFormatting;
+import net.fabricmc.fabric.api.client.message.v1.ClientSendMessageEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
@@ -61,6 +62,11 @@ public final class FinderScanner implements ChunkEvents.Listener {
     /** The best spot of the last passes and for how many in a row, so one still shifting as chunks arrive waits. */
     private ChunkPos steadySpot;
     private int steadyPasses;
+    private final RtpZones rtpWatch = new RtpZones();
+    private ClientLevel rtpLevel;
+    private long rtpTicks;
+    /** Where to go to be ChunkFinder's distance from every random teleport landing, or null when already there. */
+    private Vec3 travelTarget;
     /**
      * Whether each spawner looked activated the first time it was seen, before our own presence could run its timer.
      * Kept per dimension for the whole connection: a spawner we ran ourselves must not count once we come back.
@@ -82,6 +88,9 @@ public final class FinderScanner implements ChunkEvents.Listener {
         this.config = config;
         instance = this;
         ChunkEvents.register(this);
+        ClientSendMessageEvents.COMMAND.register(command -> {
+            if (RtpZones.isRtp(command, config.rtp.command)) rtpWatch.commandSent(rtpTicks);
+        });
     }
 
     /** The most recently created scanner, for screens that show live counts. */
@@ -112,6 +121,27 @@ public final class FinderScanner implements ChunkEvents.Listener {
     public GoodChunk bestGoodChunk() { return goodChunks.isEmpty() ? null : goodChunks.getFirst(); }
     /** The chunks ChunkFinder keeps spots away from, with why. */
     public List<ChunkSign> chunkSigns() { return chunkSigns; }
+    /** Where to go to be ChunkFinder's RTP distance from every random teleport landing; null when already that far. */
+    public Vec3 travelTarget() { return config.chunks.enabled ? travelTarget : null; }
+
+    /** The random teleport landings on this server, in this dimension. */
+    public List<RtpZones.Zone> rtpZones(Minecraft client) {
+        if (client.level == null) return List.of();
+        String server = serverName(client), dimension = client.level.dimension().identifier().toString();
+        return config.rtpZones.stream().filter(zone -> zone.server().equals(server) && zone.dimension().equals(dimension)).toList();
+    }
+
+    /** Forgets this server's random teleport landings. */
+    public void forgetRtpZones(Minecraft client) {
+        String server = serverName(client);
+        config.rtpZones.removeIf(zone -> zone.server().equals(server));
+        travelTarget = null;
+    }
+
+    private static String serverName(Minecraft client) {
+        if (client.getSingleplayerServer() != null) return "singleplayer";
+        return client.getCurrentServer() != null ? client.getCurrentServer().ip : "unknown";
+    }
     public ChunkStats chunkStats() { return config.chunks.enabled ? goodIndex.stats() : ChunkStats.EMPTY; }
     /** One line per enabled finder for the info HUD. */
     public List<FinderSummary> summaries() { return summaries; }
@@ -126,6 +156,7 @@ public final class FinderScanner implements ChunkEvents.Listener {
         baseIndex.clear();
         goodChunks = List.of();
         chunkSigns = List.of();
+        travelTarget = null;
         goodIndex.clear();
         announcedSpot = steadySpot = null;
         lastLevel = null;
@@ -154,8 +185,11 @@ public final class FinderScanner implements ChunkEvents.Listener {
             clear();
             spawnerSight.clear();
             goodIndex.forget();
+            rtpWatch.lost();
+            rtpLevel = null;
             return;
         }
+        followRtp(client);
         if (client.level != lastLevel) useLevel(client.level);
         // Where we stand, not the camera: the server random-ticks the chunks around the player.
         goodIndex.follow(client.level, client.player.chunkPosition());
@@ -230,9 +264,14 @@ public final class FinderScanner implements ChunkEvents.Listener {
 
         List<GoodChunk> spots = new ArrayList<>();
         List<ChunkSign> signs = new ArrayList<>();
-        if (config.chunks.enabled) goodIndex.collect(client.level, client.player, origin, config.chunks, spots, signs);
+        List<RtpZones.Zone> zones = rtpZones(client);
+        if (config.chunks.enabled) goodIndex.collect(client.level, client.player, origin, config.chunks, zones, spots, signs);
         goodChunks = List.copyOf(spots);
         chunkSigns = List.copyOf(signs);
+        var border = client.level.getWorldBorder();
+        double[] target = config.chunks.enabled ? RtpZones.travelTarget(zones, client.player.getX(), client.player.getZ(),
+                config.chunks.rtpDistance, new double[] {border.getMinX(), border.getMinZ(), border.getMaxX(), border.getMaxZ()}) : null;
+        travelTarget = target == null ? null : new Vec3(target[0], client.player.getY(), target[1]);
         if (config.chunks.enabled) announceSpot(client);
         summaries = summarize(client, origin);
     }
@@ -388,14 +427,16 @@ public final class FinderScanner implements ChunkEvents.Listener {
         if (config.chunks.enabled) {
             GoodChunk best = bestGoodChunk();
             ChunkStats stats = goodIndex.stats();
+            boolean travel = best == null && travelTarget != null;
             String note = !stats.overworld() ? "not Overworld"
                     : best != null ? "clear " + best.clearance() + ", unseen " + GoodChunkIndex.duration(best.unseenMinutes())
+                    : travel ? "leave the RTP zone: " + Math.round(Math.hypot(travelTarget.x - origin.x, travelTarget.z - origin.z)) + " m"
                     : stats.scanned() < 9 ? ""
                     : stats.roomy() == 0 ? (stats.signs() > 0 ? "signs all around" : "clearance past view")
                     : stats.solid() == 0 ? "too much cave below"
                     : stats.withClocks() == 0 ? "no plants to judge by" : "too few plants to judge by";
-            lines.add(new FinderSummary("Chunks", goodChunks.size(), best == null ? null : best.center(), config.chunks.color, note,
-                    !stats.overworld()));
+            Vec3 toward = best != null ? best.center() : travel ? travelTarget : null;
+            lines.add(new FinderSummary("Chunks", goodChunks.size(), toward, config.chunks.color, note, !stats.overworld()));
         }
         if (config.entities.enabled) {
             int count = 0;
@@ -518,6 +559,34 @@ public final class FinderScanner implements ChunkEvents.Listener {
             activity.markDirty(pos.x(), pos.z() - 1);
             activity.markDirty(pos.x(), pos.z() + 1);
         }
+    }
+
+    /**
+     * Notices random teleports: a long jump, or a new world, within a while of sending the rtp command. The landing is
+     * kept, and with ChunkFinder on, where to go to be far enough from it is said in chat.
+     */
+    private void followRtp(Minecraft client) {
+        rtpTicks++;
+        boolean newLevel = rtpLevel != null && client.level != rtpLevel;
+        rtpLevel = client.level;
+        double[] landing = rtpWatch.tick(rtpTicks, client.player.getX(), client.player.getZ(), newLevel);
+        if (landing == null) return;
+        String server = serverName(client), dimension = client.level.dimension().identifier().toString();
+        int x = (int) Math.floor(landing[0]), z = (int) Math.floor(landing[1]);
+        boolean known = config.rtpZones.stream().anyMatch(zone -> zone.server().equals(server) && zone.dimension().equals(dimension)
+                && Math.hypot(zone.x() - x, zone.z() - z) < 64);
+        if (!known) {
+            config.rtpZones.add(new RtpZones.Zone(server, dimension, x, z));
+            if (config.rtpZones.size() > ClientConfig.MAX_RTP_ZONES) config.rtpZones.removeFirst();
+        }
+        if (!config.chunks.enabled || config.chunks.rtpDistance <= 0) return;
+        var border = client.level.getWorldBorder();
+        double[] target = RtpZones.travelTarget(rtpZones(client), x, z, config.chunks.rtpDistance,
+                new double[] {border.getMinX(), border.getMinZ(), border.getMaxX(), border.getMaxZ()});
+        long distance = Math.round(config.chunks.rtpDistance);
+        client.player.sendSystemMessage(Component.literal("[Donut] RTP landing at " + x + ", " + z + " noted: good chunks are "
+                + distance + "+ blocks from it" + (target == null ? "." : ". Head for " + Math.round(target[0]) + ", "
+                + Math.round(target[1]) + "; the info panel points the way.")).withStyle(ChatFormatting.GREEN));
     }
 
     /** A chat line with the coordinates, once per area: a new best spot more than a clearance from the last one. */

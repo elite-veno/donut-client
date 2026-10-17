@@ -403,6 +403,8 @@ public final class DonutScreen extends Screen {
                     () -> s.ignoreVisitsUnder, v -> s.ignoreVisitsUnder = v, 0, 30, 1, " min");
             c.slider("caves", "Max caves", "How much of a spot's underground may be open cave, water or lava; lower is safer to dig",
                     () -> s.maxCaves, v -> s.maxCaves = v, 0, 0.3, .01, "%");
+            c.slider("rtp", "RTP distance", "How far a spot must be from every place /rtp landed you; 0 turns it off",
+                    () -> s.rtpDistance, v -> s.rtpDistance = v, 0, 10000, 100, " blocks");
             c.toggle("signs", "Show signs", "Mark the chunks spots keep away from, labelled with why",
                     () -> s.showSigns, () -> s.showSigns = !s.showSigns);
             c.toggle("notify", "Announce spots", "A chat line with the coordinates when a new area has a good chunk",
@@ -423,6 +425,14 @@ public final class DonutScreen extends Screen {
         c.info("Structures", Integer.toString(stats.structures()), TEXT);
         GoodChunk best = scanner.bestGoodChunk();
         c.info("Best", best == null ? "None" : "x " + best.surfaceCenter().getX() + ", z " + best.surfaceCenter().getZ(), TEXT);
+        var zones = scanner.rtpZones(minecraft);
+        c.info("RTP landings", Integer.toString(zones.size()), TEXT);
+        var travel = scanner.travelTarget();
+        if (travel != null) c.info("Travel to", "x " + Math.round(travel.x) + ", z " + Math.round(travel.z), TEXT);
+        if (!zones.isEmpty()) {
+            c.button("forgetRtp", "Forget RTP landings", "Every landing ChunkFinder noted on this server; spots near them are allowed again",
+                    "Forget", () -> scanner.forgetRtpZones(minecraft));
+        }
         if (!stats.overworld()) {
             c.note("Cane, cactus, kelp and vines only grow in the Overworld.", WARN);
         } else if (best == null && stats.scanned() >= 9) {
@@ -431,6 +441,8 @@ public final class DonutScreen extends Screen {
                     : stats.solid() == 0 ? "The clear chunks have too much cave under them; move on or raise Max caves."
                     : "Clear areas have too few plants to tell whether anyone was there; raise Max unseen time.", MUTED);
         }
+        c.note("Each place /rtp lands you is noted; spots keep the RTP distance from all of them, and until you are that far out "
+                + "the info panel points the way.", DIM);
         c.note("Any built block open to air, a placed entity or a dug passage keeps spots a clearance away; buried blocks don't "
                 + "count, since anti-xray fakes them. Structures keep spots out of them and the chunks touching them. Plants are "
                 + "judged as the server first sent them, so your own time here doesn't count.", DIM);
