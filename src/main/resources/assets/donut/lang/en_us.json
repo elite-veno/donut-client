@@ -12,5 +12,6 @@
   "key.donut.toggle_entities": "Toggle EntityFinder",
   "key.donut.toggle_tunnels": "Toggle TunnelFinder",
   "key.donut.toggle_bases": "Toggle BaseFinder",
-  "key.donut.toggle_schematic": "Toggle SchematicBuilder"
+  "key.donut.toggle_schematic": "Toggle SchematicBuilder",
+  "key.donut.toggle_chunks": "Toggle ChunkFinder"
 }

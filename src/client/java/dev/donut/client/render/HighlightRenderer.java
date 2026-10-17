@@ -18,9 +18,11 @@ import dev.donut.client.config.FinderSettings;
 import dev.donut.client.config.RenderMode;
 import dev.donut.client.finder.ActivityArea;
 import dev.donut.client.finder.BaseArea;
+import dev.donut.client.finder.ChunkSign;
 import dev.donut.client.finder.EntityKind;
 import dev.donut.client.finder.FinderScanner;
 import dev.donut.client.finder.FoundBlock;
+import dev.donut.client.finder.GoodChunk;
 import dev.donut.client.finder.LoadedChunks;
 import dev.donut.client.finder.TargetKind;
 import dev.donut.client.finder.TunnelDetector;
@@ -144,7 +146,8 @@ public final class HighlightRenderer implements AutoCloseable {
 
     private boolean anyEnabled() {
         return config.storage.enabled || config.spawner.enabled || config.debris.enabled || config.activity.enabled
-                || config.tunnels.enabled || config.entities.enabled || config.bases.enabled || SchematicBuilder.busy();
+                || config.tunnels.enabled || config.entities.enabled || config.bases.enabled || config.chunks.enabled
+                || SchematicBuilder.busy();
     }
 
     private void extract(LevelExtractionContext context) {
@@ -193,6 +196,7 @@ public final class HighlightRenderer implements AutoCloseable {
         if (config.tunnels.enabled) addTunnels(out);
         if (config.activity.enabled) addActivity(out);
         if (config.bases.enabled) addBases(out);
+        if (config.chunks.enabled) addChunks(out);
         if (config.debris.enabled && config.debris.searchAreas) addDebrisAreas(out);
         if (config.entities.enabled || config.storage.enabled && config.storage.minecarts) addEntities(out);
         if (SchematicBuilder.busy()) addSchematic(out);
@@ -303,6 +307,39 @@ public final class HighlightRenderer implements AutoCloseable {
     }
 
     /**
+     * ChunkFinder: a square on each spot's surface and a beam over the best, so it shows from afar; with signs shown, a
+     * square on each chunk the spots keep away from, labelled with why. Only the spots get tracers.
+     */
+    private void addChunks(Extraction out) {
+        FinderSettings settings = config.chunks;
+        float width = (float) Math.clamp(settings.lineWidth, 0.5, 8.0);
+        int fill = settings.mode != RenderMode.OUTLINE ? argb(settings.color, settings.fillOpacity) : 0;
+        int outline = settings.mode != RenderMode.FILL ? argb(settings.color, settings.outlineOpacity) : 0;
+        List<GoodChunk> spots = scanner.goodChunks();
+        for (int i = 0; i < spots.size(); i++) {
+            GoodChunk spot = spots.get(i);
+            double distance = spot.horizontalDistance(out.camera);
+            AABB square = spot.surfaceBounds();
+            out.box(square, fill, outline, width, settings.throughWalls);
+            if (i == 0) {
+                Vec3 center = spot.center();
+                AABB beam = new AABB(center.x - 0.5, center.y, center.z - 0.5, center.x + 0.5, center.y + 64, center.z + 0.5);
+                out.box(beam, argb(settings.color, Math.max(settings.fillOpacity, 0.25)), outline, width, true);
+            }
+            String label = !out.labelling ? null : (i == 0 ? "Best chunk" : "Good chunk") + ", clear " + spot.clearance();
+            out.extras(settings, square, settings.color, distance, 1.0, label);
+        }
+        if (!settings.showSigns) return;
+        int signFill = settings.mode != RenderMode.OUTLINE ? argb(settings.secondaryColor, settings.fillOpacity * 0.6) : 0;
+        int signOutline = settings.mode != RenderMode.FILL ? argb(settings.secondaryColor, settings.outlineOpacity * 0.5) : 0;
+        for (ChunkSign sign : scanner.chunkSigns()) {
+            AABB square = sign.surfaceBounds();
+            out.box(square, signFill, signOutline, width * 0.75f, settings.throughWalls);
+            if (out.labelling) out.label(square, sign.reason(), settings.secondaryColor, sign.horizontalDistance(out.camera));
+        }
+    }
+
+    /**
      * The schematic's bounds, and the blocks left in the layer being built: the next one white, those without
      * materials red, spots another block holds amber. Seen through walls, since a layer is often behind the last.
      */
@@ -408,6 +445,11 @@ public final class HighlightRenderer implements AutoCloseable {
                         (float) Math.clamp(settings.lineWidth, 0.5, 8.0) * widthScale, distance));
             }
             if (labelling && label != null) labelCandidates.add(new Candidate(bounds, label, color, distance));
+        }
+
+        /** A label without a tracer. */
+        void label(AABB bounds, String label, int color, double distance) {
+            labelCandidates.add(new Candidate(bounds, label, color, distance));
         }
 
         void box(AABB box, int fill, int outline, float width, boolean throughWalls) {

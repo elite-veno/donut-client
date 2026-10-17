@@ -45,6 +45,21 @@ ActivityFinder outlines chunks whose amethyst geodes grew well past their genera
 
 Auto RTP sends a random-teleport command (`rtp` by default), clicks the configured item (`Overworld`) when the command opens a world menu, waits for the teleport, lets ActivityFinder scan for a few seconds, and stops with a chat message and a sound once a chunk reaches its Stop at growth (55% by default, separate from ActivityFinder's square threshold). Each command is sent exactly as if typed in chat and echoed as a grey local line, and the teleport may take up to a minute. Otherwise it waits out its interval and tries again, up to its attempt limit. Cooldown messages from the server delay the next attempt instead of being retried. It also stops when you take damage, when three commands in a row do not teleport you, when the menu lacks the configured item, or when three areas in a row hold no budding amethyst at all. It never starts on its own after joining. Check a server's rules before automating commands.
 
+### Finding a base spot
+
+**ChunkFinder** (Finders page) looks for a place to build that players haven't been near, such as an area away from where people landed with RTP. It marks the best chunk with a green square and a beam, puts squares on the other good chunks, and announces each new area's best chunk in chat with its coordinates. With Show signs on, the chunks it keeps away from get red squares labelled with why.
+
+The server only grows plants in chunks within a player's simulation distance, so plants show whether someone spent time nearby. ChunkFinder reads them in every loaded chunk:
+
+- **Sugar cane and cactus** generate at age 0 and age on every random tick, about once a minute at the default speed. The server never sends that change on its own, so any age seen in a freshly sent chunk means a player was within range for a while. All sugar cane grown to 3 tall says the same.
+- **Kelp** generates at age 20 to 23, at most 11 blocks tall and never up to the water's surface; older, taller or surface kelp grew.
+- **Vines** hang at most 4 blocks below a leaf when generated; longer hanging vines grew.
+- **Amethyst** grown past worldgen (as ActivityFinder judges it), **player-built blocks** (as BaseFinder scores them), and **players** in sight are signs too.
+
+A chunk only counts as a sign when its growth is more than chance and your own time nearby explain: plants are judged as the server first sent them, and the time you spent within simulation distance before that is allowed for. Growth from stays shorter than **Ignore visits under** (2 minutes by default), such as someone flying past, doesn't count. A good chunk needs every chunk within **Clearance** (4 by default) loaded and free of signs. It also needs enough cane, cactus, kelp or vines around it that a player staying **Max unseen time** (10 minutes by default) would have grown at least one, 19 times in 20. One sugar cane covers a visit of about 3½ minutes, and kelp and vines take more. Ground without such plants can't vouch for anything, so it gives no spots. The best chunk is the one deepest inside clear ground, then the one with the most telling plants, then the nearest. Labels and the info panel show how many rings of clear chunks surround it. A server that changes its random tick speed shifts all these times.
+
+Only the Overworld has these plants, and ChunkFinder only sees chunks your client holds; a higher render distance judges a wider area.
+
 ### Building schematics
 
 **SchematicBuilder** (the Build page) builds a Litematica schematic (`.litematic`) in the world from the blocks you carry, a layer at a time from the bottom up.
