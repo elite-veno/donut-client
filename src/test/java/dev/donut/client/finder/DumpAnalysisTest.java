@@ -13,10 +13,9 @@ import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.Bootstrap;
-import net.minecraft.util.Mth;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.levelgen.GenerationStep;
 import net.minecraft.world.level.levelgen.WorldgenRandom;
 import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
 import org.junit.jupiter.api.Assumptions;
@@ -29,7 +28,6 @@ import org.junit.jupiter.api.Test;
  */
 class DumpAnalysisTest {
     private static final long SEED = 6608149111735331168L;
-    private static final int STEP = GenerationStep.Decoration.UNDERGROUND_DECORATION.ordinal();
     private static final Set<String> OPEN = Set.of("air", "cave_air", "void_air", "lava", "fire", "soul_fire", "water");
     private static final List<String> CENSUS = List.of("ancient_debris", "nether_quartz_ore", "nether_gold_ore", "magma_block",
             "glowstone", "gravel", "blackstone", "soul_sand", "soul_soil", "basalt", "netherrack", "bone_block", "nether_bricks");
@@ -116,15 +114,16 @@ class DumpAnalysisTest {
         System.out.println(line);
     }
 
-    /** Gravel and blackstone blob centers that hold their block, per chunk: 2 tries each, unless in basalt deltas. */
+    /** Gravel and blackstone blob centers that hold their block, per chunk, tried as their features place them. */
     private static Map<Long, Integer> oreMap(Dump dump) {
         Map<Long, Integer> hits = new HashMap<>();
         int[] total = new int[4];
         WorldgenRandom random = new WorldgenRandom(new XoroshiroRandomSource(0));
+        NetherFeatures features = NetherFeatures.get().orElseThrow();
         for (Chunk chunk : dump.chunks().values()) {
-            int own = ore(dump, chunk, random, SEED, 17, 5, 41, "gravel", total, 0) + ore(dump, chunk, random, SEED, 18, 5, 31, "blackstone", total, 0);
-            ore(dump, chunk, random, SEED + 1, 17, 5, 41, "gravel", total, 2);
-            ore(dump, chunk, random, SEED + 1, 18, 5, 31, "blackstone", total, 2);
+            int own = ore(dump, chunk, random, SEED, features.gravel, total, 0) + ore(dump, chunk, random, SEED, features.blackstone, total, 0);
+            ore(dump, chunk, random, SEED + 1, features.gravel, total, 2);
+            ore(dump, chunk, random, SEED + 1, features.blackstone, total, 2);
             hits.put(ChunkPos.pack(chunk.x(), chunk.z()), own);
         }
         System.out.printf("gravel+blackstone centers: seed %d of %d, wrong seed %d of %d%n", total[1], total[0], total[3], total[2]);
@@ -144,17 +143,18 @@ class DumpAnalysisTest {
         return hits;
     }
 
-    private static int ore(Dump dump, Chunk chunk, WorldgenRandom random, long seed, int index, int minY, int maxY, String block,
-                           int[] total, int slot) {
+    private static int ore(Dump dump, Chunk chunk, WorldgenRandom random, long seed, NetherFeatures.Ore ore, int[] total, int slot) {
         int minX = chunk.x() * 16, minZ = chunk.z() * 16, hits = 0;
-        random.setFeatureSeed(random.setDecorationSeed(seed, minX, minZ), index, STEP);
-        for (int i = 0; i < 2; i++) {
+        String block = BuiltInRegistries.BLOCK.getKey(ore.block()).getPath();
+        random.setFeatureSeed(random.setDecorationSeed(seed, minX, minZ), ore.index(), NetherFeatures.STEP);
+        for (int placements = ore.count().sample(random); placements > 0; placements--) {
             int x = minX + random.nextInt(16), z = minZ + random.nextInt(16);
-            int y = Mth.randomBetweenInclusive(random, minY, maxY);
-            if (dump.biome(x, y, z).equals("basalt_deltas")) continue;
+            int y = ore.y(random);
+            String biome = dump.biome(x, y, z);
+            if (ore.missingFrom().stream().anyMatch(key -> key.identifier().getPath().equals(biome))) continue;
             random.nextFloat();
             int low = random.nextInt(3) - 2, high = random.nextInt(3) - 2;
-            for (int sphere = 0; sphere < 33; sphere++) random.nextDouble();
+            for (int sphere = 0; sphere < ore.size(); sphere++) random.nextDouble();
             String center = dump.block(x, y + Math.floorDiv(low + high, 2), z);
             // A center dug out or flooded since says nothing either way.
             if (center == null || OPEN.contains(center)) continue;

@@ -6,7 +6,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
-import net.minecraft.world.level.levelgen.GenerationStep;
 import net.minecraft.world.level.levelgen.LegacyRandomSource;
 import net.minecraft.world.level.levelgen.PositionalRandomFactory;
 import net.minecraft.world.level.levelgen.WorldOptions;
@@ -21,39 +20,37 @@ import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
  * that anti-xray hides.
  */
 final class DebrisPredictor {
-    /** Indexes of ore_ancient_debris_large and ore_debris_small among the Nether's underground decorations. */
-    static final int LARGE_INDEX = 21, SMALL_INDEX = 22;
-    private static final int STEP = GenerationStep.Decoration.UNDERGROUND_DECORATION.ordinal();
-
     private final WorldgenRandom random = new WorldgenRandom(new XoroshiroRandomSource(0));
 
     /** A seed as typed on the world creation screen: a number, or text hashed the same way. */
     static OptionalLong parseSeed(String text) { return text == null ? OptionalLong.empty() : WorldOptions.parseSeed(text); }
 
     /**
-     * Every position this chunk's debris features try, as {@link BlockPos#asLong} values. Up to five; some
-     * reach two blocks into a neighboring chunk.
+     * Every position this chunk's debris features try, as {@link BlockPos#asLong} values: a handful, some
+     * reaching a block or two into a neighboring chunk. None if this game's debris can't be replayed.
      */
     void attempts(long seed, int chunkX, int chunkZ, LongConsumer out) {
+        NetherFeatures features = NetherFeatures.get().orElse(null);
+        if (features == null) return;
         int minX = SectionPos.sectionToBlockCoord(chunkX), minZ = SectionPos.sectionToBlockCoord(chunkZ);
         long decoration = random.setDecorationSeed(seed, minX, minZ);
-        feature(decoration, LARGE_INDEX, minX, minZ, true, out);
-        feature(decoration, SMALL_INDEX, minX, minZ, false, out);
+        feature(decoration, features.debrisLarge, minX, minZ, out);
+        feature(decoration, features.debrisSmall, minX, minZ, out);
     }
 
-    /** InSquarePlacement, HeightRangePlacement, then ScatteredOreFeature, drawing in the same order they do. */
-    private void feature(long decoration, int index, int minX, int minZ, boolean large, LongConsumer out) {
-        random.setFeatureSeed(decoration, index, STEP);
-        int x = minX + random.nextInt(16);
-        int z = minZ + random.nextInt(16);
-        // A triangle from 8 to 24 for the large vein, uniform from 8 to 119 for the small one (generation ends at y 127).
-        int y = large ? 8 + Mth.randomBetweenInclusive(random, 0, 8) + Mth.randomBetweenInclusive(random, 0, 8)
-                : Mth.randomBetweenInclusive(random, 8, 119);
-        int count = random.nextInt((large ? 3 : 2) + 1);
-        for (int i = 0; i < count; i++) {
-            int spread = Math.min(i, 7);
-            int dx = offset(spread), dy = offset(spread), dz = offset(spread);
-            out.accept(BlockPos.asLong(x + dx, y + dy, z + dz));
+    /** CountPlacement, InSquarePlacement, HeightRangePlacement, then ScatteredOreFeature, drawing in the same order they do. */
+    private void feature(long decoration, NetherFeatures.Ore ore, int minX, int minZ, LongConsumer out) {
+        random.setFeatureSeed(decoration, ore.index(), NetherFeatures.STEP);
+        for (int placements = ore.count().sample(random); placements > 0; placements--) {
+            int x = minX + random.nextInt(16);
+            int z = minZ + random.nextInt(16);
+            int y = ore.y(random);
+            int count = random.nextInt(ore.size() + 1);
+            for (int i = 0; i < count; i++) {
+                int spread = Math.min(i, 7);
+                int dx = offset(spread), dy = offset(spread), dz = offset(spread);
+                out.accept(BlockPos.asLong(x + dx, y + dy, z + dz));
+            }
         }
     }
 

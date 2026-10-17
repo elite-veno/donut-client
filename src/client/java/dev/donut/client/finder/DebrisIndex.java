@@ -126,7 +126,10 @@ final class DebrisIndex {
             loggedAreas.clear();
             logLines = 0;
             lastSummary = "";
-            if (seed.isPresent()) log("seed %d", seed.getAsLong());
+            if (seed.isPresent()) {
+                NetherFeatures.preload();
+                log("seed %d", seed.getAsLong());
+            }
         }
         chunks.tick(level, center, range);
     }
