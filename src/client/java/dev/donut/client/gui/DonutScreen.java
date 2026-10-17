@@ -9,9 +9,6 @@ import dev.donut.client.finder.ActivityStats;
 import dev.donut.client.finder.DebrisStats;
 import dev.donut.client.finder.FinderScanner;
 import dev.donut.client.input.ModuleKeybinds;
-import dev.doughbay.fabric.GoNutsApi;
-import dev.doughbay.fabric.Payroll;
-import dev.doughbay.fabric.Tuning;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -170,13 +167,6 @@ public final class DonutScreen extends Screen {
                                 () -> config.hud.labels, () -> change(() -> config.hud.labels = !config.hud.labels), c ->
                                         c.slider("count", "Labels shown", "How many of the nearest highlights get a label",
                                                 () -> config.hud.maxLabels, v -> config.hud.maxLabels = (int) Math.round(v), 1, 32, 1, "")))));
-        // GoNuts ships inside Donut Client and does its trading; these pages drive it through GoNutsApi, its one stable
-        // entry point.
-        group("GoNuts",
-                page("gonuts", "Overview", "donut", "Trading session, safety and updates",
-                        c -> goNutsGuarded(c, this::drawGoNuts)).heading("GoNuts"),
-                new Page("gonuts-settings", "Settings", "sliders", "Every GoNuts setting, by group; changes save at once",
-                        goNutsCards(), null, "GoNuts settings"));
         group("General",
                 page("keybinds", "Keybinds", "keyboard", "Keys that turn modules on or off", this::drawKeybinds),
                 page("theme", "Theme", "palette", "Colors and effects", this::drawTheme));
@@ -548,669 +538,30 @@ public final class DonutScreen extends Screen {
         c.toggle("snow", "Snowfall", "Faint snow behind the menu", () -> config.gui.snow, () -> config.gui.snow = !config.gui.snow);
     }
 
-    // GoNuts ------------------------------------------------------------------------------------
+    // Messages --------------------------------------------------------------------------------
 
-    /** A number, optionally after an x, then an optional unit: "720", "12h", "250k", "x1.5", "3/h", "25 %". */
-    private static final java.util.regex.Pattern NUMBER =
-            java.util.regex.Pattern.compile("^\\s*x?\\s*(-?(?:\\d+(?:\\.\\d+)?|\\.\\d+))\\s*([a-z%/]*)\\s*$");
-    /** GoNuts settings that pick one of a few modes, with the names their descriptions give the numbers. */
-    private static final Map<String, String[]> GONUTS_OPTIONS = Map.of(
-            "hud.corner", new String[]{"Top left", "Top right", "Bottom left", "Bottom right"},
-            "feed.keyless", new String[]{"API only", "Keyless", "API, else keyless"},
-            "evasion.escape", new String[]{"Nothing", "/rtp away", "Leave server"},
-            "restart.hop_way", new String[]{"/leave, then /rtp", "Rejoin elsewhere"});
-    /** A Discord webhook URL, from the stable, PTB or Canary client. */
-    private static final java.util.regex.Pattern WEBHOOK =
-            java.util.regex.Pattern.compile("^https://(?:(?:ptb|canary)\\.)?discord(?:app)?\\.com/api/webhooks/\\S+$");
-    private static final long ARM_MILLIS = 8_000, REPLY_MILLIS = 15_000, SETTLE_MILLIS = 1_000;
-    /** A number with commas grouping its thousands, as in "1,500,000" or "1,500k". */
-    private static final java.util.regex.Pattern THOUSANDS =
-            java.util.regex.Pattern.compile("^\\s*x?\\s*-?\\d{1,3}(?:,\\d{3})+(?:\\.\\d+)?\\s*[a-z%/]*\\s*$");
-    /** The "(1 on, 0 off)" GoNuts ends on-off descriptions with. */
-    private static final java.util.regex.Pattern ON_OFF = java.util.regex.Pattern.compile("\\s*\\(1 on, 0 off\\)");
-    /** A session state in GoNuts's answers, such as "(BID_DESK)". */
-    private static final java.util.regex.Pattern STATE = java.util.regex.Pattern.compile("\\(([A-Z_]+)\\)");
-
-    /** What the last click on a GoNuts page answered, and until when it shows. */
-    private String goNutsReply = "";
-    private long goNutsReplyUntil;
-    private boolean goNutsReplyBad;
-    /** The session button on screen (start, resume or stop), and since when; a button that just appeared takes no click. */
-    private String sessionAction = "";
-    private long sessionActionAt;
-    /** The payroll request on screen, and since when. */
-    private String pendingShown = "";
-    private long pendingShownAt;
-    private List<String> risky = List.of();
-    private long riskyAt;
+    private static final long ARM_MILLIS = 8_000, REPLY_MILLIS = 15_000;
     private static final org.slf4j.Logger LOG = com.mojang.logging.LogUtils.getLogger();
-    /** Whether a GoNuts failure has been logged; a page that fails every frame logs it once. */
-    private static boolean goNutsLogged;
-    /** Guarded settings and resets armed by a first click, until when; a second click before then goes ahead. */
+    /** What the last click answered, and until when it shows. */
+    private String reply = "";
+    private long replyUntil;
+    private boolean replyBad;
+    /** Resets armed by a first click, until when; a second click before then goes ahead. */
     private final Map<String, Long> armed = new HashMap<>();
 
-    private void drawGoNuts(Column c) {
-        var session = GoNutsApi.session();
-        c.section("Session");
-        if (session == null) {
-            c.note("GoNuts is still starting.", MUTED);
-        } else {
-            String state = session.state().name();
-            boolean stopped = state.equals("STOPPED"), paused = state.equals("PAUSED");
-            // A session the player stopped stays held, also across restarts, until Start or Resume.
-            c.info("State", words(state) + (GoNutsApi.heldByPlayer() ? ", by you" : ""), stopped ? MUTED : paused ? WARN : GOOD);
-            String detail = session.detail() == null ? "" : session.detail();
-            // "Automation session is stopped" only says the state again.
-            if (!detail.isBlank() && !(stopped && detail.toLowerCase(Locale.ROOT).contains("stopped"))) c.note(detail, MUTED);
-            c.info("Trades started", Integer.toString(session.tradesStarted()), TEXT);
-            c.info("Committed", money(session.committedSpend()), TEXT);
-            GoNutsApi.Limits limits = GoNutsApi.limits();
-            boolean capped = limits.moneyOutCap() > 0;
-            c.info("Money out", money(limits.moneyOut()) + (capped ? " of " + money(limits.moneyOutCap()) : ""),
-                    capped && limits.moneyOut() >= limits.moneyOutCap() ? WARN : TEXT);
-            c.info("Biggest buy", money(limits.perPurchase()) + (limits.followsBank() ? "  ·  follows your bank" : ""), TEXT);
-            c.info("Open listings", Integer.toString(session.openListings()), TEXT);
-            long balance = GoNutsApi.balance();
-            c.info("Balance", balance < 0 ? "Not read yet" : money(balance), balance < 0 ? MUTED : TEXT);
-            // A recovered session still unsure about a trade is resolved on the full screen: Resume would write it off unseen.
-            boolean resumable = session.resumable() || session.recoveredSession() && !session.unresolvedExposure();
-            String action = stopped ? "start" : paused && resumable ? "resume" : "stop";
-            if (!action.equals(sessionAction)) {
-                sessionAction = action;
-                sessionActionAt = System.currentTimeMillis();
-            }
-            if (stopped) {
-                String ended = GoNutsApi.lastEndReason();
-                if (!ended.isBlank()) c.note("The last session ended: " + ended, MUTED);
-                // What would stop Start from going ahead shows before the click, with where to fix it.
-                String blocker = GoNutsApi.startBlocker();
-                if (blocker != null && !blocker.isBlank()) c.warnNext();
-                c.button("start", "Trading", blocker != null && !blocker.isBlank() ? blocker
-                        : "Starts trading on this client, within the limits in Settings", "Start", this::goNutsStart);
-            } else if (paused && resumable) {
-                c.button("resume", "Trading", "Goes on with the paused session", "Resume", this::goNutsStart);
-                c.button("stop", "Or stop", "Stops trading on this client", "Stop", this::goNutsStop);
-            } else {
-                if (paused) c.note("Paused. What it waits for, and how to go on, is on the full GoNuts screen.", WARN);
-                c.button("stop", "Trading", "Stops trading on this client", "Stop", this::goNutsStop);
-                if (!paused) {
-                    boolean winding = GoNutsApi.get("session.wind_down") >= .5;
-                    c.button("windDown", "Or wind down", winding ? "Buying nothing more; it stops once what it holds is sold"
-                            : "Buys nothing more, sells what it holds, then stops", winding ? "Keep buying" : "Wind down",
-                            () -> GoNutsApi.set("session.wind_down", winding ? 0 : 1));
-                    // Steps that need no screen open wait for this menu to close, unlike for GoNuts's own screen.
-                    c.note("Trading steps wait while this menu is open; close it to let GoNuts work.", MUTED);
-                }
-            }
-        }
-        replyNote(c);
-
-        c.section("Safety");
-        // No payroll payment goes out until the rule is approved, so the request comes first and stands out.
-        var pending = GoNutsApi.pendingPayment();
-        if (pending != null) {
-            // An amount of -1 is a rule this client has not worked a payment out for yet.
-            String payment = pending.amount() < 0 ? "Its first payment has not been worked out on this client yet."
-                    : "Its first payment: " + money(pending.amount()) + " to " + pending.name() + ", from " + money(pending.profit()) + " profit.";
-            double percent = pending.percent();
-            String share = percent == Math.rint(percent) ? Long.toString((long) percent) : String.format(Locale.ROOT, "%.1f", percent);
-            String terms = percent > 0 ? " It pays " + share + "% of profit"
-                    + (pending.dailyCap() > 0 ? ", at most " + money(pending.dailyCap()) + " a day." : ".") : "";
-            c.note("The payroll rule for " + pending.name() + " waits for your approval. " + payment + terms + " Approving lets the rule pay "
-                    + "on its own from now on, so check it on the full GoNuts screen if unsure.", WARN);
-            String shown = pending.ruleId() + "|" + pending.name() + "|" + pending.amount() + "|" + pending.percent() + "|" + pending.dailyCap();
-            if (!shown.equals(pendingShown)) {
-                pendingShown = shown;
-                pendingShownAt = System.currentTimeMillis();
-                armed.remove("confirmPay");
-            }
-            boolean confirming = isArmed("confirmPay");
-            c.warnNext();
-            c.button("confirmPay", "Approve rule " + pending.name(), confirming ? "Click Confirm within 8 seconds to approve it"
-                    : "Nothing is paid until you approve", confirming ? "Confirm" : "Approve", () -> goNutsApprove(pending));
-        }
-        long paid = GoNutsApi.paidToday(), cap = GoNutsApi.dailyPayCap();
-        // A cap of 0 means no limit at all.
-        c.info("Paid out, last 24 h", money(paid) + (cap > 0 ? " of " + money(cap) : "  ·  no limit"),
-                cap <= 0 || paid >= cap ? WARN : TEXT);
-        List<String> risky = riskyFeatures();
-        if (risky.isEmpty()) c.note("Nothing that spends money or acts for this account is on.", MUTED);
-        else c.note("On, and able to spend money or act for this account: " + String.join(", ", risky) + ".", WARN);
-
-        webPanel(c);
-
-        c.section("GoNuts");
-        var update = GoNutsApi.updateStatus();
-        String updateState = update.state().name();
-        String updates = switch (updateState) {
-            case "OFF" -> "Not checked (turned off)";
-            case "UNCHECKED" -> "Not checked yet";
-            case "CURRENT" -> "Up to date";
-            case "NEWER" -> "A newer GoNuts is out";
-            case "READY" -> "Update ready; it installs when the game closes";
-            case "AHEAD" -> "This build is newer than the release";
-            case "FAILED" -> "Could not check";
-            default -> words(updateState);
-        };
-        c.info("Updates", updates, updateState.equals("FAILED") ? WARN
-                : updateState.equals("NEWER") || updateState.equals("READY") ? accent() : LABEL);
-        if (updateState.equals("FAILED") && update.detail() != null && !update.detail().isBlank()) c.note(update.detail(), MUTED);
-        String hook = GoNutsApi.webhookResult();
-        if (!hook.isBlank()) c.info("Status webhook", hook, hook.startsWith("Posted") ? LABEL : WARN);
-        c.button("full", "Full GoNuts", "Markets, charts, payroll rules, presets and the web panel", "Open", () -> {
-            if (GoNutsApi.session() == null) reply("GoNuts has not started yet.", true);
-            else GoNutsApi.openFullScreen();
-        });
-    }
-
-    /**
-     * GoNuts's web panel: a page in the browser, behind a PIN, that starts and stops trading and shows the profit. The PIN
-     * saves on a second Enter and switches the panel on; switching it on, or letting phones in, takes a second click,
-     * and switching either off takes one.
-     */
-    private void webPanel(Column c) {
-        c.section("Web panel");
-        var panel = GoNutsApi.webPanel();
-        if (panel == null) {
-            c.note("GoNuts has not started its web panel yet.", MUTED);
-            return;
-        }
-        c.info("State", panel.state(), panel.running() ? GOOD : panel.on() ? WARN : LABEL);
-        List<String> addresses = panel.addresses();
-        for (int i = 0; i < addresses.size(); i++) {
-            String address = addresses.get(i);
-            c.button("web.open." + i, address, i == 0 ? "This computer" : "Phones and computers on your Wi-Fi", "Open",
-                    () -> net.minecraft.util.Util.getPlatform().openUri(address));
-        }
-        if (panel.lockout() != null && !panel.lockout().isBlank()) c.note(panel.lockout(), WARN);
-        c.hintNext("4 to 8 digits; 6 or more to let phones in");
-        c.confirmNext(pin -> pin.strip().matches("\\d{4,8}") ? new Confirm(true, "set this PIN and switch the web panel on")
-                : new Confirm(false, "A PIN is 4 to 8 digits"));
-        c.field("web.pin", "PIN", panel.pinSet() ? "Set; type a new one to change it" : "Set one to switch the web panel on",
-                () -> "", pin -> {
-                    if (pin.isBlank()) return;
-                    String problem = GoNutsApi.setWebPanelPin(pin.strip());
-                    reply(problem == null ? "PIN set; the web panel is on." : "PIN not set: " + problem + ".", problem != null);
-                }, true, 8, 110);
-        webSwitch(c, "web.on", "Web panel", panel.pinSet() ? "The page at the addresses above, behind the PIN" : "Set a PIN first",
-                panel.on(), () -> {
-                    if (!panel.on() && !panel.pinSet()) return "set a PIN first";
-                    GoNutsApi.setWebPanelOn(!panel.on());
-                    return null;
-                });
-        webSwitch(c, "web.phones", "Phones on your Wi-Fi", "Other devices at home may open it too; needs a PIN of 6 or more digits",
-                panel.phones(), () -> GoNutsApi.setWebPanelPhones(!panel.phones()));
-        c.note("The page starts and stops trading and shows profit, settings, presets and item lists. Settings that move money "
-                + "stay in the game.", DIM);
-    }
-
-    /**
-     * A web panel switch: turning it on takes a second click within eight seconds, turning it off one. {@code flip}
-     * says why it could not, or returns null.
-     */
-    private void webSwitch(Column c, String key, String label, String description, boolean on, Supplier<String> flip) {
-        String id = key + "=on";
-        boolean confirming = !on && isArmed(id);
-        if (!on) c.warnNext();
-        c.toggle(key, label, confirming ? "Click again within 8 seconds to turn it on" : description, () -> on, () -> {
-            if (!on) {
-                long now = System.currentTimeMillis();
-                Long until = armed.remove(id);
-                if (until == null || now >= until) {
-                    armed.put(id, now + ARM_MILLIS);
-                    reply(label + ": click again within 8 seconds to turn it on.", true, ARM_MILLIS);
-                    return;
-                }
-            }
-            String problem = flip.get();
-            reply(problem == null ? label + (on ? " off." : " on.") : label + ": " + problem + ".", problem != null);
-        });
-    }
-
-    /**
-     * Starts or resumes, only if the session is still stopped or resumable when the click lands, and only once the
-     * button has been on screen for a moment: Stop turns into Start in the same place, and the second click of a fast
-     * double click on Stop must not start trading again. A started session works once the menu closes, so it closes.
-     */
-    private void goNutsStart() {
-        var now = GoNutsApi.session();
-        if (now == null) { reply("GoNuts has not started yet.", true); return; }
-        String state = now.state().name();
-        boolean startable = state.equals("STOPPED") || state.equals("PAUSED")
-                && (now.resumable() || now.recoveredSession() && !now.unresolvedExposure());
-        if (!startable || System.currentTimeMillis() - sessionActionAt < SETTLE_MILLIS) {
-            reply("The session just changed; look again before starting.", true);
-            return;
-        }
-        String answer = GoNutsApi.start();
-        boolean bad = refused(answer);
-        reply(friendly(answer), bad);
-        if (!bad) onClose();
-    }
-
-    private void goNutsStop() {
-        String answer = GoNutsApi.stop();
-        // Stop can leave the session paused rather than stopped, to keep an open position; that is worth noticing.
-        reply(friendly(answer), refused(answer) || answer.startsWith("Paused"));
-    }
-
-    /** GoNuts's answer in plain words: no "OK:" prefix, and states such as BID_DESK written out. */
-    private static String friendly(String answer) {
-        String text = answer.startsWith("OK: ") ? answer.substring(4) : answer;
-        if (text.equals("Stopped by operator")) return "Stopped.";
-        return STATE.matcher(text).replaceAll(m -> "(" + words(m.group(1)).toLowerCase(Locale.ROOT) + ")");
-    }
-
-    /**
-     * Approves the payroll rule on a second click, only if the request on screen is still the one waiting and has been
-     * there for a moment, so a rule that just replaced another is read before it is approved.
-     */
-    private void goNutsApprove(Payroll.PendingConfirmation shown) {
-        var now = GoNutsApi.pendingPayment();
-        // The same rule and name, and the same amount whenever one was shown.
-        if (now == null || now.ruleId() != shown.ruleId() || !now.name().equals(shown.name())
-                || shown.amount() >= 0 && now.amount() != shown.amount()
-                || now.percent() != shown.percent() || now.dailyCap() != shown.dailyCap()
-                || System.currentTimeMillis() - pendingShownAt < SETTLE_MILLIS) {
-            armed.remove("confirmPay");
-            reply("The payment waiting for approval changed; look again before approving.", true);
-            return;
-        }
-        if (!isArmed("confirmPay")) {
-            armed.put("confirmPay", System.currentTimeMillis() + ARM_MILLIS);
-            return;
-        }
-        armed.remove("confirmPay");
-        GoNutsApi.confirmPayment(shown.ruleId());
-        reply("Approved the payroll rule for " + shown.name() + ".", false);
-    }
-
-    /** Whether GoNuts turned an order down; its answers start with what happened. */
-    private static boolean refused(String answer) {
-        return answer.startsWith("Refused") || answer.startsWith("Cannot") || answer.startsWith("Unknown")
-                || answer.startsWith("GoNuts has not");
-    }
-
-    private void reply(String text, boolean bad) { reply(text, bad, REPLY_MILLIS); }
-
-    /** Shows a reply under the page for {@code millis}; one about a second click lasts only as long as that chance. */
-    private void reply(String text, boolean bad, long millis) {
-        goNutsReply = text == null ? "" : text;
-        goNutsReplyBad = bad;
-        goNutsReplyUntil = System.currentTimeMillis() + millis;
+    private void reply(String text, boolean bad) {
+        reply = text == null ? "" : text;
+        replyBad = bad;
+        replyUntil = System.currentTimeMillis() + REPLY_MILLIS;
     }
 
     private void replyNote(Column c) {
-        if (!goNutsReply.isBlank() && System.currentTimeMillis() < goNutsReplyUntil) c.note(goNutsReply, goNutsReplyBad ? WARN : LABEL);
-    }
-
-    /**
-     * Runs a change to a guarded setting on a second click within eight seconds; the first click only arms it, and says
-     * what the second will do.
-     */
-    private void guard(String id, String label, String what, Runnable change) {
-        long now = System.currentTimeMillis();
-        Long until = armed.remove(id);
-        if (until != null && now < until) {
-            change.run();
-            reply(label + " changed.", false);
-        } else {
-            armed.put(id, now + ARM_MILLIS);
-            reply(label + ": click again within 8 seconds to " + what + ".", true, ARM_MILLIS);
-        }
+        if (!reply.isBlank() && System.currentTimeMillis() < replyUntil) c.note(reply, replyBad ? WARN : LABEL);
     }
 
     private boolean isArmed(String id) {
         Long until = armed.get(id);
         return until != null && System.currentTimeMillis() < until;
-    }
-
-    /** GoNuts's settings groups in the order a trader looks for them; groups GoNuts adds later follow at the end. */
-    private static final List<String> GROUP_ORDER = List.of("Session", "Buying", "Selling", "Orders", "Tiers", "Adaptive market",
-            "Rivals", "Underdog", "Follows", "Pacing", "Pace", "Slots", "Boxes", "Stash", "Evasion", "Consignment", "Multi client",
-            "HUD", "Performance", "Recovery");
-    /** Settings GoNuts keeps for itself: the watch list's switch is set by editing the watch list. */
-    public static final Set<String> GONUTS_HIDDEN = Set.of("watch.tracked_managed");
-
-    /** One card per GoNuts settings group, plus its free-text lists; each opens like a module's settings. */
-    private List<Module> goNutsGroups() {
-        List<String> order = new ArrayList<>(GoNutsApi.groups());
-        order.sort(Comparator.comparingInt(g -> GROUP_ORDER.contains(g) ? GROUP_ORDER.indexOf(g) : GROUP_ORDER.size()));
-        List<Module> cards = new ArrayList<>();
-        cards.add(loadoutCard());
-        for (String group : order) {
-            List<Tuning.Setting> settings = GoNutsApi.settings().stream()
-                    .filter(s -> s.group().equals(group) && !GONUTS_HIDDEN.contains(s.key())).toList();
-            if (settings.isEmpty()) continue;
-            StringBuilder keywords = new StringBuilder("gonuts");
-            for (Tuning.Setting s : settings) keywords.append(' ').append(s.label());
-            long guarded = settings.stream().filter(s -> GoNutsApi.guarded(s.key())).count();
-            // The counts come first, so a cut-off list of names never hides them.
-            String description = settings.size() + (settings.size() == 1 ? " setting" : " settings")
-                    + (guarded > 0 ? ", " + guarded + " guarded" : "") + "  ·  "
-                    + String.join(", ", settings.stream().map(Tuning.Setting::label).toList());
-            cards.add(new Module(group, description, keywords.toString(), () -> false, null, () -> true, "",
-                    c -> goNutsGuarded(c, d -> goNutsSettings(d, settings)), -1, null));
-        }
-        StringBuilder keywords = new StringBuilder("gonuts lists");
-        for (Tuning.ListSetting l : GoNutsApi.lists()) keywords.append(' ').append(l.label());
-        cards.add(new Module("Lists", GoNutsApi.lists().size() + " lists  ·  item lists, prices, addresses and the status webhook",
-                keywords.toString(), () -> false, null, () -> true, "", c -> goNutsGuarded(c, d -> {
-                    for (Tuning.ListSetting l : GoNutsApi.lists()) goNutsList(d, l);
-                    replyNote(d);
-                    d.note("Lists save when you press Enter or click elsewhere, amber ones on Enter twice. Esc cancels an edit.", DIM);
-                }), -1, null));
-        return cards;
-    }
-
-    /** GoNuts's presets, each changing a set of settings in one go; Veno's, this client's own, comes first. */
-    private Module loadoutCard() {
-        List<GoNutsApi.Preset> presets = GoNutsApi.presets();
-        StringBuilder keywords = new StringBuilder("gonuts loadout tweaks preset presets");
-        for (GoNutsApi.Preset p : presets) keywords.append(' ').append(p.name());
-        String names = String.join(", ", presets.stream().map(GoNutsApi.Preset::name).toList());
-        return new Module("Loadout tweaks", presets.size() + " presets  ·  " + names, keywords.toString(), () -> false, null,
-                () -> true, "", c -> goNutsGuarded(c, d -> {
-                    d.section("Presets");
-                    for (GoNutsApi.Preset preset : presets) presetRow(d, preset, preset.name().equals("Veno"));
-                    replyNote(d);
-                    d.note("A preset changes the settings it covers and leaves the rest as they are. Apply arms it, and Confirm "
-                            + "within 8 seconds applies it.", DIM);
-                }), -1, null);
-    }
-
-    /**
-     * A preset's row: Apply arms it, and Confirm, a second click at least a second later, applies it and says how many
-     * settings changed. Default, which also puts the money limits and pay cap back, is amber throughout.
-     */
-    private void presetRow(Column c, GoNutsApi.Preset preset, boolean recommended) {
-        String name = preset.name(), id = "preset." + name;
-        boolean confirming = isArmed(id), resets = name.equals("Default");
-        String description = confirming ? "Click Confirm within 8 seconds to apply " + name
-                : preset.description().isBlank() ? "A preset by GoNuts's author" : preset.description();
-        if (confirming || resets) c.warnNext();
-        c.button(id, recommended ? name + " (recommended)" : name, description, confirming ? "Confirm" : "Apply", () -> {
-            long now = System.currentTimeMillis();
-            Long until = armed.get(id);
-            if (until == null || now >= until) {
-                armed.put(id, now + ARM_MILLIS);
-                return;
-            }
-            // A Confirm that appeared under the mouse a moment ago takes no click.
-            if (now - (until - ARM_MILLIS) < SETTLE_MILLIS) return;
-            armed.remove(id);
-            int changed = GoNutsApi.applyPreset(name);
-            reply(name + " applied: " + changed + (changed == 1 ? " setting" : " settings") + " changed.", false);
-        });
-    }
-
-    /** The GoNuts settings cards, or none if GoNuts cannot list them; the menu opens either way. */
-    private List<Module> goNutsCards() {
-        try {
-            return goNutsGroups();
-        } catch (RuntimeException | LinkageError e) {
-            goNutsFailed(e);
-            return List.of(new Module("GoNuts", "GoNuts could not list its settings: " + e, "gonuts", () -> false, null,
-                    () -> true, "", null, -1, null));
-        }
-    }
-
-    /** Draws a GoNuts page; a failure inside GoNuts becomes a note on the page instead of a crash, and is logged once. */
-    private void goNutsGuarded(Column c, Consumer<Column> body) {
-        try {
-            body.accept(c);
-        } catch (RuntimeException | LinkageError e) {
-            goNutsFailed(e);
-            c.note("GoNuts could not show this: " + e + ". The full GoNuts screen (B) may still work.", WARN);
-        }
-    }
-
-    private static void goNutsFailed(Throwable e) {
-        if (!goNutsLogged) LOG.error("A GoNuts page failed", e);
-        goNutsLogged = true;
-    }
-
-    /** Tells GoNuts whether this menu is open, so it holds its steps rather than covering the menu. */
-    private static void goNutsPanel(boolean open) {
-        try {
-            GoNutsApi.noteForeignPanel(open);
-        } catch (RuntimeException | LinkageError e) {
-            goNutsFailed(e);
-        }
-    }
-
-    /** GoNuts's risky features look through its files, so they are asked about once a second rather than every frame. */
-    private List<String> riskyFeatures() {
-        long now = System.currentTimeMillis();
-        if (now - riskyAt > 1000) {
-            risky = GoNutsApi.riskyFeaturesOn();
-            riskyAt = now;
-        }
-        return risky;
-    }
-
-    private void goNutsList(Column c, Tuning.ListSetting l) {
-        String key = l.key();
-        boolean webhook = key.equals("webhook.url");
-        if (GoNutsApi.guarded(key)) {
-            c.warnNext();
-            c.confirmNext(text -> {
-                String value = text.strip();
-                if (webhook && !value.isEmpty() && !WEBHOOK.matcher(value).matches()) {
-                    return new Confirm(false, "That is not a Discord webhook URL (channel settings, Integrations, New Webhook, Copy)");
-                }
-                return new Confirm(true, value.isEmpty() ? "clear it" : "save it");
-            });
-        }
-        // GoNuts's own editor takes up to 2000 characters, and 240 for the webhook; a shorter limit would drop entries.
-        c.field(key, l.label(), clean(l.description()), () -> GoNutsApi.text(key), text -> {
-            String value = text.strip();
-            if (webhook && !value.isEmpty() && !WEBHOOK.matcher(value).matches()) {
-                reply("That is not a Discord webhook URL (channel settings, Integrations, New Webhook, Copy); nothing was saved.", true);
-                return;
-            }
-            GoNutsApi.setText(key, value);
-            // GoNuts's own Save turns the hourly reports on with a URL, and off without one.
-            if (webhook) GoNutsApi.set("webhook.enabled", value.isEmpty() ? 0 : 1);
-        }, webhook, webhook ? 240 : 2000);
-    }
-
-    /** A group's first settings, and every guarded one, up front; the rest behind "More options". */
-    private void goNutsSettings(Column c, List<Tuning.Setting> settings) {
-        List<Tuning.Setting> front = new ArrayList<>(), folded = new ArrayList<>();
-        for (int i = 0; i < settings.size(); i++) {
-            Tuning.Setting s = settings.get(i);
-            (i < 6 || GoNutsApi.guarded(s.key()) ? front : folded).add(s);
-        }
-        for (Tuning.Setting s : front) goNutsSetting(c, s);
-        if (!folded.isEmpty()) c.more(m -> folded.forEach(s -> goNutsSetting(m, s)));
-        replyNote(c);
-        c.note("Changes save at once. Amber settings move money, data or the server joined: they change on a second click, or on "
-                + "Enter twice when typed. A dot marks a setting changed from its default; hover it for Reset. Presets are on the "
-                + "full GoNuts screen.", DIM);
-    }
-
-    private void goNutsSetting(Column c, Tuning.Setting s) {
-        String key = s.key(), id = c.scope.isEmpty() ? key : c.scope + "." + key;
-        boolean guarded = GoNutsApi.guarded(key);
-        String description = clean(s.description());
-        String[] options = GONUTS_OPTIONS.get(key);
-        boolean named = options != null && options.length == (int) Math.round(s.max() - s.min()) + 1;
-        double fallback = s.defaultValue();
-        String defaultText = named ? options[Math.clamp((int) Math.round(fallback - s.min()), 0, options.length - 1)]
-                : s.kind() == Tuning.Kind.TOGGLE ? (fallback >= .5 ? "On" : "Off") : numberText(s, fallback);
-        if (guarded) {
-            // Amber marks a guarded setting; once armed, its description says what the second click does.
-            if (isArmed(id + ".reset")) description = "Click Reset again within 8 seconds to go back to " + defaultText;
-            c.warnNext();
-        }
-        if (!GoNutsApi.isDefault(key)) {
-            Runnable back = () -> GoNutsApi.reset(key);
-            c.resetNext(key, defaultText, guarded ? () -> guard(id + ".reset", s.label(), "go back to " + defaultText, back) : back);
-        }
-        if (named) {
-            int base = (int) Math.round(s.min());
-            for (int v = 0; v < options.length; v++) {
-                if (guarded && isArmed(id + "." + v)) description = "Click " + options[v] + " again within 8 seconds to switch to it";
-            }
-            c.choice(key, s.label(), description, options.length,
-                    () -> Math.clamp((int) Math.round(GoNutsApi.get(key)) - base, 0, options.length - 1), v -> {
-                Runnable change = () -> GoNutsApi.set(key, v + base);
-                if (guarded) guard(id + "." + v, s.label(), "switch to " + options[v], change);
-                else change.run();
-            }, v -> options[v]);
-            return;
-        }
-        if (s.kind() == Tuning.Kind.TOGGLE) {
-            // The value a click sets is the one shown when it was drawn, so a confirming click never undoes a change that
-            // another client sharing these settings made in between.
-            boolean on = GoNutsApi.get(key) >= .5;
-            String what = on ? "turn it off" : "turn it on", armedId = id + "=" + (on ? 0 : 1);
-            if (guarded && isArmed(armedId)) description = "Click again within 8 seconds to " + what;
-            Runnable set = () -> GoNutsApi.set(key, on ? 0 : 1);
-            c.toggle(key, s.label(), description, () -> GoNutsApi.get(key) >= .5, guarded ? () -> guard(armedId, s.label(), what, set) : set);
-            return;
-        }
-        double range = s.max() - s.min(), step = stepFor(s);
-        // Guarded numbers are typed, as on the GoNuts screen; so are ranges too fine for a slider's track.
-        if (guarded || !Double.isFinite(range) || range / step > 100) {
-            if (guarded) c.confirmNext(text -> {
-                double value = parseSetting(s, text);
-                if (!Double.isFinite(value)) return new Confirm(false, "\"" + text.strip() + "\" is not a value for this");
-                if (value < s.min() || value > s.max()) return new Confirm(false, "It takes " + s.format(s.min()) + " to " + s.format(s.max()));
-                return new Confirm(true, key.equals("pay.daily_cap") && value == 0 ? "remove the daily limit"
-                        : "set it to " + numberText(s, value));
-            });
-            c.hintNext(units(s) + ", from " + s.format(s.min()) + " to " + s.format(s.max()));
-            c.field(key, s.label(), description, () -> numberText(s, GoNutsApi.get(key)), text -> {
-                double value = parseSetting(s, text);
-                if (Double.isFinite(value)) {
-                    double set = GoNutsApi.set(key, value);
-                    if (Math.abs(set - value) > 1e-9) reply(s.label() + " is held to " + s.format(s.min()) + " to " + s.format(s.max())
-                            + "; it was set to " + s.format(set) + ".", true);
-                    else if (key.equals("pay.daily_cap") && set == 0) reply(s.label() + " is 0: no daily limit.", true);
-                } else if (!text.strip().equals(numberText(s, GoNutsApi.get(key)))) {
-                    reply("\"" + text.strip() + "\" is not a value for " + s.label() + "; it was left at " + s.format(GoNutsApi.get(key)) + ".", true);
-                }
-            }, false, 128, 96);
-            return;
-        }
-        // Writing a GoNuts setting rewrites its settings files, so a dragged slider sets its value once, on release.
-        c.slider(key, s.label(), description, () -> GoNutsApi.get(key), v -> GoNutsApi.set(key, v), s.min(), s.max(), step, s::format, true);
-    }
-
-    /** What a typed setting takes, in words. */
-    private static String units(Tuning.Setting s) {
-        return switch (s.kind()) {
-            case MINUTES -> "Minutes, or with s, h or d, as in 2h";
-            case SECONDS -> "Seconds, or with min or h, as in 2min";
-            case COUNT -> "A number, or with k, m or b, as in 250k";
-            case PERCENT -> "A percentage";
-            default -> "A number";
-        };
-    }
-
-    /** The finest step a setting's default and minimum need, and at least tenths for small non-count ranges. */
-    private static double stepFor(Tuning.Setting s) {
-        double range = s.max() - s.min();
-        int decimals = Math.max(decimals(s.defaultValue()), decimals(s.min()));
-        if (s.kind() != Tuning.Kind.COUNT) {
-            if (range <= 1) decimals = Math.max(decimals, 2);
-            else if (range <= 10) decimals = Math.max(decimals, 1);
-        }
-        return decimals == 0 ? 1 : Math.pow(10, -decimals);
-    }
-
-    private static int decimals(double value) {
-        for (int d = 0; d < 3; d++) {
-            double scaled = value * Math.pow(10, d);
-            if (Math.abs(scaled - Math.round(scaled)) < 1e-9) return d;
-        }
-        return 3;
-    }
-
-    /** A typed setting's text: large counts, such as money, with thousands separators. */
-    private static String numberText(Tuning.Setting s, double value) {
-        return s.kind() == Tuning.Kind.COUNT && Math.abs(value) >= 10_000 ? String.format(Locale.ROOT, "%,.0f", value) : s.format(value);
-    }
-
-    /**
-     * A typed value in the setting's own unit: minutes take s, min, h or d; seconds take s, min or h; counts take k, m
-     * or b. Any other letters make it unreadable, so nothing is set rather than a guess.
-     */
-    private static double parseSetting(Tuning.Setting s, String text) {
-        String typed = text.toLowerCase(Locale.ROOT).strip();
-        // "1,500,000" groups thousands; any other comma is a decimal comma, as in "2,5" or "1,5m".
-        typed = THOUSANDS.matcher(typed).matches() ? typed.replace(",", "") : typed.replace(',', '.');
-        var matcher = NUMBER.matcher(typed);
-        if (!matcher.matches()) return Double.NaN;
-        double value = Double.parseDouble(matcher.group(1));
-        String unit = matcher.group(2);
-        double scale = switch (s.kind()) {
-            case MINUTES -> switch (unit) {
-                case "", "m", "min", "mins", "minute", "minutes" -> 1;
-                case "s", "sec", "secs", "second", "seconds" -> 1 / 60.0;
-                case "h", "hr", "hrs", "hour", "hours" -> 60;
-                case "d", "day", "days" -> 1440;
-                default -> Double.NaN;
-            };
-            case SECONDS -> switch (unit) {
-                case "", "s", "sec", "secs", "second", "seconds" -> 1;
-                case "m", "min", "mins", "minute", "minutes" -> 60;
-                case "h", "hr", "hrs", "hour", "hours" -> 3600;
-                default -> Double.NaN;
-            };
-            case COUNT -> switch (unit) {
-                case "" -> 1;
-                case "k" -> 1e3;
-                case "m" -> 1e6;
-                case "b" -> 1e9;
-                default -> Double.NaN;
-            };
-            case PERCENT -> unit.isEmpty() || unit.equals("%") ? 1 : Double.NaN;
-            case RATE -> unit.isEmpty() || unit.equals("/h") ? 1 : Double.NaN;
-            case BLOCKS -> unit.isEmpty() || unit.startsWith("block") ? 1 : Double.NaN;
-            case FACTOR -> unit.isEmpty() || unit.equals("x") ? 1 : Double.NaN;
-            case TOGGLE -> Double.NaN;
-        };
-        double result = value * scale;
-        if (result < 0 && s.min() >= 0) return Double.NaN;
-        // Counts are whole: "2.5" items is not a count.
-        return s.kind() == Tuning.Kind.COUNT ? Math.round(result) : result;
-    }
-
-    /** GoNuts descriptions end on-off settings with "(1 on, 0 off)", which a switch already says. */
-    private static String clean(String description) {
-        return description == null ? "" : ON_OFF.matcher(description).replaceAll("");
-    }
-
-    /** An amount as DonutSMP writes it: $950, $12.5K, $1.25M. */
-    private static String money(double amount) {
-        String sign = amount < 0 ? "-" : "";
-        double value = Math.abs(amount);
-        if (value < 1000) return sign + "$" + Math.round(value);
-        String[] units = {"K", "M", "B", "T"};
-        int unit = 0;
-        value /= 1000;
-        while (value >= 1000 && unit < units.length - 1) {
-            value /= 1000;
-            unit++;
-        }
-        String number = String.format(Locale.ROOT, value >= 100 ? "%.0f" : value >= 10 ? "%.1f" : "%.2f", value);
-        // 999,950 rounds to "1000K", which is $1M.
-        if (Double.parseDouble(number) >= 1000 && unit < units.length - 1) {
-            value /= 1000;
-            unit++;
-            number = String.format(Locale.ROOT, "%.2f", value);
-        }
-        if (number.contains(".")) number = number.replaceAll("0+$", "").replaceAll("\\.$", "");
-        return sign + "$" + number + units[unit];
-    }
-
-    /** "WAITING_FOR_ORDER" as "Waiting for order". */
-    private static String words(String constant) {
-        String spaced = constant.toLowerCase(Locale.ROOT).replace('_', ' ');
-        return spaced.isEmpty() ? spaced : Character.toUpperCase(spaced.charAt(0)) + spaced.substring(1);
     }
 
     // Navigation --------------------------------------------------------------------------------
@@ -1234,7 +585,7 @@ public final class DonutScreen extends Screen {
 
     private void openPage(String id) {
         remember();
-        goNutsReply = "";
+        reply = "";
         pageId = id;
         detailName = null;
         query = "";
@@ -1244,7 +595,7 @@ public final class DonutScreen extends Screen {
 
     private void openDetail(Module m) {
         remember();
-        goNutsReply = "";
+        reply = "";
         pageId = pageOf(m).id;
         detailName = m.name;
         query = "";
@@ -1254,7 +605,7 @@ public final class DonutScreen extends Screen {
 
     private void closeDetail() {
         remember();
-        goNutsReply = "";
+        reply = "";
         detailName = null;
         restart();
     }
@@ -1327,8 +678,6 @@ public final class DonutScreen extends Screen {
         wh = Math.min(layoutH - 24, MAX_H);
         wx = (layoutW - ww) / 2;
         wy = (layoutH - wh) / 2;
-        // GoNuts finishes the step in hand, then waits instead of opening the auction house over this menu.
-        goNutsPanel(true);
         // A resize in the middle of a drag sets what the slider shows, rather than leaving it to a later release.
         // The key that opened the menu is still down; its repeats must not close the menu again.
         if (activationKey == null && openKeyHeld()) activationKey = InputConstants.getKey(keyMapping(OPEN_KEY).saveString());
@@ -1920,8 +1269,8 @@ public final class DonutScreen extends Screen {
     private int width(String text, Size size) { return UiPaint.width(font, text, size); }
 
     /**
-     * The text cut to fit, ending in an ellipsis; a cut never leaves a stray period or comma before it. GoNuts's
-     * descriptions run to a thousand characters, so the cut is found by halving and remembered until the next resize.
+     * The text cut to fit, ending in an ellipsis; a cut never leaves a stray period or comma before it. Long
+     * descriptions can run to a thousand characters, so the cut is found by halving and remembered until the next resize.
      */
     private String fit(String value, Size size, int maxWidth) {
         String key = size.ordinal() + ":" + maxWidth + ":" + value;
@@ -2345,7 +1694,7 @@ public final class DonutScreen extends Screen {
 
     private void change(Runnable action) { action.run(); dirty = true; flush(); }
 
-    /** Runs a control's action; a failure in it, such as one inside GoNuts, is logged and shown instead of crashing the game. */
+    /** Runs a control's action; a failure in it is logged and shown instead of crashing the game. */
     private void safely(Runnable action) {
         try {
             action.run();
@@ -2362,7 +1711,6 @@ public final class DonutScreen extends Screen {
 
     @Override
     public void removed() {
-        goNutsPanel(false);
         remember();
         commitText();
         commitDrafts();

@@ -5,7 +5,6 @@ import dev.donut.client.finder.FinderScanner;
 import dev.donut.client.finder.FinderSummary;
 import dev.donut.client.render.HighlightRenderer;
 import dev.donut.client.render.ScreenLabel;
-import dev.doughbay.fabric.GoNutsApi;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.client.Camera;
@@ -30,9 +29,9 @@ public final class FinderHud {
         if (config.hud.info) info(g, font, client, scanner.summaries());
     }
 
-    /** Keeps GoNuts's HUD panel, alerts and nearby-player list off the info panel; call once at startup. */
+    /** Keeps the distance labels off the info panel; call once at startup. */
     public static void reserveSpace(ClientConfig config, FinderScanner scanner) {
-        GoNutsApi.reserveHud("donut:finder_info", () -> {
+        HudSpace.reserve("donut:finder_info", () -> {
             Minecraft client = Minecraft.getInstance();
             return config.hud.info && reserved(client) ? infoArea(client.font, client, scanner.summaries()) : null;
         });
@@ -40,7 +39,7 @@ public final class FinderHud {
 
     /**
      * Whether Donut's HUD keeps its place on screen: in a world and not hidden with F1. A screen or F3 hides it for a
-     * moment, but its place stays reserved, so GoNuts's panels do not jump over and back whenever one opens.
+     * moment, but its place stays reserved, so labels do not jump over and back whenever one opens.
      */
     static boolean reserved(Minecraft client) {
         return client.player != null && !client.gui.hud.isHidden();
@@ -108,12 +107,11 @@ public final class FinderHud {
 
     /**
      * Distance labels at the nearest highlights, at most {@code max}. Labels arrive nearest first; a farther label that
-     * would cover a nearer one, or either HUD, moves up or down a row, or is left out.
+     * would cover a nearer one, the info panel or the module list moves up or down a row, or is left out.
      */
     private static void labels(GuiGraphicsExtractor g, Font font, Minecraft client, int max) {
         int width = client.getWindow().getGuiScaledWidth(), height = client.getWindow().getGuiScaledHeight();
-        List<int[]> placed = new ArrayList<>(GoNutsApi.hudReserved());
-        placed.addAll(GoNutsApi.hudDrawn());
+        List<int[]> placed = new ArrayList<>(HudSpace.reserved());
         int shown = 0;
         for (ScreenLabel label : HighlightRenderer.labels()) {
             if (shown >= max) break;

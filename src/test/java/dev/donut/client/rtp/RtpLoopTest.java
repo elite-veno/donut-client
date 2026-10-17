@@ -117,18 +117,6 @@ class RtpLoopTest {
     }
 
     @Test
-    void aRefusedStartIsRecordedWhileARunningOneIsStopped() {
-        loop.refuse(Result.GONUTS_BUSY);
-        assertEquals(Result.GONUTS_BUSY, loop.result());
-        assertEquals(Phase.IDLE, loop.phase());
-        started(5);
-        run(1, false, 0, false);
-        loop.refuse(Result.GONUTS_BUSY);
-        assertEquals(Phase.IDLE, loop.phase());
-        assertEquals(1, loop.attempts(), "a stopped run keeps its count");
-    }
-
-    @Test
     void sendsAtOnceThenStopsWhenTheNewAreaShowsActivity() {
         started(5);
         assertEquals(Action.SEND, run(1, false, 0, false));

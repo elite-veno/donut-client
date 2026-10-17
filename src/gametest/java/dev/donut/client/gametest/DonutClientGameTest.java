@@ -132,7 +132,6 @@ public final class DonutClientGameTest implements FabricClientGameTest {
                     "Reset did not restore Fullbright's settings, or turned it off"));
             context.runOnClient(client -> config.fullbright.enabled = false);
             GuiClicks.collapse(context, "Fullbright");
-            GoNutsPagesCheck.run(context, name -> screenshot(context, name));
             context.runOnClient(client -> client.gui.screen().onClose());
             context.waitForScreen(null);
 

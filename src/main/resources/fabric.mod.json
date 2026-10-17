@@ -3,7 +3,7 @@
   "id": "donut",
   "version": "${version}",
   "name": "Donut Client",
-  "description": "Shows what is hidden: storage, spawners and ancient debris, X-ray, Fullbright, dug tunnels, and players and mobs through walls, with amethyst-based activity detection, Auto RTP and a free camera. Carries the GoNuts auction trading bot.",
+  "description": "Shows what is hidden: storage, spawners and ancient debris, X-ray, Fullbright, dug tunnels, and players and mobs through walls, with amethyst-based activity detection, Auto RTP and a free camera. This edition has no trading bot.",
   "authors": ["elite-veno"],
   "contact": { "sources": "https://github.com/elite-veno/donut-client" },
   "license": "MIT",
@@ -15,7 +15,6 @@
     "fabricloader": ">=0.19.5",
     "minecraft": "~26.2",
     "java": ">=25",
-    "fabric-api": ">=0.158.0",
-    "gonuts-api": "*"
+    "fabric-api": ">=0.158.0"
   }
 }

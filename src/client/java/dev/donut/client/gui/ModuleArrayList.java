@@ -1,7 +1,6 @@
 package dev.donut.client.gui;
 
 import dev.donut.client.config.ClientConfig;
-import dev.doughbay.fabric.GoNutsApi;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -30,9 +29,9 @@ public final class ModuleArrayList {
         }
     }
 
-    /** Keeps GoNuts's HUD panel, alerts and nearby-player list off the list; call once at startup. */
+    /** Keeps the distance labels off the list; call once at startup. */
     public static void reserveSpace(ClientConfig config, BooleanSupplier freecamActive) {
-        GoNutsApi.reserveHud("donut:arraylist", () -> {
+        HudSpace.reserve("donut:arraylist", () -> {
             Minecraft client = Minecraft.getInstance();
             if (!config.showHud || !FinderHud.reserved(client)) return null;
             List<String> names = names(client.font, config, freecamActive.getAsBoolean());

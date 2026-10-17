@@ -5,9 +5,9 @@ import dev.donut.client.config.ClientConfig;
 import dev.donut.client.config.ConfigStore;
 import dev.donut.client.freecam.FreecamController;
 import dev.donut.client.gui.DonutScreen;
+import dev.donut.client.gui.HudSpace;
 import dev.donut.client.input.ModuleKeybinds;
 import dev.donut.client.rtp.AutoRtpController;
-import dev.doughbay.fabric.GoNutsApi;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Arrays;
@@ -216,36 +216,29 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                     setFinder(context, store, FULLBRIGHT, true);
                     setFinder(context, store, BASES, true);
                     screenshot(context, "donut-arraylist-01-active-scaled");
-                    // GoNuts's HUD is told where the module list and the info panel are, and keeps its own surfaces off them.
-                    // Without a live market feed it draws nothing, so it previews its HUD with sample data.
-                    context.runOnClient(client -> GoNutsApi.hudPreview(5_000));
-                    context.waitTicks(3);
-                    context.runOnClient(client -> require(!GoNutsApi.hudDrawn().isEmpty(), "GoNuts's HUD preview drew nothing"));
-                    screenshot(context, "donut-arraylist-01b-gonuts-preview");
-                    // The same where the user plays: a 2560x1440 screen at the automatic GUI scale, 6, leaves 426x240, and
-                    // GoNuts draws its HUD scaled down to fit beside Donut's.
+                    // The module list and the info panel claim their areas, so the distance labels keep off them.
+                    context.runOnClient(ModuleKeybindGameTest::requireHudReserved);
+                    // The same where the user plays: a 2560x1440 screen at the automatic GUI scale, 6, leaves 426x240.
                     context.getInput().resizeWindow(2560, 1440);
                     context.runOnClient(client -> {
                         client.options.guiScale().set(0);
                         client.resizeGui();
-                        GoNutsApi.hudPreview(5_000);
                     });
                     context.waitTicks(3);
                     context.runOnClient(client -> require(client.getWindow().getGuiScale() == 6,
                             "A 2560x1440 window got GUI scale " + client.getWindow().getGuiScale() + ", not 6"));
-                    context.runOnClient(ModuleKeybindGameTest::requireHudApart);
-                    context.takeScreenshot(TestScreenshotOptions.of("donut-arraylist-01c-gonuts-preview-1440p").withSize(2560, 1440));
+                    context.runOnClient(ModuleKeybindGameTest::requireHudReserved);
+                    context.takeScreenshot(TestScreenshotOptions.of("donut-arraylist-01c-active-1440p").withSize(2560, 1440));
                     context.getInput().resizeWindow(1280, 800);
                     context.runOnClient(client -> {
                         client.options.guiScale().set(2);
                         client.resizeGui();
-                        GoNutsApi.hudPreview(5_000);
                     });
                     context.waitTicks(3);
-                    context.runOnClient(ModuleKeybindGameTest::requireHudApart);
+                    context.runOnClient(ModuleKeybindGameTest::requireHudReserved);
                     context.getInput().pressKey(GLFW.GLFW_KEY_F1);
                     context.runOnClient(client -> require(client.gui.hud.isHidden(), "F1 did not hide the HUD"));
-                    context.runOnClient(client -> require(GoNutsApi.hudReserved().isEmpty(),
+                    context.runOnClient(client -> require(HudSpace.reserved().isEmpty(),
                             "Donut's HUD still reserves space while F1 hides it"));
                     screenshot(context, "donut-arraylist-02-hidden-with-f1");
                     context.getInput().pressKey(GLFW.GLFW_KEY_F1);
@@ -344,23 +337,14 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
                 "The selected key was not assigned to module " + module));
     }
 
-
-    /** GoNuts's HUD draws, Donut's module list and info panel are reserved from it, and it keeps off them. */
-    private static void requireHudApart(Minecraft client) {
+    /** The module list and the info panel reserve their areas from the distance labels. */
+    private static void requireHudReserved(Minecraft client) {
         int width = client.getWindow().getGuiScaledWidth();
-        List<int[]> reserved = GoNutsApi.hudReserved();
-        require(!GoNutsApi.hudDrawn().isEmpty(), "GoNuts's HUD preview drew nothing at GUI scale " + client.getWindow().getGuiScale());
+        List<int[]> reserved = HudSpace.reserved();
         require(reserved.stream().anyMatch(r -> r[0] + r[2] == width - 2 && r[1] == 2 && r[3] > 0 && r[3] % 13 == 0),
-                "The module list's area is not reserved from GoNuts's HUD");
+                "The module list's area is not reserved at GUI scale " + client.getWindow().getGuiScale());
         require(reserved.stream().anyMatch(r -> r[0] == 2 && r[1] == 2 && r[3] > 0 && r[3] % 13 == 0),
-                "The info panel's area is not reserved from GoNuts's HUD");
-        for (int[] drawn : GoNutsApi.hudDrawn()) {
-            for (int[] r : reserved) {
-                boolean apart = drawn[0] >= r[0] + r[2] || r[0] >= drawn[0] + drawn[2]
-                        || drawn[1] >= r[1] + r[3] || r[1] >= drawn[1] + drawn[3];
-                require(apart, "GoNuts drew " + Arrays.toString(drawn) + " over Donut's HUD at " + Arrays.toString(r));
-            }
-        }
+                "The info panel's area is not reserved at GUI scale " + client.getWindow().getGuiScale());
     }
 
     private static void screenshot(ClientGameTestContext context, String name) {
