@@ -146,6 +146,9 @@ public final class SchematicBuilder {
      * up each tick's planning time before a walk is worked out, and the next tick would start over with the same ones.
      */
     private final Map<Integer, PlacementSolver.Problem> noClickHere = new HashMap<>();
+    /** The cells the way out from where the player stands passes through, worked out at tick {@code exitTick}; null for none. */
+    private Set<Long> exitCells;
+    private long exitTick = -1;
     private Vec3 noClickFrom;
     private boolean noClickCrouch;
     private long noClickTick;
@@ -219,6 +222,8 @@ public final class SchematicBuilder {
     private BlockPos box;
     private PlacementSolver.Click boxClick;
     private int restockTicks, nextTake, boxesBefore, restockFailures;
+    /** Walks planned to a dropped box since it broke. */
+    private int boxWalks;
     /** What the layers being built need, worked out when a box opens, so taking and putting back agree. */
     private Map<Item, Integer> soon = Map.of();
     /** Whether the builder holds the forward key, walking to a dropped shulker box. */
@@ -867,22 +872,59 @@ public final class SchematicBuilder {
 
     /**
      * Whether the player could still get out with block {@code i} in place: walking, jumping or climbing onto the top
-     * of the layer being built, or out of the schematic. Only blocks close to the player can shut them in.
+     * of the layer being built, or out of the schematic. Any block in reach can shut them in, a far one by closing the
+     * last way out at its far end.
      */
     private boolean wayOut(LocalPlayer player, int i) {
         BlockPos pos = plan.pos(i);
-        if (!player.getBoundingBox().inflate(2.5).intersects(new AABB(pos))) return true;
         if (plan.target(i).getCollisionShape(player.level(), pos).isEmpty()) return true;
+        // Out already: on top of the layer, or off the build.
+        if (player.getY() >= layerY + 1 - 1e-3 || !plan.bounds.inflate(1).contains(player.position())) return true;
+        // The way out there is now, worked out once a tick. A block anywhere off it, near or as far as reach goes,
+        // leaves it open; one on it may close the last way out, and the search is made again with it in place.
+        if (exitTick != tick) {
+            Navigator.Path exit = exitFrom(player, player.level(), Navigator.standingAt(player.level(), player), null);
+            exitCells = exit == null ? null : bodyCells(exit);
+            exitTick = tick;
+        }
+        // Shut in already without it, the block changes nothing: getting out is up to breakOut.
+        if (exitCells == null || !exitCells.contains(pos.asLong())) return true;
         Overlay view = new Overlay(player.level(), Map.of(pos.asLong(), plan.target(i)));
         // Every place this search reaches is shut in with the player when it finds no way out.
         Set<Long> reached = new HashSet<>();
         if (exitFrom(player, view, Navigator.standingAt(view, player), reached) != null) return true;
-        // Shut in already without it, the block changes nothing: getting out is up to breakOut.
-        if (exitFrom(player, player.level(), Navigator.standingAt(player.level(), player), null) == null) return true;
         shutIn.put(i, reached);
         if (debug()) LOGGER.info("{} at {} waits: it would shut you in, with {} places to stand", plan.target(i).getBlock().getName().getString(),
                 pos.toShortString(), reached.size());
         return false;
+    }
+
+    /**
+     * The cells a body walking along {@code path} passes through: each place's column from the feet to above the head,
+     * as high as the higher of two places a step joins, and both corners of a diagonal step.
+     */
+    private static Set<Long> bodyCells(Navigator.Path path) {
+        Set<Long> cells = new HashSet<>();
+        Navigator.Node before = null;
+        for (Navigator.Node node : path.nodes()) {
+            double low = node.feet(), high = node.feet();
+            if (before != null) {
+                low = Math.min(low, before.feet());
+                high = Math.max(high, before.feet());
+            }
+            int from = (int) Math.floor(low + 1e-3), to = (int) Math.floor(high + 2.1);
+            for (int y = from; y <= to; y++) {
+                cells.add(BlockPos.asLong(node.x(), y, node.z()));
+                if (before == null) continue;
+                cells.add(BlockPos.asLong(before.x(), y, before.z()));
+                if (before.x() != node.x() && before.z() != node.z()) {
+                    cells.add(BlockPos.asLong(before.x(), y, node.z()));
+                    cells.add(BlockPos.asLong(node.x(), y, before.z()));
+                }
+            }
+            before = node;
+        }
+        return cells;
     }
 
     /**
@@ -2214,6 +2256,8 @@ public final class SchematicBuilder {
                 // Something under it to place it on, and not ice: the box, once broken, would slide off out of reach.
                 if (!level.getBlockState(at.below()).isFaceSturdy(level, at.below(), Direction.UP)) continue;
                 if (level.getBlockState(at.below()).getBlock().getFriction() > 0.6f) continue;
+                // Not beside a drop either: the box, once broken, can bounce into it, down out of reach.
+                if (besideDrop(level, at)) continue;
                 // Never on a spot the schematic fills.
                 if (plan.indexOf(at) >= 0) continue;
                 (keepClear.contains(Vec3.atCenterOf(at)) ? inside : outside).add(at);
@@ -2224,6 +2268,16 @@ public final class SchematicBuilder {
         inside.sort(nearest);
         outside.addAll(inside);
         return outside;
+    }
+
+    /** Whether a spot beside {@code at} is open with nothing under it to stop a dropped item falling. */
+    private static boolean besideDrop(Level level, BlockPos at) {
+        for (Direction side : Direction.Plane.HORIZONTAL) {
+            BlockPos next = at.relative(side);
+            if (level.getBlockState(next).getCollisionShape(level, next).isEmpty()
+                    && level.getBlockState(next.below()).getCollisionShape(level, next.below()).isEmpty()) return true;
+        }
+        return false;
     }
 
     private void restockTick(Minecraft client, LocalPlayer player) {
@@ -2313,6 +2367,7 @@ public final class SchematicBuilder {
                     client.gameMode.stopDestroyBlock();
                     restock = Restock.PICKUP;
                     restockTicks = 0;
+                    boxWalks = 0;
                     return;
                 }
                 if (client.gui.screen() != null) return;
@@ -2341,16 +2396,49 @@ public final class SchematicBuilder {
                 }
                 if (shulkerCount(player.getInventory()) >= boxesBefore) {
                     stopWalking(client);
+                    walker.stop(client);
                     LOGGER.info("Shulker box picked up again");
                     restock = Restock.NONE;
+                    if (!player.hasInfiniteMaterials() && Materials.of(player.getInventory()).loose(restockItem) == 0) {
+                        // Opened and closed again without it: the inventory has no room, and the next try would go the
+                        // same way.
+                        if (++restockFailures >= RESTOCK_FAILURES) {
+                            finish(client, "stopped: no room in your inventory to take " + name(restockItem)
+                                    + " out of a shulker box; make room and start again.", true);
+                            return;
+                        }
+                        show("No room to take " + name(restockItem) + " out of a shulker box", true);
+                        nextAction = System.nanoTime() + 2_000_000_000L;
+                        return;
+                    }
                     restockFailures = 0;
                     nextAction = System.nanoTime() + delay();
                     show("Took " + name(restockItem) + " out of a shulker box", false);
                     return;
                 }
-                // A box that rolled or slid out of reach is walked to, straight at it, for some seconds.
-                if (restockTicks >= 10 && restockTicks < 240) walkTo(client, player, droppedBox(level, player));
-                else stopWalking(client);
+                // A box that rolled, slid or fell out of reach is walked to for some seconds: along a way there when it
+                // is further off or lower down, else straight at it.
+                if (restockTicks >= 10 && restockTicks < 240) {
+                    ItemEntity dropped = droppedBox(level, player);
+                    if (walker.active()) {
+                        walk(client, player);
+                    } else if (dropped != null && boxWalks < 3 && (Math.abs(dropped.getY() - player.getY()) > 1 || dropped.distanceToSqr(player) > 9)) {
+                        boxWalks++;
+                        Navigator.Path path = navigator(player, false).find(Navigator.standingAt(level, player), node -> {
+                            Vec3 stand = node.standing();
+                            double dx = stand.x - dropped.getX(), dz = stand.z - dropped.getZ(), dy = dropped.getY() - stand.y;
+                            return dx * dx + dz * dz < 0.8 && dy > -0.5 && dy < 1.5 ? 1 : 0;
+                        });
+                        stopWalking(client);
+                        // Not into a place with no way back out, for a box either.
+                        if (path != null && path.nodes().size() > 1 && !dropsIntoTrap(player, path)) walker.start(path.nodes());
+                    } else {
+                        walkTo(client, player, dropped);
+                    }
+                } else {
+                    walker.stop(client);
+                    stopWalking(client);
+                }
                 if (restockTicks == 250) {
                     message(client, "pick up your shulker box near " + box.getX() + " " + box.getY() + " " + box.getZ()
                             + "; the build goes on once it's back.", ChatFormatting.YELLOW);
@@ -2370,9 +2458,9 @@ public final class SchematicBuilder {
 
     /** The dropped shulker box item near where the box stood, or null. */
     private ItemEntity droppedBox(ClientLevel level, LocalPlayer player) {
-        // Within a few blocks of where it stood: a box can bounce, or slide on ice nearby.
+        // Within a few blocks of where it stood: a box can bounce, slide on ice nearby, or fall a few blocks.
         List<ItemEntity> items = level.getEntitiesOfClass(ItemEntity.class, new AABB(box).inflate(8),
-                item -> Materials.isShulkerBox(item.getItem()) && Math.abs(item.getY() - player.getY()) < 3);
+                item -> Materials.isShulkerBox(item.getItem()) && item.getY() - player.getY() < 3 && player.getY() - item.getY() < 6);
         return items.stream().min(Comparator.comparingDouble(item -> item.distanceToSqr(player))).orElse(null);
     }
 
@@ -2403,9 +2491,16 @@ public final class SchematicBuilder {
      * worth taking from, and what can go back into it.
      */
     private Map<Item, Integer> soonNeeds(Level level) {
+        Map<Item, Integer> needs = needsUpTo(level, layerY + 2);
+        if (restockItem != null) needs.merge(restockItem, 1, Math::max);
+        return needs;
+    }
+
+    /** What the layers up to height {@code top} still take, by item: the layer being built and those below it still waiting, at the least. */
+    private Map<Item, Integer> needsUpTo(Level level, int top) {
         Map<Item, Integer> needs = new HashMap<>();
         boolean dryFirst = plan.solidsLeft();
-        for (int[] layer : plan.layers().headMap(layerY + 2, true).values()) {
+        for (int[] layer : plan.layers().headMap(top, true).values()) {
             for (int i : layer) {
                 BuildPlan.Status st = plan.status(i);
                 if (st != BuildPlan.Status.PENDING && st != BuildPlan.Status.UNLOADED) continue;
@@ -2417,35 +2512,59 @@ public final class SchematicBuilder {
                 needs.merge(item, count, Integer::sum);
             }
         }
-        if (restockItem != null) needs.merge(restockItem, 1, Math::max);
         return needs;
     }
 
     /**
-     * A slot of the player's inventory, in the open box's menu, to put back into the box when room is short: blocks the
-     * next layers don't need, and empty buckets. -1 when there is room enough or nothing to put back.
+     * A slot of the player's inventory, in the open box's menu, to put back into the box when room is short, so what the
+     * box was opened for fits: first blocks the next layers don't need, and empty buckets; then helper blocks past one
+     * stack; then blocks the layer being built doesn't need; last, a stack more than that layer needs. Never the item
+     * the box was opened for. -1 when there is room enough or nothing can go back.
      */
     private int nextToDeposit(ShulkerBoxMenu menu, LocalPlayer player) {
-        if (Materials.of(player.getInventory()).freeSlots() >= 3) return -1;
+        Materials carried = Materials.of(player.getInventory());
+        if (carried.freeSlots() >= 2) return -1;
         boolean boxHasRoom = false;
         for (int slot = 0; slot < 27; slot++) if (menu.getSlot(slot).getItem().isEmpty()) boxHasRoom = true;
         if (!boxHasRoom) return -1;
-        Map<Item, Integer> needs = plan.needs();
+        Map<Item, Integer> needs = plan.needs(), now = needsUpTo(player.level(), layerY);
+        Set<Item> helperKept = new HashSet<>();
+        int best = -1, bestRank = Integer.MAX_VALUE;
         for (int slot = 27; slot < menu.slots.size(); slot++) {
             ItemStack stack = menu.getSlot(slot).getItem();
-            if (stack.isEmpty() || Materials.isShulkerBox(stack) || helperItems.contains(stack.getItem())) continue;
-            boolean material = needs.containsKey(stack.getItem()) && !soon.containsKey(stack.getItem());
-            if (material || stack.is(Items.BUCKET)) return slot;
+            if (stack.isEmpty() || Materials.isShulkerBox(stack) || stack.is(restockItem)) continue;
+            Item item = stack.getItem();
+            int rank;
+            if (helperItems.contains(item)) {
+                if (helperKept.add(item)) continue;
+                rank = 1;
+            } else if (stack.is(Items.BUCKET) || needs.containsKey(item) && !soon.containsKey(item)) {
+                rank = 0;
+            } else if (!needs.containsKey(item)) {
+                continue;
+            } else if (!now.containsKey(item)) {
+                rank = 2;
+            } else if (carried.loose(item) - stack.getCount() >= now.get(item)) {
+                rank = 3;
+            } else {
+                continue;
+            }
+            if (rank < bestRank) {
+                best = slot;
+                bestRank = rank;
+            }
         }
-        return -1;
+        return best;
     }
 
     /** The next slot of the open box to take: the item it was opened for first, then what the next layers need. */
     private int nextToTake(ShulkerBoxMenu menu, LocalPlayer player) {
         Materials carried = Materials.of(player.getInventory());
-        // One slot stays free for the box itself.
+        // One slot stays free for the box itself. Other items only go into room to spare: they would otherwise crowd out
+        // what the box was opened for, be put back for it, and be taken again.
         if (carried.freeSlots() <= 1) return -1;
         for (boolean first : new boolean[] {true, false}) {
+            if (!first && carried.freeSlots() <= 3) break;
             for (int slot = 0; slot < 27; slot++) {
                 ItemStack stack = menu.getSlot(slot).getItem();
                 if (stack.isEmpty()) continue;
