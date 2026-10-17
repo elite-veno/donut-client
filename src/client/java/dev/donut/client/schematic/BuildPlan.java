@@ -10,9 +10,11 @@ import java.util.TreeMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.AABB;
 
 /**
@@ -55,7 +57,13 @@ public final class BuildPlan {
     private final Map<Long, Integer> index = new HashMap<>();
     /** Each layer's blocks by height, in placing order: plain blocks, then redstone, then what moves. */
     private final TreeMap<Integer, int[]> layers = new TreeMap<>();
+    /** With redstone last: for each block, the blocks of an earlier group in its layer at most two blocks away. */
+    private final int[][] earlierNear;
+    private static final int[] NONE = new int[0];
     private final int[] counts = new int[Status.values().length];
+    /** Whether each block is water, lava or what grows in water; and of those, how many have each status. */
+    private final boolean[] wet;
+    private final int[] wetCounts = new int[Status.values().length];
     public final AABB bounds;
     private int cursor;
     private Map<Item, Integer> needs = Map.of();
@@ -73,6 +81,7 @@ public final class BuildPlan {
         failed = new boolean[n];
         supportStamp = new long[n];
         support = new byte[n];
+        wet = new boolean[n];
         int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
         int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
         Map<Integer, List<Integer>> byY = new TreeMap<>();
@@ -80,15 +89,17 @@ public final class BuildPlan {
             BlockPos pos = BlockPos.of(positions[i]);
             index.put(positions[i], i);
             kinds[i] = BlockRules.kind(targets[i]);
-            status[i] = kinds[i] == BlockRules.Kind.PLACE ? Status.UNLOADED : Status.SKIPPED;
+            status[i] = placed(i) ? Status.UNLOADED : Status.SKIPPED;
             counts[status[i].ordinal()]++;
+            wet[i] = BlockRules.wet(targets[i]);
+            if (wet[i]) wetCounts[status[i].ordinal()]++;
             minX = Math.min(minX, pos.getX());
             minY = Math.min(minY, pos.getY());
             minZ = Math.min(minZ, pos.getZ());
             maxX = Math.max(maxX, pos.getX());
             maxY = Math.max(maxY, pos.getY());
             maxZ = Math.max(maxZ, pos.getZ());
-            if (kinds[i] == BlockRules.Kind.PLACE) byY.computeIfAbsent(pos.getY(), y -> new ArrayList<>()).add(i);
+            if (placed(i)) byY.computeIfAbsent(pos.getY(), y -> new ArrayList<>()).add(i);
         }
         for (Map.Entry<Integer, List<Integer>> layer : byY.entrySet()) {
             List<Integer> order = layer.getValue();
@@ -96,7 +107,27 @@ public final class BuildPlan {
             layers.put(layer.getKey(), order.stream().mapToInt(Integer::intValue).toArray());
         }
         bounds = n == 0 ? new AABB(BlockPos.ZERO) : new AABB(minX, minY, minZ, maxX + 1, maxY + 1, maxZ + 1);
+        earlierNear = new int[n][];
+        for (int i = 0; i < n; i++) {
+            int group = BlockRules.group(targets[i]);
+            if (!redstoneLast || !placed(i) || group == 0) {
+                earlierNear[i] = NONE;
+                continue;
+            }
+            BlockPos pos = BlockPos.of(positions[i]);
+            List<Integer> near = new ArrayList<>();
+            for (int dx = -NEAR; dx <= NEAR; dx++) {
+                for (int dz = -NEAR; dz <= NEAR; dz++) {
+                    int j = indexOf(pos.offset(dx, 0, dz));
+                    if (j >= 0 && placed(j) && BlockRules.group(targets[j]) < group) near.add(j);
+                }
+            }
+            earlierNear[i] = near.stream().mapToInt(Integer::intValue).toArray();
+        }
     }
+
+    /** How far apart, across a layer, a block and one of an earlier group can be and still have to go in in order. */
+    public static final int NEAR = 2;
 
     /** The schematic placed at {@code origin}, mirrored and then rotated about it. */
     public static BuildPlan of(Schematic schematic, BlockPos origin, Mirror mirror, Rotation rotation, boolean redstoneLast) {
@@ -123,16 +154,38 @@ public final class BuildPlan {
 
     public int size() { return targets.length; }
 
+    /** Whether the builder puts this block in itself: placed with its item, or poured from a bucket. */
+    private boolean placed(int i) { return kinds[i] == BlockRules.Kind.PLACE || kinds[i] == BlockRules.Kind.FLUID; }
+
+    public BlockRules.Kind kind(int i) { return kinds[i]; }
+
     public BlockPos pos(int i) { return BlockPos.of(positions[i]); }
 
     public BlockState target(int i) { return targets[i]; }
 
-    public int indexOf(BlockPos pos) { return index.getOrDefault(pos.asLong(), -1); }
+    public int indexOf(BlockPos pos) { return indexOf(pos.asLong()); }
+
+    public int indexOf(long pos) { return index.getOrDefault(pos, -1); }
+
+    /**
+     * The blocks of an earlier group than block {@code i} in its layer, at most {@link #NEAR} blocks away across it: with
+     * redstone last, these go in before it. Empty without redstone last.
+     */
+    public int[] earlierNear(int i) { return earlierNear[i]; }
 
     /** Layer heights from the bottom up, each with its blocks in placing order. */
     public TreeMap<Integer, int[]> layers() { return layers; }
 
     public int count(Status s) { return counts[s.ordinal()]; }
+
+    /** Whether block {@code i} is water, lava or what grows in water: those go in once everything else is. */
+    public boolean wet(int i) { return wet[i]; }
+
+    /** Whether blocks other than water, lava and what grows in water are still to go in, or not read yet. */
+    public boolean solidsLeft() {
+        int pending = Status.PENDING.ordinal(), unloaded = Status.UNLOADED.ordinal();
+        return counts[pending] + counts[unloaded] > wetCounts[pending] + wetCounts[unloaded];
+    }
 
     /** Blocks the builder places, as opposed to those that come with another or can't be placed. */
     public int placeable() { return targets.length - counts[Status.SKIPPED.ordinal()]; }
@@ -159,7 +212,7 @@ public final class BuildPlan {
                 Item item = BlockRules.item(targets[cursor]);
                 BlockState current = now == Status.UNLOADED ? net.minecraft.world.level.block.Blocks.AIR.defaultBlockState()
                         : level.getBlockState(pos(cursor));
-                int need = BlockRules.itemsNeeded(current, targets[cursor]);
+                int need = kinds[cursor] == BlockRules.Kind.FLUID ? 1 : BlockRules.itemsNeeded(current, targets[cursor]);
                 if (item != null && need > 0) needsBuilding.merge(item, need, Integer::sum);
             }
             if (++cursor == n) {
@@ -176,19 +229,32 @@ public final class BuildPlan {
         if (now != status[i]) {
             counts[status[i].ordinal()]--;
             counts[now.ordinal()]++;
+            if (wet[i]) {
+                wetCounts[status[i].ordinal()]--;
+                wetCounts[now.ordinal()]++;
+            }
             status[i] = now;
         }
         return now;
     }
 
     private Status compute(Level level, int i) {
-        if (kinds[i] != BlockRules.Kind.PLACE) return Status.SKIPPED;
+        if (!placed(i)) return Status.SKIPPED;
         BlockPos pos = pos(i);
         if (!LoadedChunks.has(level, pos)) return Status.UNLOADED;
         BlockState current = level.getBlockState(pos), target = targets[i];
+        if (kinds[i] == BlockRules.Kind.FLUID) {
+            // Only a source counts: water flowing past is no source, and the builder pours over it.
+            FluidState fluid = current.getFluidState();
+            if (current.getBlock() instanceof LiquidBlock && fluid.isSource() && fluid.getType().isSame(target.getFluidState().getType())) {
+                return Status.DONE;
+            }
+            if (failed[i]) return Status.FAILED;
+            return current.canBeReplaced() ? Status.PENDING : Status.WRONG;
+        }
         if (BlockRules.satisfied(current, target)) return Status.DONE;
         if (failed[i]) return Status.FAILED;
-        if (current.getBlock() == target.getBlock()) {
+        if (BlockRules.sameBlock(current.getBlock(), target.getBlock())) {
             return BlockRules.placementMatches(current, target) ? Status.PENDING : Status.MISPLACED;
         }
         return current.canBeReplaced() ? Status.PENDING : Status.WRONG;

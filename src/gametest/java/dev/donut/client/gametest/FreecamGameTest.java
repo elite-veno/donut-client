@@ -31,6 +31,8 @@ public final class FreecamGameTest implements FabricClientGameTest {
             client.options.setCameraType(CameraType.FIRST_PERSON);
         });
         context.getInput().resizeWindow(1280, 800);
+        // The camera only turns with the mouse while the game holds it: for this test it may.
+        WatchBuild.mouseHeld = true;
 
         try {
           try (var world = context.worldBuilder().create()) {
@@ -194,6 +196,7 @@ public final class FreecamGameTest implements FabricClientGameTest {
           context.runOnClient(client -> require(!controller.isActive() && !controller.settings().enabled,
                   "Disconnect did not leave Freecam disabled"));
         } finally {
+            WatchBuild.mouseHeld = false;
             context.getInput().releaseKey(options -> options.keyUp);
             context.getInput().releaseKey(options -> options.keySprint);
             context.getInput().releaseKey(options -> options.keyJump);

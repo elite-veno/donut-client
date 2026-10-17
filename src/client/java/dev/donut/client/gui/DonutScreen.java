@@ -555,20 +555,24 @@ public final class DonutScreen extends Screen {
                     () -> s.minDelay, s::setMinDelay, 0.05, 10, 0.05, v -> String.format(Locale.ROOT, "%.2f s", v));
             c.slider("maxDelay", "Longest delay", "Set both the same for a fixed delay", () -> s.maxDelay, s::setMaxDelay,
                     0.05, 10, 0.05, v -> String.format(Locale.ROOT, "%.2f s", v));
+            c.section("Moving");
+            c.toggle("walk", "Walk", "Walks, jumps and climbs to each block by itself, as a player on foot; off, you walk and it places what comes in reach",
+                    () -> s.walk, () -> s.walk = !s.walk);
+            c.field("helpers", "Helper blocks", "Put down to climb on or place a block against, then taken away; the build's own blocks are never used",
+                    () -> s.helperBlocks, v -> s.helperBlocks = v, false, 512);
             c.section("Materials");
             c.toggle("shulkers", "Use shulker boxes", "Take blocks from shulker boxes in your inventory: placed beside you, emptied, broken and picked up",
                     () -> s.useShulkers, () -> s.useShulkers = !s.useShulkers);
             buildMaterials(c, builder);
             c.more(m -> {
                 m.section("Placing");
-                m.toggle("strict", "Strict looks", "Only click faces in view, looked at straight on; some blocks then need you on their other side",
-                        () -> s.strictLooks, () -> s.strictLooks = !s.strictLooks);
                 m.toggle("redstoneLast", "Redstone last", "In each layer: plain blocks, then redstone, then pistons, observers and dispensers",
                         () -> s.redstoneLast, () -> s.redstoneLast = !s.redstoneLast);
                 m.toggle("preview", "Preview", "Outline the schematic and the blocks left in the layer being built",
                         () -> s.preview, () -> s.preview = !s.preview);
             });
-            c.note("Walk along each layer: blocks go in as they come in reach. Check the server's rules before automating building.", DIM);
+            c.note(s.walk ? "It walks the build layer by layer within normal reach, looking at each spot it clicks, and never flies. Check the server's rules before automating building."
+                    : "Walk along each layer: blocks go in as they come in reach and view. Check the server's rules before automating building.", DIM);
         }).key(11).values(s);
     }
 

@@ -37,14 +37,15 @@ class BlockRulesTest {
     }
 
     @Test
-    void secondHalvesComeWithTheirBlockAndLiquidsCantBePlaced() {
+    void secondHalvesComeWithTheirBlockAndOnlyFluidSourcesArePoured() {
         BlockState door = Blocks.OAK_DOOR.defaultBlockState();
         assertEquals(BlockRules.Kind.PLACE, BlockRules.kind(door.setValue(BlockStateProperties.DOUBLE_BLOCK_HALF, DoubleBlockHalf.LOWER)));
         assertEquals(BlockRules.Kind.AUTO, BlockRules.kind(door.setValue(BlockStateProperties.DOUBLE_BLOCK_HALF, DoubleBlockHalf.UPPER)));
         assertEquals(BlockRules.Kind.AUTO, BlockRules.kind(Blocks.BED.red().defaultBlockState().setValue(BlockStateProperties.BED_PART, BedPart.HEAD)));
         assertEquals(BlockRules.Kind.PLACE, BlockRules.kind(Blocks.BED.red().defaultBlockState().setValue(BlockStateProperties.BED_PART, BedPart.FOOT)));
         assertEquals(BlockRules.Kind.AUTO, BlockRules.kind(Blocks.PISTON_HEAD.defaultBlockState()));
-        assertEquals(BlockRules.Kind.UNPLACEABLE, BlockRules.kind(Blocks.WATER.defaultBlockState()));
+        assertEquals(BlockRules.Kind.FLUID, BlockRules.kind(Blocks.WATER.defaultBlockState()));
+        assertEquals(BlockRules.Kind.AUTO, BlockRules.kind(Blocks.WATER.defaultBlockState().setValue(BlockStateProperties.LEVEL, 3)));
         assertEquals(BlockRules.Kind.UNPLACEABLE, BlockRules.kind(Blocks.FIRE.defaultBlockState()));
         assertEquals(BlockRules.Kind.PLACE, BlockRules.kind(Blocks.REDSTONE_WIRE.defaultBlockState()), "dust is placed with redstone");
         assertEquals(BlockRules.Kind.PLACE, BlockRules.kind(Blocks.WALL_TORCH.defaultBlockState()), "a wall torch is placed with a torch");
@@ -152,6 +153,47 @@ class BlockRulesTest {
     }
 
     @Test
+    void sourcesArePouredAndFlowingWaterComesFromThem() {
+        BlockState source = Blocks.WATER.defaultBlockState();
+        assertEquals(BlockRules.Kind.FLUID, BlockRules.kind(source));
+        assertEquals(net.minecraft.world.item.Items.WATER_BUCKET, BlockRules.item(source));
+        assertEquals(net.minecraft.world.item.Items.LAVA_BUCKET, BlockRules.item(Blocks.LAVA.defaultBlockState()));
+        assertEquals(BlockRules.Kind.AUTO, BlockRules.kind(source.setValue(BlockStateProperties.LEVEL, 3)), "flowing water");
+        assertEquals(BlockRules.Kind.AUTO, BlockRules.kind(source.setValue(BlockStateProperties.LEVEL, 8)), "falling water");
+        assertEquals(3, BlockRules.group(source), "water goes in after its layer's blocks");
+        assertEquals(4, BlockRules.group(Blocks.KELP.defaultBlockState()), "kelp waits for the water");
+        assertEquals(0, BlockRules.group(Blocks.OAK_STAIRS.defaultBlockState().setValue(BlockStateProperties.WATERLOGGED, true)));
+    }
+
+    @Test
+    void aKelpStemIsPlacedAsKelpAndCountsAsIt() {
+        BlockState stem = Blocks.KELP_PLANT.defaultBlockState(), tip = Blocks.KELP.defaultBlockState();
+        assertEquals(BlockRules.Kind.PLACE, BlockRules.kind(stem));
+        assertEquals(net.minecraft.world.item.Items.KELP, BlockRules.item(stem));
+        assertEquals(Blocks.KELP, BlockRules.placedAs(stem).getBlock());
+        assertTrue(BlockRules.placementMatches(tip, stem), "a stem starts as a tip");
+        assertTrue(BlockRules.satisfied(stem, tip.setValue(BlockStateProperties.AGE_25, 7)), "a tip grown into a stem is still the plant");
+        assertTrue(BlockRules.satisfied(tip.setValue(BlockStateProperties.AGE_25, 3), tip.setValue(BlockStateProperties.AGE_25, 20)), "age is the plant's own");
+    }
+
+    @Test
+    void doubleChestsPairUpAndLoneChestsStayAlone() {
+        BlockState chest = Blocks.CHEST.defaultBlockState().setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.NORTH);
+        BlockState single = chest.setValue(BlockStateProperties.CHEST_TYPE, net.minecraft.world.level.block.state.properties.ChestType.SINGLE);
+        BlockState left = chest.setValue(BlockStateProperties.CHEST_TYPE, net.minecraft.world.level.block.state.properties.ChestType.LEFT);
+        BlockState right = chest.setValue(BlockStateProperties.CHEST_TYPE, net.minecraft.world.level.block.state.properties.ChestType.RIGHT);
+        assertTrue(BlockRules.placementMatches(single, left, false), "the first half stands alone until the second goes in");
+        assertFalse(BlockRules.placementMatches(single, left, true), "the second half must join the first");
+        assertTrue(BlockRules.placementMatches(left, left, true));
+        assertFalse(BlockRules.placementMatches(right, left, false), "joined the wrong way");
+        assertFalse(BlockRules.placementMatches(left, single, false), "a lone chest joined a neighbor");
+        BlockPos pos = new BlockPos(5, 64, 5);
+        assertEquals(pos.east(), BlockRules.chestPartner(pos, left), "a north-facing left half has its partner to the east");
+        assertEquals(pos.west(), BlockRules.chestPartner(pos, right));
+        assertNull(BlockRules.chestPartner(pos, single));
+    }
+
+    @Test
     void layersRunBottomUpWithRedstoneAfterPlainBlocks() {
         Map<BlockPos, BlockState> blocks = new LinkedHashMap<>();
         blocks.put(new BlockPos(0, 1, 0), Blocks.REDSTONE_WIRE.defaultBlockState());
@@ -160,12 +202,13 @@ class BlockRulesTest {
         blocks.put(new BlockPos(3, 0, 0), Blocks.STONE.defaultBlockState());
         blocks.put(new BlockPos(0, 0, 0), Blocks.STONE.defaultBlockState());
         blocks.put(new BlockPos(4, 0, 0), Blocks.WATER.defaultBlockState());
+        blocks.put(new BlockPos(5, 0, 0), Blocks.WATER.defaultBlockState().setValue(BlockStateProperties.LEVEL, 3));
         BuildPlan plan = BuildPlan.of(blocks, true);
         assertEquals(List.of(0, 1), List.copyOf(plan.layers().keySet()));
         List<BlockPos> bottom = java.util.Arrays.stream(plan.layers().get(0)).mapToObj(plan::pos).toList();
-        assertEquals(List.of(new BlockPos(3, 0, 0), new BlockPos(0, 0, 0), new BlockPos(2, 0, 0), new BlockPos(1, 0, 0)), bottom,
-                "stone first, then the repeater, then the piston; water is left out");
-        assertEquals(5, plan.placeable());
+        assertEquals(List.of(new BlockPos(3, 0, 0), new BlockPos(0, 0, 0), new BlockPos(2, 0, 0), new BlockPos(1, 0, 0),
+                new BlockPos(4, 0, 0)), bottom.subList(0, 5), "stone first, then the repeater, then the piston, then the water poured");
+        assertEquals(6, plan.placeable());
         assertEquals(1, plan.count(BuildPlan.Status.SKIPPED));
         BuildPlan inOrder = BuildPlan.of(blocks, false);
         assertEquals(new BlockPos(1, 0, 0), inOrder.pos(inOrder.layers().get(0)[0]), "without Redstone last the schematic's order stays");

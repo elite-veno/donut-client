@@ -5,6 +5,7 @@ import dev.donut.client.config.SchematicSettings;
 import dev.donut.client.finder.ChunkEvents;
 import dev.donut.client.gui.DonutScreen;
 import dev.donut.client.schematic.BlockRules;
+import dev.donut.client.schematic.BuildPlan;
 import dev.donut.client.schematic.Materials;
 import dev.donut.client.schematic.SchematicBuilder;
 import java.io.IOException;
@@ -15,6 +16,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestServerContext;
@@ -46,15 +49,15 @@ import net.minecraft.world.level.block.state.properties.SlabType;
 
 /**
  * Builds a small redstone schematic in survival with the production builder, as a player would: the .litematic is
- * dropped on the menu, the module switched on, and the player walks up to the build. Some blocks only come from a
- * shulker box in the inventory. It checks every block's state on the server, that layers went in from the bottom up
+ * dropped on the menu, the module switched on, and the builder walks up to the build on its own, with normal reach and
+ * without flying, looking at every spot it clicks. Some blocks only come from a shulker box in the inventory. It checks every block's state on the server, that layers went in from the bottom up
  * with a lantern hanging from the layer above waiting for its ceiling, that redstone followed the plain blocks of its
  * layer, and that blocks waited the configured delay.
  */
 public final class SchematicBuilderGameTest implements FabricClientGameTest {
     private static final BlockPos ORIGIN = new BlockPos(0, 65, 0);
     private static final String FILE = "donut-test.litematic";
-    private static final double MIN_DELAY = 0.25, MAX_DELAY = 0.4;
+    private static final double MIN_DELAY = 0.5, MAX_DELAY = 0.8;
 
     @Override
     public void runTest(ClientGameTestContext context) {
@@ -69,13 +72,18 @@ public final class SchematicBuilderGameTest implements FabricClientGameTest {
         Path dropped = FabricLoader.getInstance().getGameDir().resolve("schematic-drop").resolve(FILE);
         Path imported = context.computeOnClient(client -> SchematicBuilder.folder().resolve(FILE));
         Map<BlockPos, Long> placedAt = new ConcurrentHashMap<>();
+        // Where the player stood as each block went in: the delay is only measured between blocks placed from one spot.
+        Map<BlockPos, net.minecraft.world.phys.Vec3> placedFrom = new ConcurrentHashMap<>();
         ChunkEvents.Listener listener = new ChunkEvents.Listener() {
             @Override
             public void blockChanged(ClientLevel level, BlockPos pos, BlockState previous, BlockState current) {
                 BlockPos relative = pos.subtract(ORIGIN);
                 BlockState target = blocks.get(relative);
                 if (target != null && BlockRules.kind(target) == BlockRules.Kind.PLACE && previous.canBeReplaced() && !current.canBeReplaced()) {
-                    placedAt.putIfAbsent(relative.immutable(), System.nanoTime());
+                    if (placedAt.putIfAbsent(relative.immutable(), System.nanoTime()) == null) {
+                        var player = net.minecraft.client.Minecraft.getInstance().player;
+                        if (player != null) placedFrom.put(relative.immutable(), player.position());
+                    }
                 }
             }
         };
@@ -92,13 +100,14 @@ public final class SchematicBuilderGameTest implements FabricClientGameTest {
             TestServerContext server = world.getServer();
             server.runCommand("difficulty peaceful");
             server.runCommand("time set noon");
-            server.runCommand("fill -12 64 -12 16 64 20 minecraft:smooth_stone");
+            // Ground five deep, for pits to stand in.
+            server.runCommand("fill -12 60 -12 16 64 20 minecraft:smooth_stone");
             server.runCommand("fill -12 65 -12 16 72 20 minecraft:air");
             server.runCommand("gamemode survival @a");
             server.runCommand("clear @a");
             // Loose in the inventory; more than the hotbar holds, so some must be swapped in from the inventory.
             for (String give : List.of("stone 12", "repeater", "observer", "piston", "redstone 4", "lever", "redstone_torch",
-                    "oak_planks", "stone_slab", "hopper", "oak_door", "red_bed", "iron_pickaxe")) {
+                    "oak_planks", "stone_slab", "hopper", "oak_door", "red_bed", "iron_pickaxe", "dirt 16")) {
                 server.runCommand("give @a minecraft:" + give);
             }
             // These only come out of a shulker box.
@@ -106,8 +115,7 @@ public final class SchematicBuilderGameTest implements FabricClientGameTest {
                     + "{slot:0,item:{id:\"minecraft:lantern\",count:1}},{slot:1,item:{id:\"minecraft:candle\",count:3}},"
                     + "{slot:2,item:{id:\"minecraft:oak_stairs\",count:1}},{slot:3,item:{id:\"minecraft:comparator\",count:1}},"
                     + "{slot:4,item:{id:\"minecraft:diamond\",count:5}}]]");
-            server.runCommand("attribute @p minecraft:block_interaction_range base set 8.5");
-            // Far to the south at first: out of reach.
+            // Far to the south at first: out of reach, so it has to walk.
             server.runCommand("tp @a 5.5 65 16.5 180 25");
             context.waitTicks(10);
             world.getConnection().waitForChunksRender();
@@ -132,7 +140,8 @@ public final class SchematicBuilderGameTest implements FabricClientGameTest {
                 settings.setMaxDelay(MAX_DELAY);
                 settings.setMinDelay(MIN_DELAY);
                 settings.useShulkers = true;
-                settings.strictLooks = false;
+                settings.walk = true;
+                settings.helperBlocks = "dirt";
                 settings.redstoneLast = true;
                 settings.preview = true;
                 require(builder.schematic() != null, "The dropped schematic did not load: " + builder.loadProblem());
@@ -149,21 +158,38 @@ public final class SchematicBuilderGameTest implements FabricClientGameTest {
             context.runOnClient(client -> client.gui.screen().onClose());
             context.waitForScreen(null);
 
-            context.waitFor(client -> builder.isActive() && builder.status().startsWith("Move closer"), 200);
+            AtomicBoolean flew = new AtomicBoolean();
+            ClientTickEvents.END_CLIENT_TICK.register(client -> {
+                if (client.player != null && client.player.getAbilities().flying) flew.set(true);
+            });
+            context.waitFor(client -> builder.isActive(), 200);
             context.runOnClient(client -> require(builder.summary() != null, "The info panel has no builder line"));
-            require(placedAt.isEmpty(), "Blocks went in out of reach");
-            screenshot(context, "donut-schematic-03-move-closer");
-
-            server.runCommand("tp @a 5.5 65 6.5 180 35");
-            await(context, builder, placedAt, client -> placedAt.size() >= 12, 20 * 60);
+            context.runOnClient(client -> require(client.player.blockInteractionRange() <= 4.5 + 1e-6,
+                    "The test runs with more than the normal reach: " + client.player.blockInteractionRange()));
+            await(context, builder, placedAt, client -> placedAt.size() >= 12, 20 * 90);
             screenshot(context, "donut-schematic-04-building");
             await(context, builder, placedAt, client -> !builder.isActive(), 20 * 180);
             context.runOnClient(client -> require(builder.status().startsWith("Finished"), "The build did not finish: " + builder.status()));
+            require(!flew.get(), "The player flew");
             context.waitTicks(10);
             screenshot(context, "donut-schematic-05-finished");
 
             checkBlocks(server, blocks);
-            checkOrder(blocks, placedAt);
+            int holes = server.computeOnServer(s -> {
+                int count = 0;
+                for (BlockPos pos : BlockPos.betweenClosed(-12, 60, -12, 16, 64, 20)) {
+                    if (!s.overworld().getBlockState(pos).is(Blocks.SMOOTH_STONE)) count++;
+                }
+                return count;
+            });
+            require(holes == 0, holes + " blocks of the ground were left dug out or filled with something else");
+            int dirt = server.computeOnServer(s -> {
+                int count = 0;
+                for (BlockPos pos : BlockPos.betweenClosed(-12, 65, -12, 16, 72, 20)) if (s.overworld().getBlockState(pos).is(Blocks.DIRT)) count++;
+                return count;
+            });
+            require(dirt == 0, dirt + " helper blocks were left standing");
+            checkOrder(blocks, placedAt, placedFrom);
             checkShulker(context, server);
         } finally {
             ChunkEvents.unregister(listener);
@@ -261,7 +287,8 @@ public final class SchematicBuilderGameTest implements FabricClientGameTest {
                 "The top step of wire is not joined to the one below");
     }
 
-    private static void checkOrder(Map<BlockPos, BlockState> blocks, Map<BlockPos, Long> placedAt) {
+    private static void checkOrder(Map<BlockPos, BlockState> blocks, Map<BlockPos, Long> placedAt,
+                                   Map<BlockPos, net.minecraft.world.phys.Vec3> placedFrom) {
         BlockPos lantern = new BlockPos(6, 0, 0), ceiling = new BlockPos(6, 1, 0);
         for (Map.Entry<BlockPos, BlockState> entry : blocks.entrySet()) {
             if (BlockRules.kind(entry.getValue()) != BlockRules.Kind.PLACE) continue;
@@ -279,31 +306,39 @@ public final class SchematicBuilderGameTest implements FabricClientGameTest {
         }
         require(placedAt.get(lantern) > placedAt.get(ceiling), "The hanging lantern went in before its ceiling");
         require(placedAt.get(lantern) < placedAt.get(new BlockPos(1, 2, 0)), "The lantern waited past the layer its ceiling is in");
-        // Within the bottom layer: plain blocks, then redstone, then the piston and observer.
-        long plainLast = 0, redstoneFirst = Long.MAX_VALUE, redstoneLast = 0, movingFirst = Long.MAX_VALUE;
-        for (Map.Entry<BlockPos, Long> entry : placedAt.entrySet()) {
-            if (entry.getKey().getY() != 0 || entry.getKey().equals(lantern)) continue;
-            int group = BlockRules.group(blocks.get(entry.getKey()));
-            if (group == 0) plainLast = Math.max(plainLast, entry.getValue());
-            if (group == 1) {
-                redstoneFirst = Math.min(redstoneFirst, entry.getValue());
-                redstoneLast = Math.max(redstoneLast, entry.getValue());
+        // Within the bottom layer, near each other: plain blocks, then redstone, then the piston and observer. Blocks
+        // further apart across the layer may go in in any order.
+        for (Map.Entry<BlockPos, Long> later : placedAt.entrySet()) {
+            BlockPos at = later.getKey();
+            if (at.getY() != 0 || at.equals(lantern)) continue;
+            int group = BlockRules.group(blocks.get(at));
+            for (Map.Entry<BlockPos, Long> earlier : placedAt.entrySet()) {
+                BlockPos near = earlier.getKey();
+                if (near.getY() != 0 || near.equals(lantern) || BlockRules.group(blocks.get(near)) >= group) continue;
+                if (Math.abs(near.getX() - at.getX()) > BuildPlan.NEAR || Math.abs(near.getZ() - at.getZ()) > BuildPlan.NEAR) continue;
+                require(earlier.getValue() < later.getValue(), blocks.get(at).getBlock().getName().getString() + " at " + at.toShortString()
+                        + " went in before " + blocks.get(near).getBlock().getName().getString() + " beside it at " + near.toShortString());
             }
-            if (group == 2) movingFirst = Math.min(movingFirst, entry.getValue());
         }
-        require(plainLast < redstoneFirst, "Redstone went in before the bottom layer's plain blocks");
-        require(redstoneLast < movingFirst, "The piston or observer went in before the bottom layer's redstone");
-        // Each block waited at least the shortest delay after the one before.
-        List<Long> times = new ArrayList<>(placedAt.values());
-        times.sort(null);
-        List<Double> gaps = new ArrayList<>();
-        for (int i = 1; i < times.size(); i++) gaps.add((times.get(i) - times.get(i - 1)) / 1e9);
+        // Each block waited at least the shortest delay after the one before. Between blocks placed from one spot, the
+        // camera turns during the wait, so most go in within the longest delay; walking in between takes what it takes.
+        List<BlockPos> order = new ArrayList<>(placedAt.keySet());
+        order.sort(java.util.Comparator.comparingLong(placedAt::get));
+        List<Double> gaps = new ArrayList<>(), standing = new ArrayList<>();
+        for (int i = 1; i < order.size(); i++) {
+            double gap = (placedAt.get(order.get(i)) - placedAt.get(order.get(i - 1))) / 1e9;
+            gaps.add(gap);
+            var a = placedFrom.get(order.get(i - 1));
+            var b = placedFrom.get(order.get(i));
+            if (a != null && b != null && a.distanceTo(b) < 0.05) standing.add(gap);
+        }
         double shortest = gaps.stream().mapToDouble(Double::doubleValue).min().orElse(0);
         require(shortest >= MIN_DELAY - 0.06, "Two blocks went in " + shortest + " s apart, below the " + MIN_DELAY + " s shortest delay");
-        List<Double> sorted = new ArrayList<>(gaps);
-        sorted.sort(null);
-        double median = sorted.get(sorted.size() / 2);
-        require(median <= MAX_DELAY + 0.15, "Blocks went in " + median + " s apart in the middle, beyond the " + MAX_DELAY + " s longest delay");
+        require(standing.size() >= 5, "Only " + standing.size() + " blocks went in one after another from the same spot");
+        standing.sort(null);
+        double median = standing.get(standing.size() / 2);
+        require(median <= MAX_DELAY + 0.25, "Blocks placed from one spot went in " + median + " s apart in the middle, beyond the "
+                + MAX_DELAY + " s longest delay");
     }
 
     private static void checkShulker(ClientGameTestContext context, TestServerContext server) {
@@ -418,7 +453,8 @@ public final class SchematicBuilderGameTest implements FabricClientGameTest {
         into.minDelay = from.minDelay;
         into.maxDelay = from.maxDelay;
         into.useShulkers = from.useShulkers;
-        into.strictLooks = from.strictLooks;
+        into.walk = from.walk;
+        into.helperBlocks = from.helperBlocks;
         into.redstoneLast = from.redstoneLast;
         into.preview = from.preview;
     }

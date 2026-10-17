@@ -22,15 +22,19 @@ public final class SchematicSettings {
     public double maxDelay = 2.3;
     /** Take missing blocks out of shulker boxes carried in the inventory: place one, empty what is needed, break it. */
     public boolean useShulkers = true;
-    /** Only click faces the player can see, looking straight at the spot clicked. Slower: some blocks need you on their other side. */
-    public boolean strictLooks = false;
     /** Within each layer, redstone components go after the plain blocks, and pistons, observers and dispensers last. */
     public boolean redstoneLast = true;
     /** Outline the schematic and the blocks left in the layer being built. */
     public boolean preview = true;
+    /** Walk, jump and climb to each block on its own; off, the player walks and it places what comes in reach. */
+    public boolean walk = true;
+    /** Blocks it may put down to climb on or to place a block against, and takes away again; the build's own never. */
+    public String helperBlocks = "dirt, cobblestone, cobbled_deepslate, netherrack, stone, andesite, diorite, granite, tuff, blackstone";
 
     public void sanitize() {
         file = file == null ? "" : file.strip();
+        helperBlocks = helperBlocks == null ? "" : helperBlocks.strip();
+        if (helperBlocks.length() > 512) helperBlocks = helperBlocks.substring(0, 512);
         // A file name only: the schematics folder is the only place the builder reads from.
         int slash = Math.max(file.lastIndexOf('/'), file.lastIndexOf('\\'));
         if (slash >= 0) file = file.substring(slash + 1);

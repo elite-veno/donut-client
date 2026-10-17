@@ -45,6 +45,21 @@ fabricApi {
     }
 }
 
+// Builds a schematic in a normal game window to watch: gradlew runWatch -PwatchFile=C:/path/to/file.litematic
+// (-PwatchDelay=0.2,0.5 for a quicker build than the 0.65 to 2.3 s a real one waits between blocks).
+loom {
+    runs {
+        watch {
+            client()
+            name = 'Watch Schematic Build'
+            source sourceSets.gametest
+            vmArg "-Ddonut.watch=${project.findProperty('watchFile') ?: ''}"
+            vmArg "-Ddonut.watch.delay=${project.findProperty('watchDelay') ?: ''}"
+            vmArg "-Ddonut.schematic.debug=true"
+        }
+    }
+}
+
 processResources {
     inputs.property 'version', project.version
     filesMatching('fabric.mod.json') { expand 'version': project.version }

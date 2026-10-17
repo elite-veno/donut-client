@@ -5,6 +5,9 @@
   "name": "Donut Client Runtime Tests",
   "environment": "client",
   "entrypoints": {
+    "client": [
+      "dev.donut.client.gametest.WatchBuild"
+    ],
     "fabric-client-gametest": [
       "dev.donut.client.gametest.DonutClientGameTest",
       "dev.donut.client.gametest.FreecamGameTest",
@@ -12,7 +15,8 @@
       "dev.donut.client.gametest.AutoRtpGameTest",
       "dev.donut.client.gametest.DebrisSeedGameTest",
       "dev.donut.client.gametest.ActivityWorldgenGameTest",
-      "dev.donut.client.gametest.SchematicBuilderGameTest"
+      "dev.donut.client.gametest.SchematicBuilderGameTest",
+      "dev.donut.client.gametest.SchematicFileGameTest"
     ]
   },
   "depends": {
