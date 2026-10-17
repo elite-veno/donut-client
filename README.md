@@ -1,14 +1,14 @@
-# Donut Client
+# Ven Client
 
 A client-side Fabric mod for Minecraft Java 26.2 for seeing what is hidden: storage, spawner and ancient debris highlights, X-ray, Fullbright, dug tunnel and hole detection, player and mob ESP with tracers, amethyst-based activity detection with Auto RTP, Freecam, module keybinds, distance labels and an info HUD, a Schematic Builder that builds Litematica schematics block by block, and a Chunk Miner that digs out the room for one underground.
 
-This is the **Builder edition**: it carries no trading bot. The GoNuts auction bot that the regular Donut Client bundles is left out entirely, and the Schematic Builder is only in this edition.
+Ven Client is the new name of Donut Client's Builder edition, from 2.2.2 on. It carries no trading bot: the GoNuts auction bot that the regular Donut Client bundles is left out entirely, and the Schematic Builder, ChunkFinder and ChunkMiner are only in Ven Client. Inside it is still the `donut` mod, so settings carry over from Donut Client.
 
 ## Install
 
 1. Install Fabric Loader 0.19.5 or newer for Minecraft 26.2 (Java 25).
 2. Install Fabric API 0.158.0 or newer for Minecraft 26.2.
-3. Copy `donut-client-builder-2.2.1.jar` into your Minecraft `mods` folder, removing any other Donut Client jar, including the regular edition with GoNuts: both are the `donut` mod, and Fabric refuses to start with two copies.
+3. Copy `ven-client-2.2.2.jar` into your Minecraft `mods` folder, removing any Donut Client jar, including the regular edition with GoNuts: both are the `donut` mod, and Fabric refuses to start with two copies.
 4. Start Minecraft with the Fabric profile.
 
 Press **Right Shift** to open the menu. The sidebar lists the module categories (Finders, Render, Utility, Build, HUD) and the Keybinds and Theme pages. A category shows its modules as cards: the switch turns a module on or off, and clicking the card opens its settings, each with a short description; **Back** returns to the list. Settings people rarely change, such as opacity, line width and colors, sit behind **More options** at the end of a module's settings, and **Reset settings** below them puts every setting back to its default on a second click, leaving the module on or off and its key as they were. Keybinds lists every module's key, and the menu's own, in one place (a right click puts a key back to its default), and Theme sets the accent color and optional snowfall. Type anywhere to search. Text fields select their text when clicked, so typing or pasting replaces it; Enter saves and Esc leaves the field as it was. Backspace or the mouse's back button goes back from a module's settings. Freecam defaults to **F7** (F6 is vanilla's debug options key). Other module keys can be assigned from the Bind row at the top of each module's settings, or under Minecraft's keybind settings.
@@ -72,7 +72,7 @@ Only the Overworld has these plants, and ChunkFinder only sees chunks your clien
 
 **SchematicBuilder** (the Build page) builds a Litematica schematic (`.litematic`) in the world from the blocks you carry, a layer at a time from the bottom up.
 
-1. Put the `.litematic` in the game folder's `schematics` folder, where Litematica saves them (**Open** next to Schematics folder opens it), or drag the file onto the Donut menu, which copies it there. Pick it from the list under File. Its name, size, block count and the blocks it takes, against what you carry, show below.
+1. Put the `.litematic` in the game folder's `schematics` folder, where Litematica saves them (**Open** next to Schematics folder opens it), or drag the file onto the Ven Client menu, which copies it there. Pick it from the list under File. Its name, size, block count and the blocks it takes, against what you carry, show below.
 2. Choose where it goes: **Set origin here** takes the block at your feet, or type `x y z` under Origin; with no origin set, the first start uses where you stand. Rotation turns it clockwise about the origin and Mirror flips it before turning, the way Litematica places schematics, so a Litematica placement's origin, rotation and mirror carry over. This was checked against Litematica's file format, not side by side with Litematica in game.
 3. Set **Shortest delay** and **Longest delay**: each block waits a random time between the two (0.65 to 2.30 s by default, anything from 0.05 to 10 s). Set both the same for a fixed delay.
 4. Carry the blocks (loose or in shulker boxes), a pickaxe, and a stack or two of helper blocks such as dirt. Switch it on and close the menu: it walks to the build and builds it by itself. The info panel's Builder line counts the blocks left, with an arrow to the next one. The schematic's outline and the blocks left in the current layer show in the world (the next one white, those without materials red, spots another block holds amber).
@@ -125,7 +125,7 @@ Install JDK 25, then run:
 .\gradlew.bat build
 ```
 
-The finished mod is written to `build/libs/donut-client-builder-2.2.1.jar`. The regular edition, with GoNuts inside, is built from the `gonuts-update` branch.
+The finished mod is written to `build/libs/ven-client-2.2.2.jar`. The regular Donut Client, with GoNuts inside, is built from the `gonuts-update` branch.
 
 ## License
 

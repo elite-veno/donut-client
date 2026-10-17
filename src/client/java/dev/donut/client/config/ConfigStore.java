@@ -47,12 +47,12 @@ public final class ConfigStore {
         } catch (IOException e) {
             LOGGER.warn("Cannot read Donut config; using defaults", e);
             if (!backUp()) readOnly = true;
-            problem = "Donut couldn't read its settings file, so it is using defaults" + (readOnly ? " and won't save this session." : ".");
+            problem = "Ven Client couldn't read its settings file, so it is using defaults" + (readOnly ? " and won't save this session." : ".");
             return new ClientConfig();
         } catch (RuntimeException e) {
             LOGGER.warn("Donut config is not valid JSON; using defaults", e);
             if (!backUp()) readOnly = true;
-            problem = "Donut's settings file was damaged; defaults are in use" + (readOnly ? "." : " and the old file was kept beside it.");
+            problem = "Ven Client's settings file was damaged; defaults are in use" + (readOnly ? "." : " and the old file was kept beside it.");
             return new ClientConfig();
         }
         JsonObject merged = GSON.toJsonTree(new ClientConfig()).getAsJsonObject();
@@ -75,7 +75,7 @@ public final class ConfigStore {
         result.sanitize();
         if (!failed.isEmpty()) {
             boolean kept = backUp();
-            problem = "Donut reset these settings, which were damaged: " + String.join(", ", failed)
+            problem = "Ven Client reset these settings, which were damaged: " + String.join(", ", failed)
                     + (kept ? ". The old file was kept beside it." : ".");
         }
         return result;

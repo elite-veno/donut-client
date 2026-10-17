@@ -594,7 +594,7 @@ public final class FinderScanner implements ChunkEvents.Listener {
         double[] target = RtpZones.travelTarget(rtpZones(client), x, z, config.chunks.rtpDistance,
                 new double[] {border.getMinX(), border.getMinZ(), border.getMaxX(), border.getMaxZ()});
         long distance = Math.round(config.chunks.rtpDistance);
-        client.player.sendSystemMessage(Component.literal("[Donut] RTP landing at " + x + ", " + z + " noted: good chunks are "
+        client.player.sendSystemMessage(Component.literal("[Ven] RTP landing at " + x + ", " + z + " noted: good chunks are "
                 + distance + "+ blocks from it" + (target == null ? "." : ". Head for " + Math.round(target[0]) + ", "
                 + Math.round(target[1]) + "; the info panel points the way.")).withStyle(ChatFormatting.GREEN));
     }
@@ -612,7 +612,7 @@ public final class FinderScanner implements ChunkEvents.Listener {
         announcedSpot = best.chunk();
         client.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.NOTE_BLOCK_CHIME.value(), 1.2f, 0.8f));
         BlockPos center = best.surfaceCenter();
-        client.player.sendSystemMessage(Component.literal("[Donut] Good chunk at " + center.getX() + ", " + center.getZ() + ": "
+        client.player.sendSystemMessage(Component.literal("[Ven] Good chunk at " + center.getX() + ", " + center.getZ() + ": "
                 + best.clearance() + " clear chunks around it; a player there for " + unseen(best.unseenMinutes())
                 + " would have left growth").withStyle(ChatFormatting.GREEN));
     }

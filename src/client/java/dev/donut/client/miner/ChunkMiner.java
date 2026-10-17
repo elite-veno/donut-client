@@ -1117,6 +1117,6 @@ public final class ChunkMiner {
 
     private static void message(Minecraft client, String text, ChatFormatting color) {
         if (client.player == null) return;
-        client.player.sendSystemMessage(Component.literal("[Donut] ChunkMiner " + text).withStyle(color));
+        client.player.sendSystemMessage(Component.literal("[Ven] ChunkMiner " + text).withStyle(color));
     }
 }

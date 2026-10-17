@@ -166,6 +166,13 @@ final class UiPaint {
         round(g, x + 10.4f, y + 10.4f, 2f, 1.2f, .6f, alpha(0xFFFFFF, .9));
     }
 
+    /** Ven Client's mark: a V inside a thin ring. */
+    static void ven(GuiGraphicsExtractor g, int x, int y, int color) {
+        SmoothGeometry.rounded(g, x, y, 15, 15, 7.5f, 1.6f, color);
+        line(g, x + 4.3f, y + 4.6f, x + 7.5f, y + 10.9f, color);
+        line(g, x + 10.7f, y + 4.6f, x + 7.5f, y + 10.9f, color);
+    }
+
     /** A screen on a stand, for the HUD. */
     static void monitor(GuiGraphicsExtractor g, int x, int y, int color) {
         outline(g, x + 1, y + 2, 15, 10, 2, color);

@@ -45,7 +45,7 @@ import org.slf4j.LoggerFactory;
  */
 public final class WatchBuild implements ClientModInitializer {
     private static final Logger LOGGER = LoggerFactory.getLogger("Donut/Watch");
-    private static final String WORLD = "Donut Watch";
+    private static final String WORLD = "Ven Watch";
     /** On the flat world's grass, whose top three blocks become the stone platform. */
     private static final BlockPos ORIGIN = new BlockPos(0, -60, 0);
 
@@ -237,6 +237,6 @@ public final class WatchBuild implements ClientModInitializer {
     }
 
     private static void say(Minecraft client, String text, ChatFormatting color) {
-        if (client.player != null) client.player.sendSystemMessage(Component.literal("[Donut Watch] " + text).withStyle(color));
+        if (client.player != null) client.player.sendSystemMessage(Component.literal("[Ven Watch] " + text).withStyle(color));
     }
 }

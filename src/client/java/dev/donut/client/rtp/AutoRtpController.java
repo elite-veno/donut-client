@@ -249,7 +249,7 @@ public final class AutoRtpController {
 
     private static void message(Minecraft client, String text, ChatFormatting color) {
         if (client.player == null) return;
-        client.player.sendSystemMessage(Component.literal("[Donut] Auto RTP " + text).withStyle(color));
+        client.player.sendSystemMessage(Component.literal("[Ven] Auto RTP " + text).withStyle(color));
     }
 
     /** A short line for the settings page. */

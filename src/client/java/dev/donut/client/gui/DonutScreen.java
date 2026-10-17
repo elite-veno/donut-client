@@ -161,7 +161,7 @@ public final class DonutScreen extends Screen {
     }
 
     public DonutScreen(ClientConfig config, Runnable save, Supplier<ActivityStats> activityStats, Supplier<String> rtpStatus) {
-        super(Component.literal("Donut Client"));
+        super(Component.literal("Ven Client"));
         this.config = config;
         this.save = save;
         this.activityStats = activityStats;
@@ -1154,9 +1154,9 @@ public final class DonutScreen extends Screen {
         int x = wx + 8, y = wy + 8, w = SIDEBAR_W, h = wh - 16;
         round(graphics, x, y, w, h, 8, SIDEBAR);
         outline(graphics, x, y, w, h, 8, EDGE);
-        donut(graphics, x + 12, y + 12, accent());
-        bold("Donut", x + 34, y + 11, TEXT);
-        draw("Client", Size.BASE, x + 34 + width("Donut ", Size.BASE) + 1, y + 11, accent(), false, true);
+        ven(graphics, x + 12, y + 12, accent());
+        bold("Ven", x + 34, y + 11, TEXT);
+        draw("Client", Size.BASE, x + 34 + width("Ven ", Size.BASE) + 1, y + 11, accent(), false, true);
         if (!version.isEmpty()) draw(fit(version, Size.SMALL, w - 44), Size.SMALL, x + 34, y + 24, MUTED);
         int top = y + 44;
         nav.set(x, top, w, y + h - 6 - top);
@@ -1239,8 +1239,8 @@ public final class DonutScreen extends Screen {
         Page page = currentPage();
         String title = query.isEmpty() ? page.header() : "Search";
         int searchW = Math.min(176, w / 3), titleW = w - searchW - 16;
-        draw("Donut", Size.TITLE, x, wy + 21, accent(), false, true);
-        int after = x + width("Donut ", Size.TITLE) + 2;
+        draw("Ven", Size.TITLE, x, wy + 21, accent(), false, true);
+        int after = x + width("Ven ", Size.TITLE) + 2;
         draw(fit(title, Size.TITLE, x + titleW - after), Size.TITLE, after, wy + 21, TEXT, true, false);
         String subtitle;
         if (!query.isEmpty()) {

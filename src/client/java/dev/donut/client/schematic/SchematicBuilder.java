@@ -2473,6 +2473,6 @@ public final class SchematicBuilder {
 
     private static void message(Minecraft client, String text, ChatFormatting color) {
         if (client.player == null) return;
-        client.player.sendSystemMessage(Component.literal("[Donut] SchematicBuilder " + text).withStyle(color));
+        client.player.sendSystemMessage(Component.literal("[Ven] SchematicBuilder " + text).withStyle(color));
     }
 }

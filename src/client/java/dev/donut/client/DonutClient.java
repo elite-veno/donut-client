@@ -152,7 +152,7 @@ public final class DonutClient implements ClientModInitializer {
 
         ScreenEvents.AFTER_INIT.register((client, screen, width, height) -> {
             if (screen instanceof TitleScreen) {
-                Screens.getWidgets(screen).add(Button.builder(Component.literal("Donut"), button ->
+                Screens.getWidgets(screen).add(Button.builder(Component.literal("Ven"), button ->
                         client.gui.setScreen(new DonutScreen(config, this::save, scanner::activityStats, rtp::status)))
                         .bounds(width - 66, height - 28, 58, 20).build());
             }
@@ -179,7 +179,7 @@ public final class DonutClient implements ClientModInitializer {
             // A damaged settings file is otherwise only in the log.
             if (configProblemShown || store.problem().isEmpty() || client.player == null) return;
             configProblemShown = true;
-            client.player.sendSystemMessage(Component.literal("[Donut] " + store.problem()).withStyle(net.minecraft.ChatFormatting.YELLOW));
+            client.player.sendSystemMessage(Component.literal("[Ven] " + store.problem()).withStyle(net.minecraft.ChatFormatting.YELLOW));
         }));
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
             // Fabric can fire this on the network thread when the connection drops. The tick handlers notice the
