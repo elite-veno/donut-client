@@ -71,6 +71,7 @@ public final class ChunkMiner {
     private static Supplier<List<Target>> goodChunks = List::of;
     /** Switches ChunkFinder on if it is off, saying whether it had to. */
     private static java.util.function.BooleanSupplier finderOn = () -> false;
+    private static Supplier<Vec3> travel = () -> null;
     /** Logs every action, with -Ddonut.miner.debug=true. */
     private static boolean debug() { return Boolean.getBoolean("donut.miner.debug"); }
 
@@ -136,6 +137,8 @@ public final class ChunkMiner {
     private volatile boolean statusWarn;
     private volatile int left = -1;
     private volatile BlockPos next;
+    /** Where ChunkFinder sends the player while it waits for a good chunk, for the info panel's arrow. */
+    private volatile Vec3 headFor;
     private volatile List<SchematicBuilder.Preview> preview = List.of();
 
     public ChunkMiner(ClientConfig config, Runnable save) {
@@ -151,6 +154,9 @@ public final class ChunkMiner {
         goodChunks = source == null ? List::of : source;
         finderOn = switchOn == null ? () -> false : switchOn;
     }
+
+    /** Where ChunkFinder sends the player while no good chunk is far enough from where /rtp landed them; null when none. */
+    public static void travelTarget(Supplier<Vec3> source) { travel = source == null ? () -> null : source; }
 
     /** Whether a dig is under way, not just waiting for a good chunk; Auto RTP waits for it. */
     public static boolean busy() { return instance != null && instance.active && instance.dig != null; }
@@ -194,6 +200,7 @@ public final class ChunkMiner {
         check = null;
         preview = List.of();
         next = null;
+        headFor = null;
         left = -1;
         show("Idle", false);
     }
@@ -363,9 +370,13 @@ public final class ChunkMiner {
             break;
         }
         if (found == null) {
-            show("Waiting for ChunkFinder to find a good chunk", false);
+            Vec3 way = travel.get();
+            headFor = way;
+            show(way == null ? "Waiting for ChunkFinder to find a good chunk"
+                    : "Waiting for a good chunk: head for " + Math.round(way.x) + " " + Math.round(way.z) + ", away from where /rtp landed you", false);
             return;
         }
+        headFor = null;
         int x = found.chunk().getMiddleBlockX(), z = found.chunk().getMiddleBlockZ();
         target = found;
         place.originSet = true;
@@ -1066,6 +1077,7 @@ public final class ChunkMiner {
         dig = null;
         check = null;
         next = null;
+        headFor = null;
         preview = List.of();
         show(text.substring(0, 1).toUpperCase(Locale.ROOT) + text.substring(1), warn);
         message(client, text, warn ? ChatFormatting.YELLOW : ChatFormatting.GREEN);
@@ -1105,6 +1117,11 @@ public final class ChunkMiner {
     public FinderSummary summary() {
         if (!active) return null;
         BlockPos at = next;
+        Vec3 way = headFor;
+        if (dig == null && way != null) {
+            // Nothing to dig yet: the arrow points the way ChunkFinder sends the player, far enough from /rtp.
+            return new FinderSummary("Miner", 0, way, config.accentColor, "head this way for a good chunk", false);
+        }
         String note = statusWarn ? status : dig == null ? "waiting for a good chunk" : phaseText();
         if (note.length() > 40) note = note.substring(0, 39) + "...";
         return new FinderSummary("Miner", Math.max(0, left), at == null ? null : Vec3.atCenterOf(at), config.accentColor, note, statusWarn);

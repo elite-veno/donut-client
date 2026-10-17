@@ -60,6 +60,7 @@ public final class DonutClient implements ClientModInitializer {
         AutoRtpController rtp = new AutoRtpController(config, scanner, this::save);
         SchematicBuilder builder = new SchematicBuilder(config, this::save);
         ChunkMiner miner = new ChunkMiner(config, this::save);
+        ChunkMiner.travelTarget(scanner::travelTarget);
         ChunkMiner.goodChunks(() -> scanner.goodChunks().stream().map(g -> new ChunkMiner.Target(g.chunk(), g.surfaceY())).toList(), () -> {
             if (config.chunks.enabled) return false;
             config.chunks.enabled = true;
