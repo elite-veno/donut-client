@@ -64,9 +64,13 @@ public final class FinderScanner implements ChunkEvents.Listener {
     private int steadyPasses;
     private final RtpZones rtpWatch = new RtpZones();
     private ClientLevel rtpLevel;
+    /** The singleplayer world being played, to forget landings noted in an earlier one. */
+    private Object rtpWorld;
     private long rtpTicks;
     /** Where to go to be ChunkFinder's distance from every random teleport landing, or null when already there. */
     private Vec3 travelTarget;
+    /** The server name RTP landings in singleplayer worlds are kept under. */
+    private static final String SINGLEPLAYER = "singleplayer";
     /**
      * Whether each spawner looked activated the first time it was seen, before our own presence could run its timer.
      * Kept per dimension for the whole connection: a spawner we ran ourselves must not count once we come back.
@@ -139,7 +143,7 @@ public final class FinderScanner implements ChunkEvents.Listener {
     }
 
     private static String serverName(Minecraft client) {
-        if (client.getSingleplayerServer() != null) return "singleplayer";
+        if (client.getSingleplayerServer() != null) return SINGLEPLAYER;
         return client.getCurrentServer() != null ? client.getCurrentServer().ip : "unknown";
     }
     public ChunkStats chunkStats() { return config.chunks.enabled ? goodIndex.stats() : ChunkStats.EMPTY; }
@@ -567,6 +571,12 @@ public final class FinderScanner implements ChunkEvents.Listener {
      */
     private void followRtp(Minecraft client) {
         rtpTicks++;
+        // Singleplayer worlds share no /rtp: a landing noted in one means nothing in the next.
+        Object world = client.getSingleplayerServer();
+        if (world != rtpWorld) {
+            rtpWorld = world;
+            if (world != null) config.rtpZones.removeIf(zone -> zone.server().equals(SINGLEPLAYER));
+        }
         boolean newLevel = rtpLevel != null && client.level != rtpLevel;
         rtpLevel = client.level;
         double[] landing = rtpWatch.tick(rtpTicks, client.player.getX(), client.player.getZ(), newLevel);
