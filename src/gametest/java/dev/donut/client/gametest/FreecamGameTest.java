@@ -19,8 +19,6 @@ import net.minecraft.world.phys.Vec3;
 public final class FreecamGameTest implements FabricClientGameTest {
     @Override
     public void runTest(ClientGameTestContext context) {
-        // Mouse movement only turns the camera while the game holds the mouse.
-        ReleaseMouse.held = true;
         FreecamController controller = FreecamController.getInstance();
         require(controller != null, "The production Freecam controller was not initialized");
         double originalSpeed = controller.settings().speed;
@@ -33,6 +31,8 @@ public final class FreecamGameTest implements FabricClientGameTest {
             client.options.setCameraType(CameraType.FIRST_PERSON);
         });
         context.getInput().resizeWindow(1280, 800);
+        // The camera only turns with the mouse while the game holds it: for this test it may.
+        WatchBuild.mouseHeld = true;
 
         try {
           try (var world = context.worldBuilder().create()) {
@@ -196,7 +196,7 @@ public final class FreecamGameTest implements FabricClientGameTest {
           context.runOnClient(client -> require(!controller.isActive() && !controller.settings().enabled,
                   "Disconnect did not leave Freecam disabled"));
         } finally {
-            ReleaseMouse.held = false;
+            WatchBuild.mouseHeld = false;
             context.getInput().releaseKey(options -> options.keyUp);
             context.getInput().releaseKey(options -> options.keySprint);
             context.getInput().releaseKey(options -> options.keyJump);

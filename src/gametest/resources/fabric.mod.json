@@ -6,7 +6,7 @@
   "environment": "client",
   "entrypoints": {
     "client": [
-      "dev.donut.client.gametest.ReleaseMouse"
+      "dev.donut.client.gametest.WatchBuild"
     ],
     "fabric-client-gametest": [
       "dev.donut.client.gametest.DonutClientGameTest",
@@ -16,6 +16,7 @@
       "dev.donut.client.gametest.DebrisSeedGameTest",
       "dev.donut.client.gametest.ActivityWorldgenGameTest",
       "dev.donut.client.gametest.SchematicBuilderGameTest",
+      "dev.donut.client.gametest.SchematicFileGameTest",
       "dev.donut.client.gametest.GoodChunkGameTest",
       "dev.donut.client.gametest.ChunkMinerGameTest",
       "dev.donut.client.gametest.ChunkMinerFinderGameTest"

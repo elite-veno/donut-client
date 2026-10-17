@@ -2,16 +2,20 @@ package dev.donut.client.schematic;
 
 import java.lang.reflect.Method;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.FrontAndTop;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.BasePressurePlateBlock;
 import net.minecraft.world.level.block.BaseRailBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ButtonBlock;
+import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.CopperBulbBlock;
 import net.minecraft.world.level.block.CrafterBlock;
 import net.minecraft.world.level.block.DaylightDetectorBlock;
@@ -43,6 +47,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.AttachFace;
 import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.block.state.properties.BellAttachType;
+import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DoorHingeSide;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
@@ -52,6 +57,8 @@ import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.level.block.state.properties.RailShape;
 import net.minecraft.world.level.block.state.properties.RedstoneSide;
 import net.minecraft.world.level.block.state.properties.SlabType;
+import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.material.Fluids;
 
 /**
  * What the builder can make of each block: the properties placing it decides, how many more of its item still go in,
@@ -62,9 +69,14 @@ public final class BlockRules {
     public enum Kind {
         /** Placed with its item. */
         PLACE,
-        /** Comes with another block: a door's or tall flower's top half, a bed's head, a piston's head. */
+        /** A water or lava source, poured from a bucket. */
+        FLUID,
+        /**
+         * Comes with another block: a door's or tall flower's top half, a bed's head, a piston's head, and water or lava
+         * flowing from its source.
+         */
         AUTO,
-        /** No item places it, as with water, fire, portals and filled cauldrons. */
+        /** No item places it, as with fire, portals and filled cauldrons. */
         UNPLACEABLE
     }
 
@@ -86,6 +98,10 @@ public final class BlockRules {
         }
     };
 
+    /** Stems of growing plants, placed as the plant's tip; the tip turns into stem when the next one goes on it. */
+    private static final Map<Block, Block> HEADS = Map.of(Blocks.KELP_PLANT, Blocks.KELP, Blocks.TWISTING_VINES_PLANT,
+            Blocks.TWISTING_VINES, Blocks.WEEPING_VINES_PLANT, Blocks.WEEPING_VINES, Blocks.CAVE_VINES_PLANT, Blocks.CAVE_VINES);
+
     private BlockRules() { }
 
     public static Kind kind(BlockState target) {
@@ -94,27 +110,65 @@ public final class BlockRules {
         if (target.hasProperty(BlockStateProperties.DOUBLE_BLOCK_HALF)
                 && target.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF) == DoubleBlockHalf.UPPER) return Kind.AUTO;
         if (target.hasProperty(BlockStateProperties.BED_PART) && target.getValue(BlockStateProperties.BED_PART) == BedPart.HEAD) return Kind.AUTO;
-        if (block instanceof LiquidBlock || item(target) == null) return Kind.UNPLACEABLE;
+        if (block instanceof LiquidBlock) {
+            if (!target.getFluidState().isSource()) return Kind.AUTO;
+            return item(target) == null ? Kind.UNPLACEABLE : Kind.FLUID;
+        }
+        if (item(target) == null) return Kind.UNPLACEABLE;
         return Kind.PLACE;
     }
 
-    /** The item that places the block, or null when none does. */
+    /** The item that places the block: a bucket for water and lava, the plant's tip for a stem; null when none does. */
     public static Item item(BlockState target) {
-        Item item = target.getBlock().asItem();
+        if (target.getBlock() instanceof LiquidBlock) {
+            Fluid fluid = target.getFluidState().getType();
+            return fluid.isSame(Fluids.WATER) ? Items.WATER_BUCKET : fluid.isSame(Fluids.LAVA) ? Items.LAVA_BUCKET : null;
+        }
+        Item item = placedAs(target).getBlock().asItem();
         return item instanceof BlockItem ? item : null;
+    }
+
+    /** What placing makes first: the tip of a growing plant for its stem, otherwise the target itself. */
+    public static BlockState placedAs(BlockState target) {
+        Block head = HEADS.get(target.getBlock());
+        return head == null ? target : head.defaultBlockState();
+    }
+
+    /** The same block, counting a growing plant's tip and stem as one, since the plant turns one into the other. */
+    public static boolean sameBlock(Block a, Block b) {
+        return a == b || HEADS.getOrDefault(a, a) == HEADS.getOrDefault(b, b);
+    }
+
+    /** The other half of a double chest, or null for any other block. */
+    public static BlockPos chestPartner(BlockPos pos, BlockState target) {
+        if (!(target.getBlock() instanceof ChestBlock) || target.getValue(ChestBlock.TYPE) == ChestType.SINGLE) return null;
+        return pos.relative(ChestBlock.getConnectedDirection(target));
     }
 
     /**
      * Whether a block just placed, or about to be, starts the target: the same block, with every setting placing
-     * decides the same. A slab of a double slab and the first of several candles count.
+     * decides the same. A slab of a double slab, the first of several candles and the first half of a double chest
+     * count.
      */
     public static boolean placementMatches(BlockState placed, BlockState target) {
-        if (placed.getBlock() != target.getBlock()) return false;
+        return placementMatches(placed, target, false);
+    }
+
+    /**
+     * As {@link #placementMatches(BlockState, BlockState)}; with {@code partnerReady}, the other half of a double chest
+     * stands there already, and the chest must join it rather than stand alone.
+     */
+    public static boolean placementMatches(BlockState placed, BlockState target, boolean partnerReady) {
+        if (!sameBlock(placed.getBlock(), target.getBlock())) return false;
         for (Property<?> property : target.getProperties()) {
+            if (!placed.hasProperty(property)) continue;
             Object want = target.getValue(property), got = placed.getValue(property);
             Class<?> type = property.getValueClass();
             if (type == SlabType.class) {
                 if (want != SlabType.DOUBLE && got != want) return false;
+            } else if (type == ChestType.class) {
+                // A lone chest must stay alone; a half of a pair may stand alone until its other half goes in.
+                if (got != want && (want == ChestType.SINGLE || partnerReady || got != ChestType.SINGLE)) return false;
             } else if (type == RailShape.class) {
                 // Rails turn to their neighbors by themselves; only the direction they are laid in is chosen.
                 Direction.Axis axis = railAxis((RailShape) want), placedAxis = railAxis((RailShape) got);
@@ -216,10 +270,14 @@ public final class BlockRules {
     /**
      * When a block goes in within its layer: 0 for plain blocks, 1 for redstone parts, 2 for what moves or fires on an
      * update (pistons, observers, dispensers, droppers, crafters and TNT), so a half-built layer triggers as little as
-     * possible.
+     * possible; then 3 for water and lava, poured once the layer holds them in, and 4 for kelp and seagrass, which need
+     * the water.
      */
     public static int group(BlockState state) {
         Block block = state.getBlock();
+        // Water and lava go in once their layer's blocks hold them in, and what grows in water after them.
+        if (block instanceof LiquidBlock) return 3;
+        if (state.getFluidState().isSource() && !state.hasProperty(BlockStateProperties.WATERLOGGED)) return 4;
         if (block instanceof PistonBaseBlock || block instanceof ObserverBlock || block instanceof DispenserBlock
                 || block instanceof CrafterBlock || block instanceof TntBlock) return 2;
         if (state.isSignalSource() || block instanceof RedStoneWireBlock || block instanceof DiodeBlock
@@ -230,6 +288,15 @@ public final class BlockRules {
                 || block instanceof NoteBlock || block instanceof PoweredBlock || block instanceof LightningRodBlock
                 || block instanceof CopperBulbBlock) return 1;
         return 0;
+    }
+
+    /**
+     * Whether the block is water or lava, or something that grows in water such as kelp. These go in once every other
+     * block of the build is in: water running through a half-built machine pushes the player about, and fills the
+     * spaces they would stand in to place the rest.
+     */
+    public static boolean wet(BlockState state) {
+        return state.getBlock() instanceof LiquidBlock || state.getFluidState().isSource() && !state.hasProperty(BlockStateProperties.WATERLOGGED);
     }
 
     /**

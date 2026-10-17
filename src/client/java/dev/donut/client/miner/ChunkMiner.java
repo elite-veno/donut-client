@@ -838,8 +838,9 @@ public final class ChunkMiner {
             return;
         }
         BlockState state = item.getBlock().defaultBlockState();
-        PlacementSolver.Result result = PlacementSolver.find(player, pos, state, stack, player.blockInteractionRange(), false);
-        if (result.click() == null || result.click().sneak()) {
+        PlacementSolver.Result result = PlacementSolver.find(player, pos, state, stack, player.blockInteractionRange(), clicked -> false);
+        // A click that needs a crouch is one against a chest or the like: not worth it for a filler block.
+        if (result.click() == null || result.click().crouch()) {
             finish(client, "stopped: can't reach the gap at " + where + " to fill it.", true);
             return;
         }
