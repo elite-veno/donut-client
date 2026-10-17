@@ -10,6 +10,7 @@ public final class ClientConfig {
     public FinderSettings tunnels = tunnelDefaults();
     public FinderSettings entities = entityDefaults();
     public FinderSettings bases = baseDefaults();
+    public FinderSettings chunks = chunkDefaults();
     public XraySettings xray = new XraySettings();
     public FullbrightSettings fullbright = new FullbrightSettings();
     public FreecamSettings freecam = new FreecamSettings();
@@ -68,6 +69,18 @@ public final class ClientConfig {
         return settings;
     }
 
+    private static FinderSettings chunkDefaults() {
+        FinderSettings settings = new FinderSettings();
+        settings.color = 0x6EE7A0;
+        settings.secondaryColor = 0xFF6B5A;
+        settings.tertiaryColor = 0xFFC66B;
+        settings.perTypeColors = false;
+        settings.fillOpacity = 0.1;
+        // Spots need the whole loaded area to judge their surroundings, so ChunkFinder always reads all of it.
+        settings.allLoadedChunks = true;
+        return settings;
+    }
+
     private static FinderSettings entityDefaults() {
         FinderSettings settings = new FinderSettings();
         settings.color = 0xFF5A5A;
@@ -99,6 +112,7 @@ public final class ClientConfig {
         if (tunnels == null) tunnels = tunnelDefaults();
         if (entities == null) entities = entityDefaults();
         if (bases == null) bases = baseDefaults();
+        if (chunks == null) chunks = chunkDefaults();
         if (xray == null) xray = new XraySettings();
         if (fullbright == null) fullbright = new FullbrightSettings();
         if (freecam == null) freecam = new FreecamSettings();
@@ -114,6 +128,8 @@ public final class ClientConfig {
         tunnels.sanitize(tunnelDefaults());
         entities.sanitize(entityDefaults());
         bases.sanitize(baseDefaults());
+        chunks.sanitize(chunkDefaults());
+        chunks.allLoadedChunks = true;
         xray.sanitize();
         fullbright.sanitize();
         freecam.sanitize();

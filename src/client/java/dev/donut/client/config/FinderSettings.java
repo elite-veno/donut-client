@@ -63,6 +63,16 @@ public final class FinderSettings {
     public double minBaseScore = 6;
     /** ActivityFinder only: draw squares on the surface with a guide down to the geode. */
     public boolean surfaceMarker = true;
+    /** ChunkFinder only: rings of chunks around a spot that must all be loaded and show no sign of players. */
+    public double minClearance = 4;
+    /** ChunkFinder only: the longest a player may have been near a spot, in minutes, without its plants showing it. */
+    public double maxUnseen = 10;
+    /** ChunkFinder only: growth from stays shorter than this, in minutes, such as someone flying past, is no sign. */
+    public double ignoreVisitsUnder = 2;
+    /** ChunkFinder only: the most of a spot's underground that may be open cave, water or lava, from 0 to 1. */
+    public double maxCaves = 0.05;
+    /** ChunkFinder only: also mark the chunks spots keep away from, with why. */
+    public boolean showSigns = true;
     /** ActivityFinder only: scan every loaded chunk without distance fade, ignoring the range. */
     public boolean allLoadedChunks = true;
     public boolean perTypeColors = true;
@@ -74,10 +84,10 @@ public final class FinderSettings {
     public int furnaceColor = 0xFF975F;
     /**
      * SpawnerFinder: spawners a player has been near. TunnelFinder: vertical holes. EntityFinder: hostile mobs.
-     * DebrisFinder: seed estimates.
+     * DebrisFinder: seed estimates. ChunkFinder: signs of players.
      */
     public int secondaryColor = 0xFF5A5A;
-    /** EntityFinder: passive mobs. TunnelFinder: staircases. DebrisFinder: search areas. */
+    /** EntityFinder: passive mobs. TunnelFinder: staircases. DebrisFinder: search areas. ChunkFinder: structures. */
     public int tertiaryColor = 0x7EDD8E;
     /** EntityFinder: dropped items. */
     public int itemColor = 0xFFFFFF;
@@ -98,6 +108,10 @@ public final class FinderSettings {
         minActivity = clamp(minActivity, 0, 1, defaults.minActivity);
         minLength = clamp(minLength, 4, 32, defaults.minLength);
         minBaseScore = clamp(minBaseScore, 2, 30, defaults.minBaseScore);
+        minClearance = clamp(minClearance, 1, 12, defaults.minClearance);
+        maxUnseen = clamp(maxUnseen, 1, 60, defaults.maxUnseen);
+        ignoreVisitsUnder = clamp(ignoreVisitsUnder, 0, 30, defaults.ignoreVisitsUnder);
+        maxCaves = clamp(maxCaves, 0, 0.3, defaults.maxCaves);
         color &= 0xFFFFFF;
         chestColor &= 0xFFFFFF;
         shulkerColor &= 0xFFFFFF;

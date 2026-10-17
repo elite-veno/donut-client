@@ -88,6 +88,14 @@ final class BaseIndex {
         if (area.horizontalDistance(origin) <= range) found.add(area);
     }
 
+    /** A chunk's own blocks scored as BaseFinder scores them, without item frames or armor stands; null without any. */
+    static BaseArea blocks(LevelChunk chunk) {
+        Scan scan = scan(chunk);
+        if (scan == null) return null;
+        return new BaseArea(scan.chunk, scan.minY, scan.maxY, BaseEvidence.score(scan.counts, scan.storage, 0),
+                BaseEvidence.reasons(scan.counts, scan.storage, List.of()));
+    }
+
     /** The highest score in range, for the HUD, or 0. */
     static int best(List<BaseArea> areas) {
         int best = 0;
@@ -132,7 +140,7 @@ final class BaseIndex {
     }
 
     /** Anti-xray only disguises blocks whose six neighbors all conduct redstone, as stone does. */
-    private static boolean exposed(Level level, LevelChunk chunk, BlockPos pos, BlockPos.MutableBlockPos neighbor) {
+    static boolean exposed(Level level, LevelChunk chunk, BlockPos pos, BlockPos.MutableBlockPos neighbor) {
         for (Direction direction : DIRECTIONS) {
             neighbor.setWithOffset(pos, direction);
             BlockState state;

@@ -6,8 +6,10 @@ import dev.donut.client.config.FinderSettings;
 import dev.donut.client.config.RenderMode;
 import dev.donut.client.finder.ActivityArea;
 import dev.donut.client.finder.ActivityStats;
+import dev.donut.client.finder.ChunkStats;
 import dev.donut.client.finder.DebrisStats;
 import dev.donut.client.finder.FinderScanner;
+import dev.donut.client.finder.GoodChunk;
 import dev.donut.client.input.ModuleKeybinds;
 import dev.donut.client.miner.ChunkMiner;
 import dev.donut.client.miner.Excavator;
@@ -167,7 +169,8 @@ public final class DonutScreen extends Screen {
         version = FabricLoader.getInstance().getModContainer("donut")
                 .map(mod -> "v" + mod.getMetadata().getVersion().getFriendlyString()).orElse("");
         group("Modules",
-                page("finders", "Finders", "search", List.of(storage(), spawners(), debris(), tunnels(), entities(), activity(), bases())),
+                page("finders", "Finders", "search", List.of(storage(), spawners(), debris(), tunnels(), entities(), activity(), bases(),
+                        chunks())),
                 page("render", "Render", "eye", List.of(xray(), fullbright(), freecam())),
                 page("utility", "Utility", "rtp", List.of(autoRtp())),
                 page("build", "Build", "cube", List.of(schematicBuilder(), chunkMiner())),
@@ -383,6 +386,56 @@ public final class DonutScreen extends Screen {
         });
     }
 
+    private Module chunks() {
+        FinderSettings s = config.chunks;
+        return finder(12, "ChunkFinder", "Base spots no player or structure is near, with solid ground to dig into",
+                "chunks chunkfinder good chunk base spot hide hidden fresh untouched rtp kelp vines sugar cane cactus amethyst structure caves", s, c -> {
+            c.color("color", "Good chunks", () -> s.color, v -> s.color = v);
+            c.color("secondaryColor", "Signs of players", () -> s.secondaryColor, v -> s.secondaryColor = v);
+            c.color("tertiaryColor", "Structures", () -> s.tertiaryColor, v -> s.tertiaryColor = v);
+        }, c -> {
+            c.section("Detection");
+            c.slider("clearance", "Clearance", "Rings of chunks around a spot that must be loaded and show no sign of players",
+                    () -> s.minClearance, v -> s.minClearance = v, 1, 12, 1, " chunks");
+            c.slider("unseen", "Max unseen time", "Spots need enough cane, cactus, kelp or vines around them that a stay this long would show",
+                    () -> s.maxUnseen, v -> s.maxUnseen = v, 1, 60, 1, " min");
+            c.slider("ignore", "Ignore visits under", "Growth from shorter stays, such as someone flying past, is no sign",
+                    () -> s.ignoreVisitsUnder, v -> s.ignoreVisitsUnder = v, 0, 30, 1, " min");
+            c.slider("caves", "Max caves", "How much of a spot's underground may be open cave, water or lava; lower is safer to dig",
+                    () -> s.maxCaves, v -> s.maxCaves = v, 0, 0.3, .01, "%");
+            c.toggle("signs", "Show signs", "Mark the chunks spots keep away from, labelled with why",
+                    () -> s.showSigns, () -> s.showSigns = !s.showSigns);
+            c.toggle("notify", "Announce spots", "A chat line with the coordinates when a new area has a good chunk",
+                    () -> s.notify, () -> s.notify = !s.notify);
+            chunkScan(c, s);
+        });
+    }
+
+    /** What ChunkFinder's last pass saw, so an empty result can be explained. */
+    private void chunkScan(Column c, FinderSettings s) {
+        c.section("Live scan");
+        FinderScanner scanner = FinderScanner.instance();
+        if (!s.enabled || scanner == null) { c.note("Enable ChunkFinder to read loaded chunks.", MUTED); return; }
+        ChunkStats stats = scanner.chunkStats();
+        c.info("Chunks", Integer.toString(stats.scanned()), TEXT);
+        c.info("With plants", Integer.toString(stats.withClocks()), TEXT);
+        c.info("With signs", Integer.toString(stats.signs()), TEXT);
+        c.info("Structures", Integer.toString(stats.structures()), TEXT);
+        GoodChunk best = scanner.bestGoodChunk();
+        c.info("Best", best == null ? "None" : "x " + best.surfaceCenter().getX() + ", z " + best.surfaceCenter().getZ(), TEXT);
+        if (!stats.overworld()) {
+            c.note("Cane, cactus, kelp and vines only grow in the Overworld.", WARN);
+        } else if (best == null && stats.scanned() >= 9) {
+            c.note(stats.roomy() == 0 && stats.signs() == 0 ? "No chunk has a whole clearance loaded around it; lower Clearance."
+                    : stats.roomy() == 0 ? "Every loaded area is near signs of players or in structures; move on or lower Clearance."
+                    : stats.solid() == 0 ? "The clear chunks have too much cave under them; move on or raise Max caves."
+                    : "Clear areas have too few plants to tell whether anyone was there; raise Max unseen time.", MUTED);
+        }
+        c.note("Any built block open to air, a placed entity or a dug passage keeps spots a clearance away; buried blocks don't "
+                + "count, since anti-xray fakes them. Structures keep spots out of them and the chunks touching them. Plants are "
+                + "judged as the server first sent them, so your own time here doesn't count.", DIM);
+    }
+
     /** Live counts, including chunks below the threshold, so an empty world view can be explained. */
     private void activityScan(Column c, FinderSettings s) {
         c.section("Live scan");
@@ -413,7 +466,7 @@ public final class DonutScreen extends Screen {
         return module(name, description, keywords, () -> s.enabled, () -> change(() -> s.enabled = !s.enabled), c -> {
             c.bind(index);
             // ActivityFinder and BaseFinder can cover every loaded chunk, which makes range and distance fade irrelevant.
-            boolean everyChunk = (s == config.activity || s == config.bases) && s.allLoadedChunks;
+            boolean everyChunk = (s == config.activity || s == config.bases || s == config.chunks) && s.allLoadedChunks;
             c.section("Render");
             c.choice("mode", "Mode", RenderMode.values().length, () -> s.mode.ordinal(),
                     v -> s.mode = RenderMode.values()[v], v -> modeName(RenderMode.values()[v]));

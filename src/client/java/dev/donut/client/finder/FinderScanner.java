@@ -53,6 +53,14 @@ public final class FinderScanner implements ChunkEvents.Listener {
     private List<BaseArea> bases = List.of();
     private double baseRange;
     private final TunnelIndex tunnelIndex = new TunnelIndex();
+    private final GoodChunkIndex goodIndex = new GoodChunkIndex();
+    private List<GoodChunk> goodChunks = List.of();
+    private List<ChunkSign> chunkSigns = List.of();
+    /** The best spot last announced in chat, so each area is announced once. */
+    private ChunkPos announcedSpot;
+    /** The best spot of the last passes and for how many in a row, so one still shifting as chunks arrive waits. */
+    private ChunkPos steadySpot;
+    private int steadyPasses;
     /**
      * Whether each spawner looked activated the first time it was seen, before our own presence could run its timer.
      * Kept per dimension for the whole connection: a spawner we ran ourselves must not count once we come back.
@@ -98,6 +106,13 @@ public final class FinderScanner implements ChunkEvents.Listener {
     public List<SectionPos> debrisAreas() { return config.debris.enabled ? debris.areas() : List.of(); }
     /** Dug passages within TunnelFinder's range, nearest first. */
     public List<TunnelDetector.Segment> tunnels() { return tunnels; }
+    /** ChunkFinder's base spots, best first and a clearance apart; empty when it is off or nothing qualifies. */
+    public List<GoodChunk> goodChunks() { return goodChunks; }
+    /** ChunkFinder's best spot, or null. */
+    public GoodChunk bestGoodChunk() { return goodChunks.isEmpty() ? null : goodChunks.getFirst(); }
+    /** The chunks ChunkFinder keeps spots away from, with why. */
+    public List<ChunkSign> chunkSigns() { return chunkSigns; }
+    public ChunkStats chunkStats() { return config.chunks.enabled ? goodIndex.stats() : ChunkStats.EMPTY; }
     /** One line per enabled finder for the info HUD. */
     public List<FinderSummary> summaries() { return summaries; }
 
@@ -109,6 +124,10 @@ public final class FinderScanner implements ChunkEvents.Listener {
         activityStats = ActivityStats.EMPTY;
         bases = List.of();
         baseIndex.clear();
+        goodChunks = List.of();
+        chunkSigns = List.of();
+        goodIndex.clear();
+        announcedSpot = steadySpot = null;
         lastLevel = null;
         ticks = 0;
         debris.clear();
@@ -122,20 +141,24 @@ public final class FinderScanner implements ChunkEvents.Listener {
         clear();
         lastLevel = level;
         spawnerFirstSight = spawnerSight.computeIfAbsent(level.dimension(), key -> new Long2BooleanOpenHashMap());
+        goodIndex.useLevel(level);
     }
 
     private boolean anyEnabled() {
         return config.storage.enabled || config.spawner.enabled || config.debris.enabled || config.activity.enabled
-                || config.tunnels.enabled || config.entities.enabled || config.bases.enabled;
+                || config.tunnels.enabled || config.entities.enabled || config.bases.enabled || config.chunks.enabled;
     }
 
     public void tick(Minecraft client) {
         if (client.level == null || client.player == null) {
             clear();
             spawnerSight.clear();
+            goodIndex.forget();
             return;
         }
         if (client.level != lastLevel) useLevel(client.level);
+        // Where we stand, not the camera: the server random-ticks the chunks around the player.
+        goodIndex.follow(client.level, client.player.chunkPosition());
         // In Freecam the finds follow the camera, which is where they are drawn.
         Vec3 origin = FreecamController.enabled() ? FreecamController.getInstance().position() : client.player.position();
         ChunkPos center = ChunkPos.containing(BlockPos.containing(origin));
@@ -153,6 +176,8 @@ public final class FinderScanner implements ChunkEvents.Listener {
         baseRange = config.bases.allLoadedChunks ? loadedRange(client) : config.bases.range;
         if (config.bases.enabled) baseIndex.tick(client.level, center, baseRange);
         else baseIndex.clear();
+        if (config.chunks.enabled) goodIndex.tick(client.level, center, loadedRange(client));
+        else goodIndex.clear();
         FinderSettings t = config.tunnels;
         tunnelIndex.configure((int) Math.round(t.minLength), t.tunnels, t.holes, t.staircases);
         // The index scans for every kind and length; turning one off only filters what it found.
@@ -165,6 +190,8 @@ public final class FinderScanner implements ChunkEvents.Listener {
             tunnels = List.of();
             summaries = List.of();
             activityStats = ActivityStats.EMPTY;
+            goodChunks = List.of();
+            chunkSigns = List.of();
             ticks = 0;
             return;
         }
@@ -200,6 +227,13 @@ public final class FinderScanner implements ChunkEvents.Listener {
         if (config.bases.enabled) baseIndex.collect(client.level, origin, baseRange, config.bases.minBaseScore, suspicious);
         suspicious.sort(Comparator.comparingDouble(area -> area.horizontalDistance(origin)));
         bases = List.copyOf(suspicious);
+
+        List<GoodChunk> spots = new ArrayList<>();
+        List<ChunkSign> signs = new ArrayList<>();
+        if (config.chunks.enabled) goodIndex.collect(client.level, client.player, origin, config.chunks, spots, signs);
+        goodChunks = List.copyOf(spots);
+        chunkSigns = List.copyOf(signs);
+        if (config.chunks.enabled) announceSpot(client);
         summaries = summarize(client, origin);
     }
 
@@ -351,6 +385,18 @@ public final class FinderScanner implements ChunkEvents.Listener {
             int best = BaseIndex.best(bases);
             lines.add(new FinderSummary("Bases", bases.size(), nearest, config.bases.color, best == 0 ? "" : "best " + best));
         }
+        if (config.chunks.enabled) {
+            GoodChunk best = bestGoodChunk();
+            ChunkStats stats = goodIndex.stats();
+            String note = !stats.overworld() ? "not Overworld"
+                    : best != null ? "clear " + best.clearance() + ", unseen " + GoodChunkIndex.duration(best.unseenMinutes())
+                    : stats.scanned() < 9 ? ""
+                    : stats.roomy() == 0 ? (stats.signs() > 0 ? "signs all around" : "clearance past view")
+                    : stats.solid() == 0 ? "too much cave below"
+                    : stats.withClocks() == 0 ? "no plants to judge by" : "too few plants to judge by";
+            lines.add(new FinderSummary("Chunks", goodChunks.size(), best == null ? null : best.center(), config.chunks.color, note,
+                    !stats.overworld()));
+        }
         if (config.entities.enabled) {
             int count = 0;
             Entity nearest = null, nearestPlayer = null;
@@ -403,6 +449,12 @@ public final class FinderScanner implements ChunkEvents.Listener {
         if (config.bases.enabled && (BaseEvidence.ANY.test(previous) || BaseEvidence.ANY.test(current))) {
             baseIndex.markDirty(SectionPos.blockToSectionCoord(pos.getX()), SectionPos.blockToSectionCoord(pos.getZ()));
         }
+        // Built blocks and amethyst are read again; plants and caves keep their first reading.
+        if (config.chunks.enabled && (BuiltBlocks.built(previous) || BuiltBlocks.built(current)
+                || amethyst(previous) || amethyst(current))) {
+            goodIndex.markDirty(SectionPos.blockToSectionCoord(pos.getX()), SectionPos.blockToSectionCoord(pos.getZ()));
+        }
+        if (config.chunks.enabled && TunnelIndex.matters(previous, current)) goodIndex.passageChanged(pos);
         if (config.activity.enabled && (amethyst(previous) || amethyst(current))) {
             // A bud on the chunk's edge can belong to budding amethyst next door.
             int chunkX = SectionPos.blockToSectionCoord(pos.getX()), chunkZ = SectionPos.blockToSectionCoord(pos.getZ());
@@ -457,6 +509,7 @@ public final class FinderScanner implements ChunkEvents.Listener {
         }
         if (config.tunnels.enabled) tunnelIndex.markDirty(pos);
         if (config.bases.enabled) baseIndex.markDirty(pos.x(), pos.z());
+        if (config.chunks.enabled) goodIndex.chunkLoaded(pos);
         if (config.activity.enabled) {
             // Faces on the edges next to this chunk read as missing until it loads.
             activity.markDirty(pos.x(), pos.z());
@@ -465,6 +518,28 @@ public final class FinderScanner implements ChunkEvents.Listener {
             activity.markDirty(pos.x(), pos.z() - 1);
             activity.markDirty(pos.x(), pos.z() + 1);
         }
+    }
+
+    /** A chat line with the coordinates, once per area: a new best spot more than a clearance from the last one. */
+    private void announceSpot(Minecraft client) {
+        GoodChunk best = bestGoodChunk();
+        steadyPasses = best != null && best.chunk().equals(steadySpot) ? steadyPasses + 1 : 0;
+        steadySpot = best == null ? null : best.chunk();
+        // Four passes are two seconds.
+        if (best == null || !config.chunks.notify || steadyPasses < 4) return;
+        int spacing = (int) Math.round(config.chunks.minClearance);
+        if (announcedSpot != null && Math.max(Math.abs(announcedSpot.x() - best.chunk().x()),
+                Math.abs(announcedSpot.z() - best.chunk().z())) <= spacing) return;
+        announcedSpot = best.chunk();
+        client.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.NOTE_BLOCK_CHIME.value(), 1.2f, 0.8f));
+        BlockPos center = best.surfaceCenter();
+        client.player.sendSystemMessage(Component.literal("[Donut] Good chunk at " + center.getX() + ", " + center.getZ() + ": "
+                + best.clearance() + " clear chunks around it; a player there for " + unseen(best.unseenMinutes())
+                + " would have left growth").withStyle(ChatFormatting.GREEN));
+    }
+
+    private static String unseen(double minutes) {
+        return minutes < 1 ? "under a minute" : minutes < 90 ? Math.round(minutes) + " min" : Math.round(minutes / 60) + " h";
     }
 
     private void announceRevealed(Minecraft client) {

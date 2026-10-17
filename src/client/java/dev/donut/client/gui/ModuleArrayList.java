@@ -63,6 +63,7 @@ public final class ModuleArrayList {
         if (config.tunnels.enabled) names.add("TunnelFinder");
         if (config.entities.enabled) names.add("EntityFinder");
         if (config.bases.enabled) names.add("BaseFinder");
+        if (config.chunks.enabled) names.add("ChunkFinder");
         if (config.xray.enabled) names.add("Xray");
         if (config.fullbright.enabled) names.add("Fullbright");
         if (config.rtp.enabled) names.add("AutoRTP");

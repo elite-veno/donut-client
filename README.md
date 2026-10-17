@@ -45,6 +45,27 @@ ActivityFinder outlines chunks whose amethyst geodes grew well past their genera
 
 Auto RTP sends a random-teleport command (`rtp` by default), clicks the configured item (`Overworld`) when the command opens a world menu, waits for the teleport, lets ActivityFinder scan for a few seconds, and stops with a chat message and a sound once a chunk reaches its Stop at growth (55% by default, separate from ActivityFinder's square threshold). Each command is sent exactly as if typed in chat and echoed as a grey local line, and the teleport may take up to a minute. Otherwise it waits out its interval and tries again, up to its attempt limit. Cooldown messages from the server delay the next attempt instead of being retried. It also stops when you take damage, when three commands in a row do not teleport you, when the menu lacks the configured item, or when three areas in a row hold no budding amethyst at all. It never starts on its own after joining. Check a server's rules before automating commands.
 
+### Finding a base spot
+
+**ChunkFinder** (Finders page) looks for a chunk to dig a base into on a server like DonutSMP. A good chunk has no player build or structure in or near it, no sign that players spent time nearby (such as where people landed with RTP), and little cave under it. It marks the best chunk with a green square and a beam, puts squares on the other good chunks, and announces each new area's best chunk in chat with its coordinates. With Show signs on, chunks with signs of players get red squares and structures get amber outlines, each labelled with why.
+
+**Player builds.** Any block only players or structures place counts once it is open to air: planks, stairs, slabs, fences, doors, glass, wool, bricks, polished and cut stone, concrete, torches, lanterns, rails, beds, chests, workstations, redstone parts and the like ("Built: crafting table"). Buried blocks don't count, because anti-xray fills buried stone with fake chests and ores. Cobblestone, obsidian, mossy cobblestone, smooth basalt and terracotta don't count either, since nature makes them too. Item frames, paintings, armor stands, boats and minecarts count, as do tunnels, holes and staircases players dig: TunnelFinder's detector, from 16 blocks long, since natural shafts reach 11.
+
+**Structures.** A chunk with blocks that give a structure away is part of one: spawners, rails and cobwebs, bells and dirt paths, trial chambers' tuff, copper and vaults, ancient cities' deepslate, cracked, mossy and chiseled stone bricks, desert sandstone, prismarine, crying obsidian and suspicious sand. Chunks of plain built blocks joined to it belong to it too, as does a buried chunk of nothing but mineshaft supports, chains, rails and torches. A structure only rules out its own chunk and the chunks touching it. Built blocks far above or below what gives it away, such as a crafting table on the ground over a mineshaft, are still someone's build. Checked on DonutSMP's seed: of 3185 freshly generated chunks, about one in six is part of a structure, mostly mineshafts; none showed signs of players, and 13 mineshaft pieces with nothing that gives them away (0.4%) read as builds.
+
+**Caves.** Max caves (5% by default) is how much of a spot's underground, from the ground down to the bedrock floor, may be open cave, water or lava, so a base can be dug without falling or flooding. Half of all chunks are under 5%. Caves only rule out the chunk itself.
+
+**Signs of players.** The server only grows plants in chunks within a player's simulation distance, so plants show whether someone spent time nearby:
+
+- **Sugar cane and cactus** generate at age 0 and age on every random tick, about once a minute at the default speed. The server never sends that change on its own, so any age seen in a freshly sent chunk means a player was within range for a while. All sugar cane grown to 3 tall says the same.
+- **Kelp** generates at age 20 to 23, at most 11 blocks tall and never up to the water's surface; older, taller or surface kelp grew.
+- **Vines** hang at most 4 blocks below a leaf when generated; longer hanging vines grew.
+- **Amethyst** grown past worldgen (as ActivityFinder judges it) and **players** in sight are signs too.
+
+Growth only counts when chance and your own time nearby can't explain it: plants are judged as the server first sent them, and the time you spent within simulation distance before that is allowed for. Growth from stays shorter than **Ignore visits under** (2 minutes by default), such as someone flying past, doesn't count. A player build or a sign of players keeps spots **Clearance** chunks away (4 by default), and every chunk within the clearance must be loaded. A spot also needs enough cane, cactus, kelp or vines around it that a player staying **Max unseen time** (10 minutes by default) would have grown at least one, 19 times in 20. One sugar cane covers a visit of about 3½ minutes; kelp and vines take more. Ground without such plants can't vouch for anything, so it gives no spots. The best chunk is the one deepest inside clear ground, then the one with the most telling plants, then the nearest. A server that changes its random tick speed shifts all these times.
+
+Only the Overworld has these plants, and ChunkFinder only sees chunks your client holds; a higher render distance judges a wider area.
+
 ### Building schematics
 
 **SchematicBuilder** (the Build page) builds a Litematica schematic (`.litematic`) in the world from the blocks you carry, a layer at a time from the bottom up.

@@ -17,7 +17,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestServerContext;
@@ -218,10 +217,6 @@ public final class ChunkMinerGameTest implements FabricClientGameTest {
     private static void registerAreaPickaxe() {
         if (registered) return;
         registered = true;
-        // The miner turns the camera itself: the test window never needs the mouse, and must not trap the user's.
-        ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            if (client.mouseHandler.isMouseGrabbed()) client.mouseHandler.releaseMouse();
-        });
         AttackBlockCallback.EVENT.register((player, level, hand, pos, direction) -> {
             if (!level.isClientSide()) FACES.put(player.getUUID(), direction);
             return InteractionResult.PASS;

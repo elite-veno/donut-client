@@ -36,6 +36,31 @@ class FinderSettingsTest {
     }
 
     @Test
+    void chunkFinderLimitsAreClamped() {
+        FinderSettings low = new FinderSettings(), high = new FinderSettings();
+        low.minClearance = 0;
+        low.maxUnseen = 0;
+        low.ignoreVisitsUnder = -3;
+        high.minClearance = 40;
+        high.maxUnseen = 500;
+        high.ignoreVisitsUnder = 90;
+        low.sanitize();
+        high.sanitize();
+        assertEquals(1, low.minClearance);
+        assertEquals(1, low.maxUnseen);
+        assertEquals(0, low.ignoreVisitsUnder);
+        assertEquals(12, high.minClearance);
+        assertEquals(60, high.maxUnseen);
+        assertEquals(30, high.ignoreVisitsUnder);
+        FinderSettings nan = new FinderSettings();
+        nan.minClearance = nan.maxUnseen = nan.ignoreVisitsUnder = Double.NaN;
+        nan.sanitize();
+        assertEquals(4, nan.minClearance);
+        assertEquals(10, nan.maxUnseen);
+        assertEquals(2, nan.ignoreVisitsUnder);
+    }
+
+    @Test
     void everyNonFiniteInputUsesFiniteDefaults() {
         for (double badValue : new double[] {Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY}) {
             FinderSettings settings = new FinderSettings();

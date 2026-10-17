@@ -60,6 +60,12 @@ public final class DonutClient implements ClientModInitializer {
         AutoRtpController rtp = new AutoRtpController(config, scanner, this::save);
         SchematicBuilder builder = new SchematicBuilder(config, this::save);
         ChunkMiner miner = new ChunkMiner(config, this::save);
+        ChunkMiner.goodChunks(() -> scanner.goodChunks().stream().map(g -> new ChunkMiner.Target(g.chunk(), g.surfaceY())).toList(), () -> {
+            if (config.chunks.enabled) return false;
+            config.chunks.enabled = true;
+            save();
+            return true;
+        });
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
             // This runs inside packet handling, where an exception disconnects the player.
             try {
@@ -84,10 +90,10 @@ public final class DonutClient implements ClientModInitializer {
         KeyMapping tunnels = bind("toggle_tunnels", InputConstants.UNKNOWN.getValue(), category);
         KeyMapping bases = bind("toggle_bases", InputConstants.UNKNOWN.getValue(), category);
         KeyMapping schematic = bind("toggle_schematic", InputConstants.UNKNOWN.getValue(), category);
+        KeyMapping chunks = bind("toggle_chunks", InputConstants.UNKNOWN.getValue(), category);
         KeyMapping minerKey = bind("toggle_miner", InputConstants.UNKNOWN.getValue(), category);
-        // Index 12 is ChunkFinder's, on its own branch.
         ModuleKeybinds.initialize(storage, spawner, camera, debris, activity, autoRtp, xrayKey, fullbrightKey, entities, tunnels, bases,
-                schematic, null, minerKey);
+                schematic, chunks, minerKey);
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             boolean inputBlocked = ModuleKeybinds.inputBlocked(client);
@@ -129,6 +135,9 @@ public final class DonutClient implements ClientModInitializer {
             }
             if (ModuleKeybinds.consumePress(client, 11)) {
                 if (!inputBlocked && client.gui.screen() == null && client.player != null) builder.setEnabled(!config.schematic.enabled);
+            }
+            if (ModuleKeybinds.consumePress(client, 12)) {
+                if (!inputBlocked && client.gui.screen() == null && client.player != null) { config.chunks.enabled = !config.chunks.enabled; save(); }
             }
             if (ModuleKeybinds.consumePress(client, 13)) {
                 if (!inputBlocked && client.gui.screen() == null && client.player != null) miner.setEnabled(!config.miner.enabled);

@@ -21,7 +21,7 @@ public final class ModuleKeybinds {
 
     /**
      * In module order: storage, spawner, freecam, debris, activity, Auto RTP, X-ray, Fullbright, entities, tunnels, bases,
-     * schematic builder, chunk finder, chunk miner.
+     * schematic builder, chunks, chunk miner.
      * Modules without a mapping stay unbound.
      */
     public static void initialize(KeyMapping... modules) {
