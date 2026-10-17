@@ -47,6 +47,7 @@ import net.minecraft.world.item.BucketItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
@@ -166,6 +167,11 @@ public final class SchematicBuilder {
      * leaves no way out, so walks for that block go somewhere else. Worked out when {@link #wayOut} holds it back.
      */
     private final Map<Integer, Set<Long>> shutIn = new HashMap<>();
+    /**
+     * Places to stand with no way back out onto the layer or off the build, found when a walk would drop into them, as
+     * through an open fence gate: walks never end there. Kept as long as {@link #shutIn}.
+     */
+    private final Set<Long> traps = new HashSet<>();
     /** Helper blocks standing in the world, by position. */
     private final Map<Long, Helper> helpers = new HashMap<>();
     /** Where a block that nothing holds can be placed against a helper block, by the block's index. */
@@ -484,6 +490,7 @@ public final class SchematicBuilder {
         walkFailures = 0;
         uselessSpots.clear();
         shutIn.clear();
+        traps.clear();
         missedHere.clear();
         noClickHere.clear();
         helpers.clear();
@@ -584,6 +591,7 @@ public final class SchematicBuilder {
             if (entry.getKey() != layerY) {
                 sealsLifted = false;
                 shutIn.clear();
+                traps.clear();
             }
             layerY = entry.getKey();
             layerNumber = number;
@@ -734,6 +742,7 @@ public final class SchematicBuilder {
         for (int i : layer) if (plan.status(i) == BuildPlan.Status.PENDING || plan.status(i) == BuildPlan.Status.UNLOADED) left++;
         if (settings().walk && planWalk(client, player, candidates, materials, layerNumber, lift)) return;
         if (settings().walk && planPit(client, player, candidates, materials, layerNumber, lift)) return;
+        if (settings().walk && breakOut(player)) return;
         if (sealing && !lift) {
             // Every block left in reach of a walk would shut in another: let them go in after all.
             sealsLifted = true;
@@ -865,17 +874,65 @@ public final class SchematicBuilder {
         if (!player.getBoundingBox().inflate(2.5).intersects(new AABB(pos))) return true;
         if (plan.target(i).getCollisionShape(player.level(), pos).isEmpty()) return true;
         Overlay view = new Overlay(player.level(), Map.of(pos.asLong(), plan.target(i)));
-        AABB outside = plan.bounds.inflate(1);
         // Every place this search reaches is shut in with the player when it finds no way out.
         Set<Long> reached = new HashSet<>();
-        Navigator.Path path = navigator(player, view, true).limit(3000).find(Navigator.standingAt(view, player), node -> {
-            reached.add(node.key());
-            return node.feet() >= layerY + 1 - 1e-3 || !outside.contains(node.standing()) ? 1 : 0;
-        });
-        if (path != null) return true;
+        if (exitFrom(player, view, Navigator.standingAt(view, player), reached) != null) return true;
+        // Shut in already without it, the block changes nothing: getting out is up to breakOut.
+        if (exitFrom(player, player.level(), Navigator.standingAt(player.level(), player), null) == null) return true;
         shutIn.put(i, reached);
         if (debug()) LOGGER.info("{} at {} waits: it would shut you in, with {} places to stand", plan.target(i).getBlock().getName().getString(),
                 pos.toShortString(), reached.size());
+        return false;
+    }
+
+    /**
+     * A way from {@code start} onto the top of the layer or off the build, in {@code view}, or null when there is none;
+     * every place the search reaches goes into {@code reached}, when given.
+     */
+    private Navigator.Path exitFrom(LocalPlayer player, BlockGetter view, Navigator.Node start, Set<Long> reached) {
+        AABB outside = plan.bounds.inflate(1);
+        return navigator(player, view, true).limit(3000).find(start, node -> {
+            if (reached != null) reached.add(node.key());
+            return node.feet() >= layerY + 1 - 1e-3 || !outside.contains(node.standing()) ? 1 : 0;
+        });
+    }
+
+    /** Whether a walk drops into a place with no way back out; if so, every place shut in with it goes into {@link #traps}. */
+    private boolean dropsIntoTrap(LocalPlayer player, Navigator.Path path) {
+        if (path.nodes().stream().noneMatch(node -> node.move() == Navigator.Move.DROP)) return false;
+        Set<Long> reached = new HashSet<>();
+        if (exitFrom(player, player.level(), path.end(), reached) != null) return false;
+        traps.addAll(reached);
+        if (debug()) LOGGER.info("Not walking to {} {} {}: no way back out from there, with {} places to stand", path.end().x(),
+                path.end().feet(), path.end().z(), reached.size());
+        return true;
+    }
+
+    /**
+     * When the player has no way back out onto the layer or off the build, breaks a helper block in reach whose going
+     * opens one: the builder's own blocks, which come away at the end anyway. False when the player isn't shut in, or
+     * no helper block in reach would let them out.
+     */
+    private boolean breakOut(LocalPlayer player) {
+        Level level = player.level();
+        if (exitFrom(player, level, Navigator.standingAt(level, player), null) != null) return false;
+        double reach = player.blockInteractionRange() - 0.25;
+        Vec3 eye = player.getEyePosition();
+        List<BlockPos> candidates = new ArrayList<>();
+        for (long key : helpers.keySet()) candidates.add(BlockPos.of(key));
+        candidates.addAll(helpersLeft);
+        candidates.sort(Comparator.comparingDouble(pos -> new AABB(pos).distanceToSqr(eye)));
+        for (BlockPos pos : candidates) {
+            BlockState state = level.getBlockState(pos);
+            if (state.canBeReplaced() || !inView(player, eye, pos, reach)) continue;
+            Overlay view = new Overlay(level, Map.of(pos.asLong(), Blocks.AIR.defaultBlockState()));
+            if (exitFrom(player, view, Navigator.standingAt(view, player), null) == null) continue;
+            if (debug()) LOGGER.info("Shut in: taking away the helper block at {} to get out", pos.toShortString());
+            helpersLeft.remove(pos);
+            helpers.putIfAbsent(pos.asLong(), new Helper(-1, state.getBlock()));
+            startBreak(pos);
+            return true;
+        }
         return false;
     }
 
@@ -1147,9 +1204,13 @@ public final class SchematicBuilder {
     }
 
     /** Whether a helper block may go here: an empty, dry spot the schematic leaves empty, or only has water run through. */
-    private boolean helperAllowed(LocalPlayer player, BlockPos cell) {
-        BlockState state = player.level().getBlockState(cell);
-        if (!state.canBeReplaced() || !state.getFluidState().isEmpty() || helpers.containsKey(cell.asLong())) return false;
+    private boolean helperAllowed(LocalPlayer player, BlockPos cell) { return helperAllowed(player, player.level(), cell); }
+
+    private boolean helperAllowed(LocalPlayer player, BlockGetter view, BlockPos cell) {
+        BlockState state = view.getBlockState(cell);
+        // A helper block just clicked in may not be there yet; one a what-if takes away is gone.
+        boolean helper = helpers.containsKey(cell.asLong()) && !(view instanceof Overlay overlay && overlay.changes(cell));
+        if (!state.canBeReplaced() || !state.getFluidState().isEmpty() || helper) return false;
         int i = plan.indexOf(cell);
         return i < 0 || plan.kind(i) == BlockRules.Kind.AUTO && plan.target(i).getBlock() instanceof LiquidBlock;
     }
@@ -1235,6 +1296,7 @@ public final class SchematicBuilder {
             // With the helper gone, a look may reach a block it was in front of, and a way out may open.
             noClickHere.clear();
             shutIn.clear();
+            traps.clear();
             breaking = null;
             nextAction = System.nanoTime() + quick();
             return;
@@ -1284,14 +1346,13 @@ public final class SchematicBuilder {
     /** The planner for walks around the build, with climbing allowed where helper blocks may go. */
     private Navigator navigator(LocalPlayer player, boolean climb) { return navigator(player, player.level(), climb); }
 
-    private Navigator navigator(LocalPlayer player, net.minecraft.world.level.BlockGetter view, boolean climb) {
+    private Navigator navigator(LocalPlayer player, BlockGetter view, boolean climb) {
         AABB b = plan.bounds;
         AABB area = new AABB(b.minX - 12, b.minY - 6, b.minZ - 12, b.maxX + 12, b.maxY + 4, b.maxZ + 12)
                 .minmax(new AABB(player.blockPosition()).inflate(6));
         Item helper = climb ? helperItem(player) : null;
-        Level level = player.level();
-        return new Navigator(view, area, cell -> helper != null && helperAllowed(player, cell)
-                && !BlockRules.interactive(level.getBlockState(cell.below()).getBlock()), key -> {
+        return new Navigator(view, area, cell -> helper != null && helperAllowed(player, view, cell)
+                && !BlockRules.interactive(view.getBlockState(cell.below()).getBlock()), key -> {
             int i = plan.indexOf(key);
             return i >= 0 && plan.status(i) == BuildPlan.Status.PENDING;
         });
@@ -1333,7 +1394,7 @@ public final class SchematicBuilder {
         List<Navigator.Node> sample = new ArrayList<>();
         Navigator.Goal goal = node -> {
             seen[0]++;
-            if (uselessSpots.contains(node.key())) return 0;
+            if (uselessSpots.contains(node.key()) || traps.contains(node.key())) return 0;
             // Waded through, never stood in: water would push the player off every look.
             if (wet(player.level(), node.feetCell())) return 0;
             Vec3 feet = node.standing(), eye = node.eye();
@@ -1400,6 +1461,12 @@ public final class SchematicBuilder {
             // A real look should reach a block from here, yet none went in: look further.
             uselessSpots.add(start.key());
             path = navigator(player, true).climbUpTo(ceiling).find(start, goal);
+            if (path == null || path.nodes().size() == 1) return false;
+        }
+        // A drop into a place with no way back up would end the build there: those places are left out, and the
+        // search goes on for another.
+        for (int tries = 0; dropsIntoTrap(player, path); tries++) {
+            path = tries < 2 ? navigator(player, true).climbUpTo(ceiling).find(start, goal) : null;
             if (path == null || path.nodes().size() == 1) return false;
         }
         if (path.nodes().stream().anyMatch(node -> node.move() == Navigator.Move.PILLAR)) {
@@ -1712,6 +1779,7 @@ public final class SchematicBuilder {
             restingTicks = 0;
             // Ground taken out may open a way out of where a block would have shut the player in.
             shutIn.clear();
+            traps.clear();
         }
         show("Digging in at " + pit.x() + " " + pit.top() + " " + pit.z() + " to place a block from below", false);
         if (!mine(client, player, next)) abandonPit(client, "can't see the ground under the feet");

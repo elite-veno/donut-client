@@ -21,6 +21,9 @@ final class Overlay implements BlockGetter {
         this.changed = changed;
     }
 
+    /** Whether this view has its own block at {@code pos}. */
+    boolean changes(BlockPos pos) { return changed.containsKey(pos.asLong()); }
+
     @Override
     public BlockState getBlockState(BlockPos pos) {
         BlockState state = changed.get(pos.asLong());
