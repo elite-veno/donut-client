@@ -161,6 +161,11 @@ public final class SchematicBuilder {
     private int walkFailures;
     /** Places tried and found useless since the last block went in, so the next walk goes somewhere else. */
     private final Set<Long> uselessSpots = new HashSet<>();
+    /**
+     * Places to stand that a block would shut the player in from, by the block's index: placed from any of them, it
+     * leaves no way out, so walks for that block go somewhere else. Worked out when {@link #wayOut} holds it back.
+     */
+    private final Map<Integer, Set<Long>> shutIn = new HashMap<>();
     /** Helper blocks standing in the world, by position. */
     private final Map<Long, Helper> helpers = new HashMap<>();
     /** Where a block that nothing holds can be placed against a helper block, by the block's index. */
@@ -478,6 +483,7 @@ public final class SchematicBuilder {
         buildSlot = -1;
         walkFailures = 0;
         uselessSpots.clear();
+        shutIn.clear();
         missedHere.clear();
         noClickHere.clear();
         helpers.clear();
@@ -575,7 +581,10 @@ public final class SchematicBuilder {
             if (first < 0) continue;
             layer = entry.getValue();
             group = byGroup ? BlockRules.group(plan.target(first)) : 0;
-            if (entry.getKey() != layerY) sealsLifted = false;
+            if (entry.getKey() != layerY) {
+                sealsLifted = false;
+                shutIn.clear();
+            }
             layerY = entry.getKey();
             layerNumber = number;
             break;
@@ -706,9 +715,11 @@ public final class SchematicBuilder {
                 noClickHere.put(i, result.problem());
                 continue;
             }
-            if (!lift && !wayOut(player, i)) {
-                // It would wall the player in: other blocks first, or a walk out to place it from outside.
-                sealing = true;
+            if (!wayOut(player, i)) {
+                // It would wall the player in: other blocks first, or a walk out to place it from outside. Unlike a
+                // block that would only shut in a neighbor, this never goes in for want of anything else: shut in, the
+                // player can build nothing more.
+                noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH);
                 continue;
             }
             if (!creative && materials.loose(item) == 0) {
@@ -855,11 +866,17 @@ public final class SchematicBuilder {
         if (plan.target(i).getCollisionShape(player.level(), pos).isEmpty()) return true;
         Overlay view = new Overlay(player.level(), Map.of(pos.asLong(), plan.target(i)));
         AABB outside = plan.bounds.inflate(1);
-        Navigator.Path path = navigator(player, view, true).limit(3000).find(Navigator.standingAt(view, player),
-                node -> node.feet() >= layerY + 1 - 1e-3 || !outside.contains(node.standing()) ? 1 : 0);
-        if (path == null && debug()) LOGGER.info("{} at {} waits: it would shut you in", plan.target(i).getBlock().getName().getString(),
-                pos.toShortString());
-        return path != null;
+        // Every place this search reaches is shut in with the player when it finds no way out.
+        Set<Long> reached = new HashSet<>();
+        Navigator.Path path = navigator(player, view, true).limit(3000).find(Navigator.standingAt(view, player), node -> {
+            reached.add(node.key());
+            return node.feet() >= layerY + 1 - 1e-3 || !outside.contains(node.standing()) ? 1 : 0;
+        });
+        if (path != null) return true;
+        shutIn.put(i, reached);
+        if (debug()) LOGGER.info("{} at {} waits: it would shut you in, with {} places to stand", plan.target(i).getBlock().getName().getString(),
+                pos.toShortString(), reached.size());
+        return false;
     }
 
     /** Whether block {@code i} can go in yet, worked out once for the blocks around it as they are: 1 yes, 2 no, 0 out of time. */
@@ -1061,6 +1078,7 @@ public final class SchematicBuilder {
             case PLACE, POUR -> {
                 placedSincePit = true;
                 sealsLifted = false;
+                shutIn.remove(i);
                 // A block in changes what a pit beside it can do.
                 BlockPos in = planned.at();
                 uselessPits.removeIf(p -> Math.abs(p.x() - in.getX()) <= 3 && Math.abs(p.z() - in.getZ()) <= 3);
@@ -1214,8 +1232,9 @@ public final class SchematicBuilder {
         BlockState state = client.level.getBlockState(breaking);
         if (state.isAir() || state.canBeReplaced()) {
             helpers.remove(breaking.asLong());
-            // With the helper gone, a look may reach a block it was in front of.
+            // With the helper gone, a look may reach a block it was in front of, and a way out may open.
             noClickHere.clear();
+            shutIn.clear();
             breaking = null;
             nextAction = System.nanoTime() + quick();
             return;
@@ -1321,6 +1340,8 @@ public final class SchematicBuilder {
             AABB body = new AABB(node.x() + 0.2, node.feet(), node.z() + 0.2, node.x() + 0.8, node.feet() + 1.8, node.z() + 0.8);
             List<Integer> inReach = new ArrayList<>();
             for (int i : near) {
+                Set<Long> pocket = shutIn.get(i);
+                if (pocket != null && pocket.contains(node.key())) continue;
                 AABB cell = new AABB(plan.pos(i));
                 if (!cell.intersects(body) && cell.distanceToSqr(eye) <= (reach + 0.5) * (reach + 0.5)) inReach.add(i);
             }
@@ -1689,6 +1710,8 @@ public final class SchematicBuilder {
             if (!holdTool(client, player, level.getBlockState(next))) return;
             dug.put(next.asLong(), level.getBlockState(next));
             restingTicks = 0;
+            // Ground taken out may open a way out of where a block would have shut the player in.
+            shutIn.clear();
         }
         show("Digging in at " + pit.x() + " " + pit.top() + " " + pit.z() + " to place a block from below", false);
         if (!mine(client, player, next)) abandonPit(client, "can't see the ground under the feet");
