@@ -35,7 +35,9 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
         FreecamController freecam = FreecamController.getInstance();
         AutoRtpController rtp = AutoRtpController.getInstance();
         String[] originalKeys = context.computeOnClient(client -> java.util.stream.IntStream.range(0, ModuleKeybinds.COUNT)
-                .mapToObj(module -> ModuleKeybinds.mapping(module).saveString()).toArray(String[]::new));
+                // A module from another branch may not be here yet.
+                .mapToObj(module -> ModuleKeybinds.mapping(module) == null ? null : ModuleKeybinds.mapping(module).saveString())
+                .toArray(String[]::new));
         int originalGuiScale = context.computeOnClient(client -> client.options.guiScale().get());
         boolean originalHideGui = context.computeOnClient(client -> client.gui.hud.isHidden());
         KeyMapping openGui = context.computeOnClient(client -> Arrays.stream(client.options.keyMappings)
@@ -288,7 +290,7 @@ public final class ModuleKeybindGameTest implements FabricClientGameTest {
         } finally {
             context.runOnClient(client -> {
                 for (int module = 0; module < originalKeys.length; module++) {
-                    ModuleKeybinds.mapping(module).setKey(InputConstants.getKey(originalKeys[module]));
+                    if (originalKeys[module] != null) ModuleKeybinds.mapping(module).setKey(InputConstants.getKey(originalKeys[module]));
                 }
                 openGui.setKey(InputConstants.getKey(originalOpenKey));
                 KeyMapping.resetMapping();

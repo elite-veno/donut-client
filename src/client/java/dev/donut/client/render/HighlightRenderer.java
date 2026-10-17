@@ -24,6 +24,7 @@ import dev.donut.client.finder.FoundBlock;
 import dev.donut.client.finder.LoadedChunks;
 import dev.donut.client.finder.TargetKind;
 import dev.donut.client.finder.TunnelDetector;
+import dev.donut.client.miner.ChunkMiner;
 import dev.donut.client.mixin.GameRendererAccess;
 import dev.donut.client.schematic.SchematicBuilder;
 import net.fabricmc.fabric.api.client.rendering.v1.FabricRenderState;
@@ -144,7 +145,8 @@ public final class HighlightRenderer implements AutoCloseable {
 
     private boolean anyEnabled() {
         return config.storage.enabled || config.spawner.enabled || config.debris.enabled || config.activity.enabled
-                || config.tunnels.enabled || config.entities.enabled || config.bases.enabled || SchematicBuilder.busy();
+                || config.tunnels.enabled || config.entities.enabled || config.bases.enabled || SchematicBuilder.busy()
+                || ChunkMiner.getInstance() != null && ChunkMiner.getInstance().isActive();
     }
 
     private void extract(LevelExtractionContext context) {
@@ -196,6 +198,7 @@ public final class HighlightRenderer implements AutoCloseable {
         if (config.debris.enabled && config.debris.searchAreas) addDebrisAreas(out);
         if (config.entities.enabled || config.storage.enabled && config.storage.minecarts) addEntities(out);
         if (SchematicBuilder.busy()) addSchematic(out);
+        if (ChunkMiner.getInstance() != null && ChunkMiner.getInstance().isActive()) addMiner(out);
         state.setData(frame, new Frame(List.copyOf(out.boxes), List.copyOf(out.tracers(MAX_TRACERS))));
         labels = out.labelling ? out.labels(projection, config.hud.maxLabels * LABEL_CANDIDATES) : List.of();
     }
@@ -308,6 +311,14 @@ public final class HighlightRenderer implements AutoCloseable {
      */
     private void addSchematic(Extraction out) {
         for (SchematicBuilder.Preview preview : SchematicBuilder.getInstance().preview()) {
+            int fill = preview.filled() ? argb(preview.color(), 0.18) : 0;
+            out.box(preview.box(), fill, argb(preview.color(), preview.filled() ? 0.75 : 0.9), preview.filled() ? 1.5f : 2f, true);
+        }
+    }
+
+    /** The room being dug, the schematic's place inside it, and the block being dug, white. */
+    private void addMiner(Extraction out) {
+        for (SchematicBuilder.Preview preview : ChunkMiner.getInstance().preview()) {
             int fill = preview.filled() ? argb(preview.color(), 0.18) : 0;
             out.box(preview.box(), fill, argb(preview.color(), preview.filled() ? 0.75 : 0.9), preview.filled() ? 1.5f : 2f, true);
         }

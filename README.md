@@ -1,6 +1,6 @@
 # Donut Client
 
-A client-side Fabric mod for Minecraft Java 26.2 for seeing what is hidden: storage, spawner and ancient debris highlights, X-ray, Fullbright, dug tunnel and hole detection, player and mob ESP with tracers, amethyst-based activity detection with Auto RTP, Freecam, module keybinds, distance labels and an info HUD, and a Schematic Builder that builds Litematica schematics block by block.
+A client-side Fabric mod for Minecraft Java 26.2 for seeing what is hidden: storage, spawner and ancient debris highlights, X-ray, Fullbright, dug tunnel and hole detection, player and mob ESP with tracers, amethyst-based activity detection with Auto RTP, Freecam, module keybinds, distance labels and an info HUD, a Schematic Builder that builds Litematica schematics block by block, and a Chunk Miner that digs out the room for one underground.
 
 This is the **Builder edition**: it carries no trading bot. The GoNuts auction bot that the regular Donut Client bundles is left out entirely, and the Schematic Builder is only in this edition.
 
@@ -65,6 +65,28 @@ How it builds:
 - **Strict looks** (More options) only clicks faces you can see, looking straight at the spot clicked; some blocks then need you to stand on their other side.
 
 It pauses while a menu is open, stops when you die, change dimension or leave, and Auto RTP refuses to run while it builds. Check a server's rules before automating building.
+
+### Digging a base
+
+**ChunkMiner** (the Build page) digs out the room a schematic needs, so SchematicBuilder can build it underground. It digs the schematic's whole box, with room around it on every side to walk around it (Room around it, 3 blocks by default) and above it (Headroom, 2), and a lower storage room beside it for chests (Storage room: depth 6 and height 4 by default, on the side the staircase comes in, or a side you pick). The floor under the schematic is never dug, so it stays to walk on.
+
+1. Pick the schematic in SchematicBuilder first: the room is dug for it, turned and mirrored as SchematicBuilder places it.
+2. With **Dig good chunks** on (the default), switch ChunkMiner on and it waits for ChunkFinder's best good chunk. It then puts the schematic in the middle of that chunk with its lowest layer at Floor height (y -40 by default), sets SchematicBuilder's origin there, turns Auto RTP off if it was running, and starts. A good chunk whose room would be in the deep dark (digging there calls the Warden), would reach the ground, or would hold much water or lava (an underground lake, more than 2% of the room) is passed over for the next one. With Dig good chunks off, it digs where SchematicBuilder's origin is, or where you stand (**Dig here**).
+3. Carry a pickaxe, food, and some cobblestone or dirt. Close the menu: it does the rest.
+
+How it digs:
+
+- **The way in**: a staircase from where you stand to the room's floor, coming in at floor level, so once the room is dug you can walk in and out. It winds down around a pillar until a straight run can make up the rest of the height. Of the four sides it could come in by, it takes the one with the least water, lava and digging on the way, and never one through the room itself.
+- **The room**: a winding staircase inside it climbs to the top, then the room is dug from the top down in bands three or four blocks tall, standing on the band below each, and the player digs down through the block underfoot, a block at a time, to the next band. The climb and the steps down are dug away with the room. The info panel's Miner line counts the blocks left, with an arrow to the block being dug; the room's outline, where the schematic goes in it, and that block show in the world.
+- **Pickaxes**: it checks what you carry. An **Amethyst Pickaxe** (any pickaxe whose name or lore says Amethyst or 3x3, as on DonutSMP) breaks 3x3 a swing, flat against the face hit, and the miner plans every swing with that square, so no swing ever takes the floor you stand on, the room's floor or the staircase. It only swings it with a look that agrees with the face, well down at a top, level at a side, since servers differ on which they go by, and its staircases have a level step before each drop or climb. On the first swings it checks what the pickaxe really breaks: one that turns out to break one block is used as a normal pickaxe, and one that breaks 5x5 is planned that way. **Use** picks Amethyst first (with a normal pickaxe for what the 3x3 can't do safely), Amethyst only, or Normal only. Blocks are broken with the fastest tool for them, a tool with Keep durability uses left (15) is put away so it never breaks, and blocks that would take more than 20 seconds are left.
+- **Falls and uneven ground**: hills on the way are dug through and dips and caves get a block of cobblestone or dirt under each step (Fill gaps). If you fall, off the staircase or through a floor that gives way, it plans again from where you land: a new way in from outside, a climb back inside the room, or, down a hole it fell through, back up it the way a player towers, a block under the feet at a time. Partial blocks such as slabs, paths and snow layers count as the block under them. A walk that gets stuck tries another place.
+- **Gravel and sand**: it never digs a block with sand, gravel or dripstone over it in your own column, so nothing falls on your head; it digs it from beside, and what falls in is dug again. A heap of fallen gravel you stand on is dug out from on top.
+- **Water and lava**: it never breaks a block next to water or lava, nor ice, which turns to water; those blocks are left and counted when it finishes, with any it couldn't then reach safely. Water or lava met on the way in sends the staircase round another way.
+- It never breaks chests, spawners or other blocks with contents, nor bedrock.
+
+**Looking human**: the camera turns to each block by itself, at most Turn speed degrees a tick (24), easing in and out, by whole mouse steps for your sensitivity, with a little wobble, never jumping. It goes for blocks near where it already looks, sweeping along, rests on a point somewhat off the face's middle (Aim spread), drifts a little while the block breaks (Hand shake), and only breaks a block the crosshair is on. Each block waits a random time between Shortest and Longest delay (0.05 to 0.35 s, on top of the quarter second the game itself waits between blocks), and after any block there is a Pause chance (4%) of a longer pause, glancing around. With Vary order on, it doesn't always take the very best next block, so no two rooms are dug the same way. It walks with the movement keys, jumping onto steps.
+
+It pauses while a menu is open (Minecraft opens one when its window loses focus; press F3+P to turn that off and let it dig while you use another window), while SchematicBuilder builds, while you are hungry (eat and it goes on), and while another player is within Pause for players (32 blocks), with a sound. It stops when you take damage (Stop when hurt), die, change dimension or leave, and Auto RTP refuses to run while it digs. **Build when done** starts SchematicBuilder on the room once it is dug. Check a server's rules before automating mining.
 
 ## Build
 

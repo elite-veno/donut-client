@@ -5,6 +5,7 @@ import dev.donut.client.config.RtpSettings;
 import dev.donut.client.finder.ActivityArea;
 import dev.donut.client.finder.ActivityStats;
 import dev.donut.client.finder.FinderScanner;
+import dev.donut.client.miner.ChunkMiner;
 import dev.donut.client.schematic.SchematicBuilder;
 import java.util.ArrayList;
 import java.util.List;
@@ -89,8 +90,8 @@ public final class AutoRtpController {
             lastHealth = client.player.getHealth();
             return;
         }
-        if (SchematicBuilder.busy()) {
-            // A teleport would carry the player away from the build in the middle of a layer.
+        if (SchematicBuilder.busy() || ChunkMiner.busy()) {
+            // A teleport would carry the player away from the build in the middle of a layer, or from the dig.
             loop.refuse(RtpLoop.Result.BUILDING);
             finish(client, RtpLoop.Result.BUILDING);
             return;

@@ -15,6 +15,7 @@ public final class ClientConfig {
     public FreecamSettings freecam = new FreecamSettings();
     public RtpSettings rtp = new RtpSettings();
     public SchematicSettings schematic = new SchematicSettings();
+    public MinerSettings miner = new MinerSettings();
     public HudSettings hud = new HudSettings();
     public GuiSettings gui = new GuiSettings();
     public int accentColor = 0x5BE3C8;
@@ -103,6 +104,7 @@ public final class ClientConfig {
         if (freecam == null) freecam = new FreecamSettings();
         if (rtp == null) rtp = new RtpSettings();
         if (schematic == null) schematic = new SchematicSettings();
+        if (miner == null) miner = new MinerSettings();
         if (hud == null) hud = new HudSettings();
         if (gui == null) gui = new GuiSettings();
         storage.sanitize(new FinderSettings());
@@ -117,6 +119,7 @@ public final class ClientConfig {
         freecam.sanitize();
         rtp.sanitize();
         schematic.sanitize();
+        miner.sanitize();
         hud.sanitize();
         gui.sanitize();
         accentColor &= 0xFFFFFF;

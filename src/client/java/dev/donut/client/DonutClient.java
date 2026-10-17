@@ -11,6 +11,7 @@ import dev.donut.client.gui.DonutScreen;
 import dev.donut.client.gui.FinderHud;
 import dev.donut.client.gui.ModuleArrayList;
 import dev.donut.client.input.ModuleKeybinds;
+import dev.donut.client.miner.ChunkMiner;
 import dev.donut.client.render.HighlightRenderer;
 import dev.donut.client.rtp.AutoRtpController;
 import dev.donut.client.schematic.SchematicBuilder;
@@ -58,6 +59,7 @@ public final class DonutClient implements ClientModInitializer {
         FullbrightController fullbright = new FullbrightController(config);
         AutoRtpController rtp = new AutoRtpController(config, scanner, this::save);
         SchematicBuilder builder = new SchematicBuilder(config, this::save);
+        ChunkMiner miner = new ChunkMiner(config, this::save);
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
             // This runs inside packet handling, where an exception disconnects the player.
             try {
@@ -82,8 +84,10 @@ public final class DonutClient implements ClientModInitializer {
         KeyMapping tunnels = bind("toggle_tunnels", InputConstants.UNKNOWN.getValue(), category);
         KeyMapping bases = bind("toggle_bases", InputConstants.UNKNOWN.getValue(), category);
         KeyMapping schematic = bind("toggle_schematic", InputConstants.UNKNOWN.getValue(), category);
+        KeyMapping minerKey = bind("toggle_miner", InputConstants.UNKNOWN.getValue(), category);
+        // Index 12 is ChunkFinder's, on its own branch.
         ModuleKeybinds.initialize(storage, spawner, camera, debris, activity, autoRtp, xrayKey, fullbrightKey, entities, tunnels, bases,
-                schematic);
+                schematic, null, minerKey);
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             boolean inputBlocked = ModuleKeybinds.inputBlocked(client);
@@ -126,11 +130,15 @@ public final class DonutClient implements ClientModInitializer {
             if (ModuleKeybinds.consumePress(client, 11)) {
                 if (!inputBlocked && client.gui.screen() == null && client.player != null) builder.setEnabled(!config.schematic.enabled);
             }
+            if (ModuleKeybinds.consumePress(client, 13)) {
+                if (!inputBlocked && client.gui.screen() == null && client.player != null) miner.setEnabled(!config.miner.enabled);
+            }
             xray.tick(client);
             fullbright.tick();
             scanner.tick(client);
             rtp.tick(client);
             builder.tick(client);
+            miner.tick(client);
         });
 
         ScreenEvents.AFTER_INIT.register((client, screen, width, height) -> {
@@ -171,6 +179,7 @@ public final class DonutClient implements ClientModInitializer {
                 scanner.clear();
                 freecam.disable();
                 builder.reset();
+                miner.reset();
             };
             if (client.isSameThread()) cleanup.run();
             else client.execute(cleanup);

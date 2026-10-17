@@ -3,6 +3,7 @@ package dev.donut.client.gui;
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.finder.FinderScanner;
 import dev.donut.client.finder.FinderSummary;
+import dev.donut.client.miner.ChunkMiner;
 import dev.donut.client.render.HighlightRenderer;
 import dev.donut.client.render.ScreenLabel;
 import dev.donut.client.schematic.SchematicBuilder;
@@ -34,9 +35,12 @@ public final class FinderHud {
     private static List<FinderSummary> lines(FinderScanner scanner) {
         SchematicBuilder builder = SchematicBuilder.getInstance();
         FinderSummary building = builder == null ? null : builder.summary();
-        if (building == null) return scanner.summaries();
+        ChunkMiner miner = ChunkMiner.getInstance();
+        FinderSummary digging = miner == null ? null : miner.summary();
+        if (building == null && digging == null) return scanner.summaries();
         List<FinderSummary> lines = new ArrayList<>(scanner.summaries());
-        lines.add(building);
+        if (building != null) lines.add(building);
+        if (digging != null) lines.add(digging);
         return lines;
     }
 

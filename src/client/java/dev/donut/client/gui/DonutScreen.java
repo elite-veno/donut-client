@@ -9,6 +9,9 @@ import dev.donut.client.finder.ActivityStats;
 import dev.donut.client.finder.DebrisStats;
 import dev.donut.client.finder.FinderScanner;
 import dev.donut.client.input.ModuleKeybinds;
+import dev.donut.client.miner.ChunkMiner;
+import dev.donut.client.miner.Excavator;
+import dev.donut.client.miner.Kit;
 import dev.donut.client.schematic.Materials;
 import dev.donut.client.schematic.Schematic;
 import dev.donut.client.schematic.SchematicBuilder;
@@ -23,6 +26,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Util;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 import org.lwjgl.glfw.GLFW;
 
 import java.lang.reflect.Field;
@@ -166,7 +170,7 @@ public final class DonutScreen extends Screen {
                 page("finders", "Finders", "search", List.of(storage(), spawners(), debris(), tunnels(), entities(), activity(), bases())),
                 page("render", "Render", "eye", List.of(xray(), fullbright(), freecam())),
                 page("utility", "Utility", "rtp", List.of(autoRtp())),
-                page("build", "Build", "cube", List.of(schematicBuilder())),
+                page("build", "Build", "cube", List.of(schematicBuilder(), chunkMiner())),
                 page("hud", "HUD", "monitor", List.of(
                         module("ArrayList", "Active module names at the top right", "hud array list modules",
                                 () -> config.showHud, () -> change(() -> config.showHud = !config.showHud), null),
@@ -570,6 +574,126 @@ public final class DonutScreen extends Screen {
             });
             c.note("Walk along each layer: blocks go in as they come in reach. Check the server's rules before automating building.", DIM);
         }).key(11).values(s);
+    }
+
+    private Module chunkMiner() {
+        var s = config.miner;
+        return worldModule("ChunkMiner", "Digs the room a schematic needs under a good chunk, with space around it",
+                "chunk miner dig room base mine excavate tunnel staircase amethyst pickaxe 3x3 good chunk storage",
+                () -> s.enabled, () -> s.enabled = !s.enabled, c -> {
+            ChunkMiner miner = ChunkMiner.getInstance();
+            c.bind(13);
+            if (miner != null) c.note(miner.status(), miner.statusWarn() ? WARN : s.enabled ? TEXT : MUTED);
+            replyNote(c);
+            if (miner != null && miner.isActive() && miner.excavator() != null) digProgress(c, miner);
+            c.section("Where");
+            SchematicBuilder builder = SchematicBuilder.getInstance();
+            Schematic schematic = builder == null ? null : builder.schematic();
+            if (schematic == null) {
+                c.note("Pick a schematic in SchematicBuilder first: the room is dug for it.", WARN);
+            } else {
+                BlockPos size = schematic.max.subtract(schematic.min).offset(1, 1, 1);
+                c.info("Schematic", schematic.name + ", " + size.getX() + " x " + size.getY() + " x " + size.getZ(), TEXT);
+            }
+            c.toggle("goodChunks", "Dig good chunks", "Wait for ChunkFinder's best good chunk and dig under its middle; off digs at the schematic's origin",
+                    () -> s.goodChunks, () -> s.goodChunks = !s.goodChunks);
+            if (s.goodChunks) {
+                c.slider("floorY", "Floor height", "The schematic's lowest layer goes at this height; the block under it stays as the floor",
+                        () -> s.floorY, v -> s.floorY = (int) Math.round(v), -60, 120, 1, v -> "y " + Math.round(v));
+            } else {
+                var place = config.schematic;
+                c.info("Origin", place.originSet ? place.originX + " " + place.originY + " " + place.originZ : "Where you stand when it starts",
+                        place.originSet ? TEXT : MUTED);
+                c.button("here", "Dig here", "The block at your feet becomes the schematic's origin, as SchematicBuilder's Set origin here does",
+                        "Here", this::originHere);
+            }
+            c.section("Room");
+            c.slider("sideRoom", "Room around it", "Blocks dug on every side of the schematic, to walk around it",
+                    () -> s.sideRoom, v -> s.sideRoom = (int) Math.round(v), 0, 12, 1, " blocks");
+            c.slider("headroom", "Headroom", "Blocks dug above it", () -> s.headroom, v -> s.headroom = (int) Math.round(v), 0, 8, 1, " blocks");
+            c.choice("storage", "Storage room", "A lower room beside it for chests; Entrance puts it where the staircase comes in", 6,
+                    () -> s.storageSide, v -> s.storageSide = v, v -> new String[] {"None", "North", "East", "South", "West", "Entrance"}[v]);
+            if (s.storageSide != 0) {
+                c.slider("storageDepth", "Storage depth", "How far the storage room reaches out from the room",
+                        () -> s.storageDepth, v -> s.storageDepth = (int) Math.round(v), 2, 24, 1, " blocks");
+                c.slider("storageHeight", "Storage height", "Its height above the floor", () -> s.storageHeight,
+                        v -> s.storageHeight = (int) Math.round(v), 2, 8, 1, " blocks");
+            }
+            c.section("Pickaxe");
+            c.choice("pickaxe", "Use", "An Amethyst Pickaxe breaks 3x3 a swing; the miner checks on its first swings what yours breaks", 3,
+                    () -> s.pickaxe, v -> s.pickaxe = v, v -> new String[] {"Amethyst first", "Amethyst only", "Normal only"}[v]);
+            minerTools(c, miner);
+            c.slider("keep", "Keep durability", "A tool with this many uses left is put away, so it never breaks",
+                    () -> s.keepDurability, v -> s.keepDurability = (int) Math.round(v), 1, 200, 1, " uses");
+            c.section("Looking human");
+            c.slider("minDelay", "Shortest delay", "Each block waits a random time between the shortest and longest delay",
+                    () -> s.minDelay, s::setMinDelay, 0, 5, 0.05, v -> String.format(Locale.ROOT, "%.2f s", v));
+            c.slider("maxDelay", "Longest delay", "Set both the same for a fixed delay", () -> s.maxDelay, s::setMaxDelay,
+                    0, 5, 0.05, v -> String.format(Locale.ROOT, "%.2f s", v));
+            c.slider("turnSpeed", "Turn speed", "The fastest the camera turns; it eases in and out, by whole mouse steps, and never snaps",
+                    () -> s.turnSpeed, v -> s.turnSpeed = v, 4, 90, 1, v -> Math.round(v) + "°/tick");
+            c.toggle("vary", "Vary order", "Not always the very best next block, so no two rooms are dug the same way",
+                    () -> s.varyOrder, () -> s.varyOrder = !s.varyOrder);
+            c.more(m -> {
+                m.section("Looking human");
+                m.slider("aimSpread", "Aim spread", "How far from a face's middle the aim may land", () -> s.aimSpread, v -> s.aimSpread = v,
+                        0, 0.9, 0.05, v -> Math.round(v * 100) + "% of a face");
+                m.slider("handShake", "Hand shake", "The camera's small drift while a block breaks, at most", () -> s.handShake,
+                        v -> s.handShake = v, 0, 2, 0.05, v -> String.format(Locale.ROOT, "%.2f°", v));
+                m.slider("pauseChance", "Pause chance", "After each block, the chance of a longer pause, glancing around",
+                        () -> s.pauseChance, v -> s.pauseChance = v, 0, 0.5, 0.01, "%");
+                m.slider("pauseMin", "Shortest pause", "How long a longer pause lasts, at least", () -> s.pauseMin, s::setPauseMin,
+                        0.2, 30, 0.1, v -> String.format(Locale.ROOT, "%.1f s", v));
+                m.slider("pauseMax", "Longest pause", "And at most", () -> s.pauseMax, s::setPauseMax,
+                        0.2, 30, 0.1, v -> String.format(Locale.ROOT, "%.1f s", v));
+                m.section("Safety");
+                m.toggle("hurt", "Stop when hurt", "Stop as soon as you lose health", () -> s.stopWhenHurt, () -> s.stopWhenHurt = !s.stopWhenHurt);
+                m.slider("players", "Pause for players", "Waits while another player is this close; 0 never waits",
+                        () -> s.pauseForPlayers, v -> s.pauseForPlayers = (int) Math.round(v), 0, 128, 1,
+                        v -> v < 0.5 ? "Off" : Math.round(v) + " blocks");
+                m.toggle("fillGaps", "Fill gaps", "Put cobblestone, dirt or the like under a step that has nothing under it",
+                        () -> s.fillGaps, () -> s.fillGaps = !s.fillGaps);
+                m.section("After");
+                m.toggle("buildAfter", "Build when done", "Start SchematicBuilder on the room once it is dug",
+                        () -> s.buildAfter, () -> s.buildAfter = !s.buildAfter);
+                m.toggle("preview", "Preview", "Outline the room, where the schematic goes in it, and the block being dug",
+                        () -> s.preview, () -> s.preview = !s.preview);
+            });
+            c.note("Carry a pickaxe, food, and some cobblestone or dirt. It pauses when you are hungry. Check the server's rules before "
+                    + "automating mining.", DIM);
+        }).key(13).values(s);
+    }
+
+    private void digProgress(Column c, ChunkMiner miner) {
+        c.section("Progress");
+        Excavator dig = miner.excavator();
+        if (miner.left() >= 0) c.info("Blocks left", Integer.toString(miner.left()), TEXT);
+        if (dig.phase() == Excavator.Phase.APPROACH || dig.phase() == Excavator.Phase.CLIMB) {
+            c.info("Staircase", dig.stepsLeft() + " steps to go", TEXT);
+        } else if (dig.phase() == Excavator.Phase.TOWER) {
+            c.info("Recovering", "climbing back up to the band it fell from", WARN);
+        } else {
+            c.info("Band", dig.tierNumber() + " of " + dig.tiers().size() + ", from the top", TEXT);
+        }
+        if (miner.room() != null) c.info("Room", miner.room().main.toString(), LABEL);
+    }
+
+    /** The pickaxes carried: which the miner would use, what each breaks, and how worn it is. */
+    private void minerTools(Column c, ChunkMiner miner) {
+        if (minecraft.player == null || miner == null) return;
+        var inventory = minecraft.player.getInventory();
+        int shown = 0;
+        for (int slot = 0; slot < Kit.SLOTS && shown < 4; slot++) {
+            ItemStack stack = inventory.getItem(slot);
+            if (!Kit.isPickaxe(stack)) continue;
+            int radius = miner.radius(stack), left = Kit.usesLeft(stack);
+            boolean worn = left <= config.miner.keepDurability;
+            c.info(Kit.name(stack), (radius > 0 ? (2 * radius + 1) + "x" + (2 * radius + 1) + ", " : "")
+                    + (left == Integer.MAX_VALUE ? "unbreakable" : left + " uses left") + (worn ? ", put away" : ""),
+                    worn ? WARN : radius > 0 ? GOOD : LABEL);
+            shown++;
+        }
+        if (shown == 0) c.note("You carry no pickaxe.", WARN);
     }
 
     private void buildProgress(Column c, SchematicBuilder.Progress p) {

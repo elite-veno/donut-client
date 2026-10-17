@@ -12,7 +12,8 @@
       "dev.donut.client.gametest.AutoRtpGameTest",
       "dev.donut.client.gametest.DebrisSeedGameTest",
       "dev.donut.client.gametest.ActivityWorldgenGameTest",
-      "dev.donut.client.gametest.SchematicBuilderGameTest"
+      "dev.donut.client.gametest.SchematicBuilderGameTest",
+      "dev.donut.client.gametest.ChunkMinerGameTest"
     ]
   },
   "depends": {

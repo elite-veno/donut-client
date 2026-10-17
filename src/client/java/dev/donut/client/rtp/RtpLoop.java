@@ -22,7 +22,7 @@ public final class RtpLoop {
         ACTIVITY_OFF("ActivityFinder was turned off"),
         HURT("you took damage"),
         MENU_MISSING("the command opened a menu without the configured item"),
-        BUILDING("the Schematic Builder is building; stop it first"),
+        BUILDING("SchematicBuilder or ChunkMiner is at work; stop it first"),
         STOPPED("stopped");
 
         public final String reason;
