@@ -8,7 +8,7 @@ This is the **Builder edition**: it carries no trading bot. The GoNuts auction b
 
 1. Install Fabric Loader 0.19.5 or newer for Minecraft 26.2 (Java 25).
 2. Install Fabric API 0.158.0 or newer for Minecraft 26.2.
-3. Copy `donut-client-builder-2.2.0.jar` into your Minecraft `mods` folder, removing any other Donut Client jar, including the regular edition with GoNuts: both are the `donut` mod, and Fabric refuses to start with two copies.
+3. Copy `donut-client-builder-2.2.1.jar` into your Minecraft `mods` folder, removing any other Donut Client jar, including the regular edition with GoNuts: both are the `donut` mod, and Fabric refuses to start with two copies.
 4. Start Minecraft with the Fabric profile.
 
 Press **Right Shift** to open the menu. The sidebar lists the module categories (Finders, Render, Utility, Build, HUD) and the Keybinds and Theme pages. A category shows its modules as cards: the switch turns a module on or off, and clicking the card opens its settings, each with a short description; **Back** returns to the list. Settings people rarely change, such as opacity, line width and colors, sit behind **More options** at the end of a module's settings, and **Reset settings** below them puts every setting back to its default on a second click, leaving the module on or off and its key as they were. Keybinds lists every module's key, and the menu's own, in one place (a right click puts a key back to its default), and Theme sets the accent color and optional snowfall. Type anywhere to search. Text fields select their text when clicked, so typing or pasting replaces it; Enter saves and Esc leaves the field as it was. Backspace or the mouse's back button goes back from a module's settings. Freecam defaults to **F7** (F6 is vanilla's debug options key). Other module keys can be assigned from the Bind row at the top of each module's settings, or under Minecraft's keybind settings.
@@ -74,7 +74,7 @@ Install JDK 25, then run:
 .\gradlew.bat build
 ```
 
-The finished mod is written to `build/libs/donut-client-builder-2.2.0.jar`. The regular edition, with GoNuts inside, is built from the `gonuts-update` branch.
+The finished mod is written to `build/libs/donut-client-builder-2.2.1.jar`. The regular edition, with GoNuts inside, is built from the `gonuts-update` branch.
 
 ## License
 
