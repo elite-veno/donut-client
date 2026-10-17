@@ -1,6 +1,7 @@
 package dev.donut.client.mixin;
 
 import dev.donut.client.freecam.FreecamController;
+import dev.donut.client.schematic.SchematicBuilder;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -25,14 +26,16 @@ abstract class MinecraftMixin {
     }
 
     // All three must be found: one renamed in a later version would otherwise let that input through unnoticed.
+    // While the schematic builder breaks a shulker box, the player's own clicks wait too: continueAttack would stop
+    // the breaking every tick the attack key is up.
     @Inject(method = {"startUseItem", "pickBlockOrEntity", "continueAttack"}, at = @At("HEAD"), cancellable = true, require = 3)
     private void donut$blockInteractions(CallbackInfo ci) {
-        if (FreecamController.enabled()) ci.cancel();
+        if (FreecamController.enabled() || SchematicBuilder.holdsHands()) ci.cancel();
     }
 
     @Inject(method = "startAttack", at = @At("HEAD"), cancellable = true)
     private void donut$blockAttack(CallbackInfoReturnable<Boolean> cir) {
-        if (FreecamController.enabled()) cir.setReturnValue(false);
+        if (FreecamController.enabled() || SchematicBuilder.holdsHands()) cir.setReturnValue(false);
     }
 
     /** The free camera aims at nothing, so nothing can be targeted or highlighted through it. */

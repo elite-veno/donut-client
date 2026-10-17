@@ -5,6 +5,7 @@ import dev.donut.client.finder.FinderScanner;
 import dev.donut.client.finder.FinderSummary;
 import dev.donut.client.render.HighlightRenderer;
 import dev.donut.client.render.ScreenLabel;
+import dev.donut.client.schematic.SchematicBuilder;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.client.Camera;
@@ -26,14 +27,24 @@ public final class FinderHud {
     public static void render(GuiGraphicsExtractor g, Minecraft client, ClientConfig config, FinderScanner scanner) {
         Font font = client.font;
         if (config.hud.labels) labels(g, font, client, config.hud.maxLabels);
-        if (config.hud.info) info(g, font, client, scanner.summaries());
+        if (config.hud.info) info(g, font, client, lines(scanner));
+    }
+
+    /** The finders' lines, and the schematic builder's while it builds: blocks left and the way to the next one. */
+    private static List<FinderSummary> lines(FinderScanner scanner) {
+        SchematicBuilder builder = SchematicBuilder.getInstance();
+        FinderSummary building = builder == null ? null : builder.summary();
+        if (building == null) return scanner.summaries();
+        List<FinderSummary> lines = new ArrayList<>(scanner.summaries());
+        lines.add(building);
+        return lines;
     }
 
     /** Keeps the distance labels off the info panel; call once at startup. */
     public static void reserveSpace(ClientConfig config, FinderScanner scanner) {
         HudSpace.reserve("donut:finder_info", () -> {
             Minecraft client = Minecraft.getInstance();
-            return config.hud.info && reserved(client) ? infoArea(client.font, client, scanner.summaries()) : null;
+            return config.hud.info && reserved(client) ? infoArea(client.font, client, lines(scanner)) : null;
         });
     }
 

@@ -66,6 +66,7 @@ public final class ModuleArrayList {
         if (config.xray.enabled) names.add("Xray");
         if (config.fullbright.enabled) names.add("Fullbright");
         if (config.rtp.enabled) names.add("AutoRTP");
+        if (config.schematic.enabled) names.add("SchematicBuilder");
         if (freecamActive) names.add("Freecam");
         names.sort(Comparator.comparingInt((String name) -> UiPaint.width(font, name)).reversed());
         return names;

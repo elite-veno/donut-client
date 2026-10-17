@@ -11,7 +11,7 @@ import org.lwjgl.glfw.GLFW;
 final class GuiClicks {
     /** Module names by keybind index. */
     static final String[] MODULES = {"StorageFinder", "SpawnerFinder", "Freecam", "DebrisFinder", "ActivityFinder",
-            "AutoRTP", "Xray", "Fullbright", "EntityFinder", "TunnelFinder", "BaseFinder"};
+            "AutoRTP", "Xray", "Fullbright", "EntityFinder", "TunnelFinder", "BaseFinder", "SchematicBuilder"};
 
     private GuiClicks() { }
 

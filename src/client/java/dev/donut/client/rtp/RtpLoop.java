@@ -22,6 +22,7 @@ public final class RtpLoop {
         ACTIVITY_OFF("ActivityFinder was turned off"),
         HURT("you took damage"),
         MENU_MISSING("the command opened a menu without the configured item"),
+        BUILDING("the Schematic Builder is building; stop it first"),
         STOPPED("stopped");
 
         public final String reason;
@@ -74,6 +75,17 @@ public final class RtpLoop {
         if (phase == Phase.IDLE) return;
         phase = Phase.IDLE;
         result = why;
+    }
+
+    /** Stops the run, or, when none is running, records why one could not start. */
+    public void refuse(Result why) {
+        if (phase != Phase.IDLE) {
+            stop(why);
+            return;
+        }
+        result = why;
+        attempts = areaAttempt = 0;
+        commandPending = false;
     }
 
     /**

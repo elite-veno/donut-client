@@ -13,6 +13,7 @@ import dev.donut.client.gui.ModuleArrayList;
 import dev.donut.client.input.ModuleKeybinds;
 import dev.donut.client.render.HighlightRenderer;
 import dev.donut.client.rtp.AutoRtpController;
+import dev.donut.client.schematic.SchematicBuilder;
 import dev.donut.client.xray.XrayController;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
@@ -56,6 +57,7 @@ public final class DonutClient implements ClientModInitializer {
         XrayController xray = new XrayController(config);
         FullbrightController fullbright = new FullbrightController(config);
         AutoRtpController rtp = new AutoRtpController(config, scanner, this::save);
+        SchematicBuilder builder = new SchematicBuilder(config, this::save);
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
             // This runs inside packet handling, where an exception disconnects the player.
             try {
@@ -79,7 +81,9 @@ public final class DonutClient implements ClientModInitializer {
         KeyMapping entities = bind("toggle_entities", InputConstants.UNKNOWN.getValue(), category);
         KeyMapping tunnels = bind("toggle_tunnels", InputConstants.UNKNOWN.getValue(), category);
         KeyMapping bases = bind("toggle_bases", InputConstants.UNKNOWN.getValue(), category);
-        ModuleKeybinds.initialize(storage, spawner, camera, debris, activity, autoRtp, xrayKey, fullbrightKey, entities, tunnels, bases);
+        KeyMapping schematic = bind("toggle_schematic", InputConstants.UNKNOWN.getValue(), category);
+        ModuleKeybinds.initialize(storage, spawner, camera, debris, activity, autoRtp, xrayKey, fullbrightKey, entities, tunnels, bases,
+                schematic);
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             boolean inputBlocked = ModuleKeybinds.inputBlocked(client);
@@ -119,10 +123,14 @@ public final class DonutClient implements ClientModInitializer {
             if (ModuleKeybinds.consumePress(client, 10)) {
                 if (!inputBlocked && client.gui.screen() == null && client.player != null) { config.bases.enabled = !config.bases.enabled; save(); }
             }
+            if (ModuleKeybinds.consumePress(client, 11)) {
+                if (!inputBlocked && client.gui.screen() == null && client.player != null) builder.setEnabled(!config.schematic.enabled);
+            }
             xray.tick(client);
             fullbright.tick();
             scanner.tick(client);
             rtp.tick(client);
+            builder.tick(client);
         });
 
         ScreenEvents.AFTER_INIT.register((client, screen, width, height) -> {
@@ -162,6 +170,7 @@ public final class DonutClient implements ClientModInitializer {
             Runnable cleanup = () -> {
                 scanner.clear();
                 freecam.disable();
+                builder.reset();
             };
             if (client.isSameThread()) cleanup.run();
             else client.execute(cleanup);

@@ -9,6 +9,9 @@ import dev.donut.client.finder.ActivityStats;
 import dev.donut.client.finder.DebrisStats;
 import dev.donut.client.finder.FinderScanner;
 import dev.donut.client.input.ModuleKeybinds;
+import dev.donut.client.schematic.Materials;
+import dev.donut.client.schematic.Schematic;
+import dev.donut.client.schematic.SchematicBuilder;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -16,14 +19,19 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.util.Util;
+import net.minecraft.world.item.Item;
 import org.lwjgl.glfw.GLFW;
 
 import java.lang.reflect.Field;
+import java.io.IOException;
 import java.lang.reflect.Modifier;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -158,6 +166,7 @@ public final class DonutScreen extends Screen {
                 page("finders", "Finders", "search", List.of(storage(), spawners(), debris(), tunnels(), entities(), activity(), bases())),
                 page("render", "Render", "eye", List.of(xray(), fullbright(), freecam())),
                 page("utility", "Utility", "rtp", List.of(autoRtp())),
+                page("build", "Build", "cube", List.of(schematicBuilder())),
                 page("hud", "HUD", "monitor", List.of(
                         module("ArrayList", "Active module names at the top right", "hud array list modules",
                                 () -> config.showHud, () -> change(() -> config.showHud = !config.showHud), null),
@@ -498,6 +507,185 @@ public final class DonutScreen extends Screen {
             });
             c.note("Check the server's rules before automating commands.", DIM);
         }).key(5).values(s);
+    }
+
+    private Module schematicBuilder() {
+        var s = config.schematic;
+        return worldModule("SchematicBuilder", "Builds a .litematic layer by layer from your inventory and its shulker boxes",
+                "schematic builder litematica litematic printer build place blocks layers redstone shulker",
+                () -> s.enabled, () -> s.enabled = !s.enabled, c -> {
+            SchematicBuilder builder = SchematicBuilder.getInstance();
+            c.bind(11);
+            if (builder != null) c.note(builder.status(), builder.statusWarn() ? WARN : s.enabled ? TEXT : MUTED);
+            replyNote(c);
+            if (builder != null && builder.isActive()) buildProgress(c, builder.progress());
+            c.section("Schematic");
+            c.field("file", "File", "A .litematic in the schematics folder; drop one on this menu to add it",
+                    () -> s.file, v -> s.file = v, false, 128);
+            for (String file : schematicFiles()) {
+                String shown = file.substring(0, file.length() - ".litematic".length());
+                c.chip("pick." + file, shown.length() > 28 ? shown.substring(0, 27) + "..." : shown, file,
+                        () -> file.equals(s.file), () -> s.file = file);
+            }
+            c.button("folder", "Schematics folder", "Where Litematica saves them; open it to add or remove files", "Open",
+                    this::openSchematicsFolder);
+            Schematic schematic = builder == null ? null : builder.schematic();
+            if (schematic == null) {
+                if (builder != null) c.note(builder.loadProblem() + ".", s.file.isEmpty() ? MUTED : WARN);
+            } else {
+                c.info("Name", schematic.name, TEXT);
+                if (!schematic.author.isEmpty()) c.info("Author", schematic.author, LABEL);
+                BlockPos size = schematic.max.subtract(schematic.min).offset(1, 1, 1);
+                c.info("Size", size.getX() + " x " + size.getY() + " x " + size.getZ() + (schematic.regions > 1
+                        ? ", " + schematic.regions + " regions" : ""), LABEL);
+                c.info("Blocks", Integer.toString(schematic.size()), LABEL);
+                if (!schematic.unknown.isEmpty()) c.note("Left out, unknown to this game: " + String.join(", ", schematic.unknown.keySet()), WARN);
+            }
+            c.section("Placement");
+            c.info("Origin", s.originSet ? s.originX + " " + s.originY + " " + s.originZ : "Where you stand when it starts", s.originSet ? TEXT : MUTED);
+            c.button("here", "Set origin here", "The block at your feet becomes the schematic's origin", "Here", this::originHere);
+            c.field("origin", "Origin", "Three whole numbers: x y z", () -> s.originSet ? s.originX + " " + s.originY + " " + s.originZ : "",
+                    this::setOrigin, false, 48);
+            c.choice("rotation", "Rotation", "Turned clockwise about the origin", 4, () -> s.rotation, v -> s.rotation = v,
+                    v -> v * 90 + "°");
+            c.choice("mirror", "Mirror", "Flipped before it is turned", 3, () -> s.mirror, v -> s.mirror = v,
+                    v -> new String[] {"None", "Left-right", "Front-back"}[v]);
+            c.section("Timing");
+            c.slider("minDelay", "Shortest delay", "Each block waits a random time between the shortest and longest delay",
+                    () -> s.minDelay, s::setMinDelay, 0.05, 10, 0.05, v -> String.format(Locale.ROOT, "%.2f s", v));
+            c.slider("maxDelay", "Longest delay", "Set both the same for a fixed delay", () -> s.maxDelay, s::setMaxDelay,
+                    0.05, 10, 0.05, v -> String.format(Locale.ROOT, "%.2f s", v));
+            c.section("Materials");
+            c.toggle("shulkers", "Use shulker boxes", "Take blocks from shulker boxes in your inventory: placed beside you, emptied, broken and picked up",
+                    () -> s.useShulkers, () -> s.useShulkers = !s.useShulkers);
+            buildMaterials(c, builder);
+            c.more(m -> {
+                m.section("Placing");
+                m.toggle("strict", "Strict looks", "Only click faces in view, looked at straight on; some blocks then need you on their other side",
+                        () -> s.strictLooks, () -> s.strictLooks = !s.strictLooks);
+                m.toggle("redstoneLast", "Redstone last", "In each layer: plain blocks, then redstone, then pistons, observers and dispensers",
+                        () -> s.redstoneLast, () -> s.redstoneLast = !s.redstoneLast);
+                m.toggle("preview", "Preview", "Outline the schematic and the blocks left in the layer being built",
+                        () -> s.preview, () -> s.preview = !s.preview);
+            });
+            c.note("Walk along each layer: blocks go in as they come in reach. Check the server's rules before automating building.", DIM);
+        }).key(11).values(s);
+    }
+
+    private void buildProgress(Column c, SchematicBuilder.Progress p) {
+        c.section("Progress");
+        int percent = p.placeable() == 0 ? 100 : (int) Math.floor(100.0 * p.done() / p.placeable());
+        c.info("Placed", p.done() + " of " + p.placeable() + " (" + percent + "%)", TEXT);
+        if (p.layer() > 0) c.info("Layer", p.layer() + " of " + p.layers() + ", y " + p.layerY(), TEXT);
+        if (p.wrong() > 0) c.info("Other blocks in the way", Integer.toString(p.wrong()), WARN);
+        if (p.failed() > 0) c.info("Not kept by the server", Integer.toString(p.failed()), WARN);
+        if (p.misplaced() > 0) c.info("Facing another way", Integer.toString(p.misplaced()), WARN);
+    }
+
+    /** What the build takes against what the inventory and its shulker boxes hold. */
+    private void buildMaterials(Column c, SchematicBuilder builder) {
+        if (builder == null || minecraft.player == null) return;
+        Map<Item, Integer> needs = builder.isActive() ? builder.needs() : builder.bill();
+        if (needs.isEmpty()) return;
+        if (minecraft.player.hasInfiniteMaterials()) {
+            c.note("Creative: every block is made as it is placed.", MUTED);
+            return;
+        }
+        Materials carried = Materials.of(minecraft.player.getInventory());
+        int shown = 0, short_ = 0;
+        for (Map.Entry<Item, Integer> need : needs.entrySet()) {
+            int have = carried.total(need.getKey());
+            if (have < need.getValue()) short_++;
+            if (shown++ < 8) {
+                c.info(SchematicBuilder.name(need.getKey()), Math.min(have, need.getValue()) + " of " + need.getValue(),
+                        have >= need.getValue() ? GOOD : WARN);
+            }
+        }
+        if (needs.size() > 8) c.note("And " + (needs.size() - 8) + " more kinds.", MUTED);
+        c.note(short_ == 0 ? "You carry everything " + (builder.isActive() ? "the rest of the build" : "it") + " needs."
+                : short_ + (short_ == 1 ? " kind is" : " kinds are") + " short; it builds what it can and waits for the rest.",
+                short_ == 0 ? GOOD : WARN);
+    }
+
+    private List<String> schematicFiles;
+    private long filesListedAt;
+
+    /** The schematics folder's files, listed again at most once a second. */
+    private List<String> schematicFiles() {
+        long now = System.currentTimeMillis();
+        if (schematicFiles == null || now - filesListedAt > 1000) {
+            schematicFiles = SchematicBuilder.files();
+            filesListedAt = now;
+        }
+        return schematicFiles.subList(0, Math.min(12, schematicFiles.size()));
+    }
+
+    private void openSchematicsFolder() {
+        Path folder = SchematicBuilder.folder();
+        try {
+            Files.createDirectories(folder);
+        } catch (IOException e) {
+            reply("Couldn't make the schematics folder: " + e.getMessage(), true);
+            return;
+        }
+        Util.getPlatform().openPath(folder);
+    }
+
+    private void originHere() {
+        if (minecraft.player == null) {
+            reply("Join a world to set the origin.", true);
+            return;
+        }
+        BlockPos at = minecraft.player.blockPosition();
+        var s = config.schematic;
+        s.originSet = true;
+        s.originX = at.getX();
+        s.originY = at.getY();
+        s.originZ = at.getZ();
+        reply("Origin set to " + at.getX() + " " + at.getY() + " " + at.getZ() + ".", false);
+    }
+
+    /** Takes "x y z", also with commas; an empty field unsets the origin, so the next start uses where the player stands. */
+    private void setOrigin(String text) {
+        if (text.isBlank()) {
+            config.schematic.originSet = false;
+            return;
+        }
+        String[] parts = text.trim().split("[\\s,]+");
+        try {
+            if (parts.length != 3) throw new NumberFormatException();
+            int x = Integer.parseInt(parts[0]), y = Integer.parseInt(parts[1]), z = Integer.parseInt(parts[2]);
+            var s = config.schematic;
+            s.originSet = true;
+            s.originX = x;
+            s.originY = y;
+            s.originZ = z;
+        } catch (NumberFormatException e) {
+            reply("The origin takes three whole numbers, such as 120 64 -35.", true);
+        }
+    }
+
+    /** A .litematic dropped on the menu goes into the schematics folder and becomes the builder's schematic. */
+    @Override
+    public void onFilesDrop(List<Path> files) {
+        try {
+            String name = SchematicBuilder.importFiles(files);
+            if (name == null) {
+                reply("Only .litematic files can be added.", true);
+                return;
+            }
+            config.schematic.file = name;
+            dirty = true;
+            flush();
+            schematicFiles = null;
+            for (Page p : pages.values()) {
+                if (p.modules == null) continue;
+                for (Module m : p.modules) if (m.name.equals("SchematicBuilder")) openDetail(m);
+            }
+            reply("Added " + name + " to the schematics folder.", false);
+        } catch (IOException e) {
+            reply("Couldn't add it: " + e.getMessage(), true);
+        }
     }
 
     private Module module(String name, String description, String keywords, BooleanSupplier enabled, Runnable toggle,
@@ -844,6 +1032,7 @@ public final class DonutScreen extends Screen {
                 case "keyboard" -> keyboard(graphics, 0, 0, color);
                 case "palette" -> palette(graphics, 0, 0, color);
                 case "donut" -> donut(graphics, 1, 1, color);
+                case "cube" -> cube(graphics, 0, 0, color);
                 default -> sliders(graphics, 0, 0, color);
             }
         } finally {
@@ -1038,9 +1227,12 @@ public final class DonutScreen extends Screen {
         if (isArmed("done." + m.name)) c.note("Every setting is back to its default.", GOOD);
     }
 
+    /** Kept by Reset: whether a module is on, whether it is a favorite, and the builder's schematic and where it goes. */
+    private static final Set<String> KEPT_ON_RESET = Set.of("enabled", "favorite", "file", "originSet", "originX", "originY", "originZ");
+
     /**
      * Copies every saved setting from a fresh config into {@code values}, one of this config's module settings, leaving
-     * whether the module is on, and whether it is a favorite, as they are.
+     * those in {@link #KEPT_ON_RESET} as they are.
      */
     private void resetToDefaults(Object values) {
         ClientConfig fresh = new ClientConfig();
@@ -1051,7 +1243,7 @@ public final class DonutScreen extends Screen {
                 for (Field f : values.getClass().getFields()) {
                     int modifiers = f.getModifiers();
                     if (Modifier.isStatic(modifiers) || Modifier.isFinal(modifiers) || Modifier.isTransient(modifiers)
-                            || f.getName().equals("enabled") || f.getName().equals("favorite")) continue;
+                            || KEPT_ON_RESET.contains(f.getName())) continue;
                     f.set(values, f.get(defaults));
                 }
                 return;

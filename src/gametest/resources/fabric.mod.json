@@ -11,7 +11,8 @@
       "dev.donut.client.gametest.ModuleKeybindGameTest",
       "dev.donut.client.gametest.AutoRtpGameTest",
       "dev.donut.client.gametest.DebrisSeedGameTest",
-      "dev.donut.client.gametest.ActivityWorldgenGameTest"
+      "dev.donut.client.gametest.ActivityWorldgenGameTest",
+      "dev.donut.client.gametest.SchematicBuilderGameTest"
     ]
   },
   "depends": {

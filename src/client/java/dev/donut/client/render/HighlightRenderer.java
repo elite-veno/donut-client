@@ -25,6 +25,7 @@ import dev.donut.client.finder.LoadedChunks;
 import dev.donut.client.finder.TargetKind;
 import dev.donut.client.finder.TunnelDetector;
 import dev.donut.client.mixin.GameRendererAccess;
+import dev.donut.client.schematic.SchematicBuilder;
 import net.fabricmc.fabric.api.client.rendering.v1.FabricRenderState;
 import net.fabricmc.fabric.api.client.rendering.v1.RenderStateDataKey;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelExtractionContext;
@@ -143,7 +144,7 @@ public final class HighlightRenderer implements AutoCloseable {
 
     private boolean anyEnabled() {
         return config.storage.enabled || config.spawner.enabled || config.debris.enabled || config.activity.enabled
-                || config.tunnels.enabled || config.entities.enabled || config.bases.enabled;
+                || config.tunnels.enabled || config.entities.enabled || config.bases.enabled || SchematicBuilder.busy();
     }
 
     private void extract(LevelExtractionContext context) {
@@ -194,6 +195,7 @@ public final class HighlightRenderer implements AutoCloseable {
         if (config.bases.enabled) addBases(out);
         if (config.debris.enabled && config.debris.searchAreas) addDebrisAreas(out);
         if (config.entities.enabled || config.storage.enabled && config.storage.minecarts) addEntities(out);
+        if (SchematicBuilder.busy()) addSchematic(out);
         state.setData(frame, new Frame(List.copyOf(out.boxes), List.copyOf(out.tracers(MAX_TRACERS))));
         labels = out.labelling ? out.labels(projection, config.hud.maxLabels * LABEL_CANDIDATES) : List.of();
     }
@@ -297,6 +299,17 @@ public final class HighlightRenderer implements AutoCloseable {
             out.box(area.bounds(), fill, outline, (float) Math.clamp(settings.lineWidth, 0.5, 8.0), settings.throughWalls);
             String label = out.labelling ? "Base? " + area.score() + ": " + area.reasons() : null;
             out.extras(settings, area.bounds(), settings.color, distance, visible, label);
+        }
+    }
+
+    /**
+     * The schematic's bounds, and the blocks left in the layer being built: the next one white, those without
+     * materials red, spots another block holds amber. Seen through walls, since a layer is often behind the last.
+     */
+    private void addSchematic(Extraction out) {
+        for (SchematicBuilder.Preview preview : SchematicBuilder.getInstance().preview()) {
+            int fill = preview.filled() ? argb(preview.color(), 0.18) : 0;
+            out.box(preview.box(), fill, argb(preview.color(), preview.filled() ? 0.75 : 0.9), preview.filled() ? 1.5f : 2f, true);
         }
     }
 

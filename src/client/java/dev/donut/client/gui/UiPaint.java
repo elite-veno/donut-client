@@ -192,6 +192,19 @@ final class UiPaint {
     }
 
     /** Four tiles, for the dashboard. */
+    /** A block seen from above one corner, for building. */
+    static void cube(GuiGraphicsExtractor g, int x, int y, int color) {
+        line(g, x + 8.5f, y + 1f, x + 16f, y + 5f, color);
+        line(g, x + 16f, y + 5f, x + 8.5f, y + 9f, color);
+        line(g, x + 8.5f, y + 9f, x + 1f, y + 5f, color);
+        line(g, x + 1f, y + 5f, x + 8.5f, y + 1f, color);
+        line(g, x + 1f, y + 5f, x + 1f, y + 12.5f, color);
+        line(g, x + 16f, y + 5f, x + 16f, y + 12.5f, color);
+        line(g, x + 8.5f, y + 9f, x + 8.5f, y + 16.5f, color);
+        line(g, x + 1f, y + 12.5f, x + 8.5f, y + 16.5f, color);
+        line(g, x + 8.5f, y + 16.5f, x + 16f, y + 12.5f, color);
+    }
+
     static void grid(GuiGraphicsExtractor g, int x, int y, int color) {
         outline(g, x + 1, y + 1, 6, 6, 1.5f, color);
         outline(g, x + 10, y + 1, 6, 6, 1.5f, color);

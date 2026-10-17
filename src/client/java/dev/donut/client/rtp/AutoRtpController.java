@@ -5,6 +5,7 @@ import dev.donut.client.config.RtpSettings;
 import dev.donut.client.finder.ActivityArea;
 import dev.donut.client.finder.ActivityStats;
 import dev.donut.client.finder.FinderScanner;
+import dev.donut.client.schematic.SchematicBuilder;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.ChatFormatting;
@@ -86,6 +87,12 @@ public final class AutoRtpController {
             // Turned off from the GUI or a keybind.
             if (isActive()) finish(client, RtpLoop.Result.STOPPED);
             lastHealth = client.player.getHealth();
+            return;
+        }
+        if (SchematicBuilder.busy()) {
+            // A teleport would carry the player away from the build in the middle of a layer.
+            loop.refuse(RtpLoop.Result.BUILDING);
+            finish(client, RtpLoop.Result.BUILDING);
             return;
         }
         if (!isActive()) begin(client);

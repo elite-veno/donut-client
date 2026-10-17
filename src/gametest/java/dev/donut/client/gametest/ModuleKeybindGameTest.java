@@ -25,7 +25,7 @@ import org.lwjgl.glfw.GLFW;
 public final class ModuleKeybindGameTest implements FabricClientGameTest {
     private static final int[] TEST_KEYS = {GLFW.GLFW_KEY_F8, GLFW.GLFW_KEY_F9, GLFW.GLFW_KEY_F10, GLFW.GLFW_KEY_F7,
             GLFW.GLFW_KEY_F12, GLFW.GLFW_KEY_F4, GLFW.GLFW_KEY_KP_1, GLFW.GLFW_KEY_KP_2, GLFW.GLFW_KEY_KP_3, GLFW.GLFW_KEY_KP_4,
-            GLFW.GLFW_KEY_KP_5};
+            GLFW.GLFW_KEY_KP_5, GLFW.GLFW_KEY_KP_6};
     private static final int DEBRIS = 3, ACTIVITY = 4, AUTO_RTP = 5, XRAY = 6, FULLBRIGHT = 7, ENTITIES = 8, TUNNELS = 9, BASES = 10;
 
     @Override
