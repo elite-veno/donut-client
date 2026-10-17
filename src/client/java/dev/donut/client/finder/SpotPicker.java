@@ -6,13 +6,16 @@ import java.util.List;
 
 /**
  * ChunkFinder's choice of base spots, kept free of game classes. A spot is a chunk whose surrounding square of
- * {@code clearance} chunks was all read and shows no sign of players, and whose plants there would have shown a visit
- * of {@code maxUnseen} minutes. Spots deepest inside clear ground come first, then those with the most telling plants,
+ * {@code clearance} chunks was all read and shows no sign of players, with no structure in it or right next to it, few
+ * enough caves under it, and plants around it that would have shown a visit of {@code maxUnseen} minutes. Spots deepest inside clear ground come first, then those with the most telling plants,
  * then the nearest; each keeps a clearance's distance from better ones, so they name different places.
  */
 final class SpotPicker {
-    /** One read chunk: whether it shows players, and its plants when it does not. */
-    record Cell(int x, int z, boolean sign, GrowthClocks clocks) { }
+    /**
+     * One read chunk: whether it shows players, whether it is part of a structure, whether it is solid enough
+     * underground to dig a base into, and its plants when it shows no players.
+     */
+    record Cell(int x, int z, boolean sign, boolean structure, boolean minable, GrowthClocks clocks) { }
 
     /**
      * @param clear rings of read chunks without signs around the spot
@@ -27,11 +30,12 @@ final class SpotPicker {
         Cell[] grid = grid(cells);
         int width = width(cells), height = grid.length / width;
         int[] distance = distances(grid, width, height);
+        boolean[] nearStructure = nearStructure(grid, width, height);
         Kinds prefix = new Kinds(grid, width, height);
         List<Spot> candidates = new ArrayList<>();
         for (int i = 0; i < grid.length; i++) {
             Cell cell = grid[i];
-            if (cell == null || cell.sign) continue;
+            if (cell == null || cell.sign || !cell.minable || nearStructure[i]) continue;
             int clear = distance[i] - 1;
             if (clear < clearance) continue;
             GrowthClocks area = prefix.sum(i % width, i / width, clearance);
@@ -55,14 +59,21 @@ final class SpotPicker {
         return List.copyOf(picked);
     }
 
-    /** Clear spots among these cells at the given clearance, before plants are weighed; for explaining an empty result. */
-    static int roomy(List<Cell> cells, int clearance) {
+    /**
+     * Chunks with their whole clearance read and free of signs, before plants are weighed, and of those only the
+     * minable ones if asked; for explaining an empty result.
+     */
+    static int roomy(List<Cell> cells, int clearance, boolean minableOnly) {
         if (cells.isEmpty()) return 0;
         Cell[] grid = grid(cells);
         int width = width(cells);
         int[] distance = distances(grid, width, grid.length / width);
+        boolean[] nearStructure = nearStructure(grid, width, grid.length / width);
         int count = 0;
-        for (int i = 0; i < grid.length; i++) if (grid[i] != null && !grid[i].sign && distance[i] - 1 >= clearance) count++;
+        for (int i = 0; i < grid.length; i++) {
+            Cell cell = grid[i];
+            if (cell != null && !cell.sign && !nearStructure[i] && (cell.minable || !minableOnly) && distance[i] - 1 >= clearance) count++;
+        }
         return count;
     }
 
@@ -87,6 +98,22 @@ final class SpotPicker {
             maxX = Math.max(maxX, cell.x);
         }
         return maxX - minX + 3;
+    }
+
+    /** Cells in a structure or touching one, corners too: a base dug there would break into it. */
+    private static boolean[] nearStructure(Cell[] grid, int width, int height) {
+        boolean[] near = new boolean[grid.length];
+        for (int i = 0; i < grid.length; i++) {
+            if (grid[i] == null || !grid[i].structure) continue;
+            int x = i % width, z = i / width;
+            for (int dz = -1; dz <= 1; dz++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    int nx = x + dx, nz = z + dz;
+                    if (nx >= 0 && nz >= 0 && nx < width && nz < height) near[nz * width + nx] = true;
+                }
+            }
+        }
+        return near;
     }
 
     /** Chessboard distance from each cell to the nearest unread or signed one, by a breadth-first search from all of them. */

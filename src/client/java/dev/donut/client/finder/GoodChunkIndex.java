@@ -1,10 +1,14 @@
 package dev.donut.client.finder;
 
 import dev.donut.client.config.FinderSettings;
+import it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.longs.LongSet;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
@@ -14,7 +18,13 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.SectionPos;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.entity.decoration.ItemFrame;
+import net.minecraft.world.entity.decoration.painting.Painting;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.vehicle.boat.AbstractBoat;
+import net.minecraft.world.entity.vehicle.minecart.AbstractMinecart;
+import net.minecraft.world.entity.vehicle.minecart.MinecartChest;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
@@ -31,11 +41,12 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * ChunkFinder: reads every loaded chunk for signs of players and picks base spots away from them. The signs are plants
- * that grew on random ticks ({@link GrowthClocks}), amethyst grown past worldgen (ActivityFinder's test), blocks only
- * players build (BaseFinder's score) and players in sight. A chunk's plants are read once, the first time it is
- * scanned, and kept per dimension for the connection: from then on our own presence grows them too, and the chunk
- * sent again later would carry it.
+ * ChunkFinder: reads every loaded chunk for signs of players and picks base spots away from them. The signs are any
+ * block only players or structures place ({@link BuiltBlocks}), placed entities such as item frames and boats,
+ * passages players dig (TunnelFinder's detector), plants that grew on random ticks ({@link GrowthClocks}), amethyst
+ * grown past worldgen (ActivityFinder's test) and players in sight. A spot also needs solid ground under it
+ * ({@link Caves}). A chunk's plants and caves are read once, the first time it is scanned, and kept per dimension for
+ * the connection: from then on our own presence grows the plants too, and the chunk sent again later would carry it.
  */
 final class GoodChunkIndex {
     /** Our own presence is followed this far back, in game ticks: half an hour. */
@@ -47,6 +58,10 @@ final class GoodChunkIndex {
     private static final int ASSUMED_SIMULATION_DISTANCE = 12;
     /** Spots handed out per pass, best first. */
     private static final int MAX_SPOTS = 16;
+    /** How far above or below the blocks that give a structure away its other blocks reach. */
+    private static final int STRUCTURE_REACH = 16;
+    /** A block this close below the surface sits on it; one deeper than {@link #BURIED} is underground. */
+    private static final int ON_SURFACE = 3, BURIED = 6;
     /** What {@link GoodChunk#confidence()} is about: a visit this long, in minutes. */
     static final double CONFIDENCE_MINUTES = 10;
     private static final Predicate<BlockState> CLOCK = state -> state.is(Blocks.SUGAR_CANE) || state.is(Blocks.CACTUS)
@@ -54,6 +69,12 @@ final class GoodChunkIndex {
     private static final Direction[] HORIZONTAL = {Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST};
 
     private final ChunkIndex<Scan> chunks = new ChunkIndex<>(this::scan, 8, 200);
+    private final TunnelIndex tunnels = new TunnelIndex();
+
+    GoodChunkIndex() {
+        // Fresh worldgen has 1x1 shafts 11 deep now and then; a player's way down after a teleport is far longer.
+        tunnels.configure(16, true, true, true);
+    }
     private final Map<ResourceKey<Level>, Long2ObjectOpenHashMap<Sight>> sights = new HashMap<>();
     private Long2ObjectOpenHashMap<Sight> firstSight = new Long2ObjectOpenHashMap<>();
     /** The chunks the player stood in, oldest first, each as its packed position and the ticks spent there. */
@@ -65,6 +86,7 @@ final class GoodChunkIndex {
     /** Drops the scans; first sights and our trail stay, so turning ChunkFinder back on does not judge our own growth. */
     void clear() {
         chunks.clear();
+        tunnels.clear();
         stats = ChunkStats.EMPTY;
     }
 
@@ -99,10 +121,22 @@ final class GoodChunkIndex {
         while (trailTicks > TRAIL_TICKS || trail.size() > TRAIL_SEGMENTS) trailTicks -= (int) trail.removeFirst()[1];
     }
 
-    void tick(ClientLevel level, ChunkPos center, double range) { chunks.tick(level, center, range); }
+    void tick(ClientLevel level, ChunkPos center, double range) {
+        chunks.tick(level, center, range);
+        tunnels.tick(level, center, range);
+    }
 
-    /** Player blocks or amethyst changed here. */
+    /** A built block or amethyst changed here. */
     void markDirty(int chunkX, int chunkZ) { chunks.markDirty(chunkX, chunkZ); }
+
+    /** A block turned open or solid, which can make or end a dug passage. */
+    void passageChanged(BlockPos pos) { tunnels.markDirty(pos); }
+
+    /** A chunk arrived: it and its neighbors' passages are read again. */
+    void chunkLoaded(ChunkPos pos) {
+        chunks.markDirty(pos.x(), pos.z());
+        tunnels.markDirty(pos);
+    }
 
     /** Ticks we spent within simulation distance of this chunk, where the server random-ticks it for us. */
     private int exposure(ChunkPos pos) {
@@ -120,40 +154,125 @@ final class GoodChunkIndex {
      * @param self the player, whose own presence is no sign
      */
     void collect(ClientLevel level, Entity self, Vec3 origin, FinderSettings settings, List<GoodChunk> spots, List<ChunkSign> signs) {
-        Long2ObjectOpenHashMap<String> players = new Long2ObjectOpenHashMap<>();
+        // Live signs first: what is in sight now, by chunk.
+        Long2ObjectOpenHashMap<String> live = new Long2ObjectOpenHashMap<>();
+        LongSet structures = new LongOpenHashSet();
         for (Player player : level.players()) {
             if (player == self || EntityKind.of(player) != EntityKind.PLAYER) continue;
-            players.put(player.chunkPosition().pack(), player.getName().getString());
+            live.put(player.chunkPosition().pack(), "Player here: " + player.getName().getString());
         }
+        for (Entity entity : level.entitiesForRendering()) {
+            // Mineshafts leave chest minecarts.
+            String placed = placed(entity);
+            if (entity instanceof MinecartChest) structures.add(entity.chunkPosition().pack());
+            else if (placed != null) live.putIfAbsent(entity.chunkPosition().pack(), "Built: " + placed);
+        }
+        List<TunnelDetector.Segment> dug = new ArrayList<>();
+        tunnels.collect(origin, Double.MAX_VALUE, dug);
+        for (TunnelDetector.Segment segment : dug) {
+            String passage = switch (segment.kind()) {
+                case TUNNEL -> "Dug tunnel, " + segment.total() + " long";
+                case HOLE -> "Dug hole, " + segment.total() + " deep";
+                case STAIRS -> "Dug staircase, " + segment.total() + " steps";
+            };
+            for (int i = 0; i < segment.length(); i++) {
+                int x = segment.x() + segment.dx() * i, z = segment.z() + segment.dz() * i;
+                live.putIfAbsent(ChunkPos.pack(SectionPos.blockToSectionCoord(x), SectionPos.blockToSectionCoord(z)), passage);
+            }
+        }
+
+        structures(structures);
+
+        double maxCaves = settings.maxCaves;
         List<SpotPicker.Cell> cells = new ArrayList<>();
-        int[] counts = new int[2];
+        int[] counts = new int[3];
         chunks.forEach(scan -> {
-            String reason = reason(scan, players.remove(scan.chunk.pack()), settings);
-            cells.add(new SpotPicker.Cell(scan.chunk.x(), scan.chunk.z(), reason != null, scan.sight.clocks));
+            long key = scan.chunk.pack();
+            boolean structure = structures.contains(key);
+            String reason = reason(scan, live.remove(key), structure, settings);
+            cells.add(new SpotPicker.Cell(scan.chunk.x(), scan.chunk.z(), reason != null, structure, scan.sight.caves <= maxCaves,
+                    scan.sight.clocks));
             if (scan.sight.clocks.clocks() > 0) counts[0]++;
-            if (reason == null) return;
-            counts[1]++;
-            signs.add(new ChunkSign(scan.chunk, scan.sight.surfaceY, reason));
+            if (reason != null) {
+                counts[1]++;
+                signs.add(new ChunkSign(scan.chunk, scan.sight.surfaceY, reason, false));
+            } else if (structure) {
+                counts[2]++;
+                signs.add(new ChunkSign(scan.chunk, scan.sight.surfaceY,
+                        "Structure" + (scan.built == null ? "" : ": " + scan.built.names()), true));
+            }
         });
-        // Players in chunks not read yet still keep spots away.
-        for (long key : players.keySet()) cells.add(new SpotPicker.Cell(ChunkPos.getX(key), ChunkPos.getZ(key), true, null));
+        // Signs in chunks not read yet still keep spots away.
+        for (long key : live.keySet()) cells.add(new SpotPicker.Cell(ChunkPos.getX(key), ChunkPos.getZ(key), true, false, false, null));
 
         int clearance = (int) Math.round(settings.minClearance);
         ChunkPos center = ChunkPos.containing(BlockPos.containing(origin));
         for (SpotPicker.Spot spot : SpotPicker.pick(cells, clearance, settings.maxUnseen, center.x(), center.z(), MAX_SPOTS)) {
             Scan scan = chunks.get(spot.x(), spot.z());
             spots.add(new GoodChunk(scan.chunk, scan.sight.surfaceY, spot.area().detectChance(CONFIDENCE_MINUTES), spot.clear(),
-                    spot.area().clocks(), spot.unseenMinutes()));
+                    spot.area().clocks(), spot.unseenMinutes(), scan.sight.caves));
         }
         boolean overworld = level.dimensionTypeRegistration().is(BuiltinDimensionTypes.OVERWORLD);
-        int roomy = spots.isEmpty() ? SpotPicker.roomy(cells, clearance) : spots.size();
-        stats = new ChunkStats(overworld, chunks.size(), counts[0], counts[1], roomy);
+        int roomy = spots.isEmpty() ? SpotPicker.roomy(cells, clearance, false) : spots.size();
+        int solid = spots.isEmpty() ? SpotPicker.roomy(cells, clearance, true) : spots.size();
+        stats = new ChunkStats(overworld, chunks.size(), counts[0], counts[1], counts[2], roomy, solid);
     }
 
-    /** Why spots must keep away from this chunk, or null when nothing in it shows players. */
-    private String reason(Scan scan, String player, FinderSettings settings) {
-        if (player != null) return "Player here: " + player;
+    /**
+     * Adds the chunks that are part of a structure: those with blocks that give one away, and chunks of plain built
+     * blocks joined to them at the same level, such as a mineshaft's corridors without rails or a village's houses away
+     * from its paths. A build on the ground next to a mineshaft's chunk stays someone's build.
+     */
+    private void structures(LongSet structures) {
+        // Plain built chunks by whether all their blocks are underground; a structure's by where what gives it away is.
+        Long2BooleanOpenHashMap plain = new Long2BooleanOpenHashMap(), level = new Long2BooleanOpenHashMap();
+        for (long key : structures) level.put(key, true);
+        chunks.forEach(scan -> {
+            if (scan.built == null) return;
+            if (scan.built.structure()) level.put(scan.chunk.pack(), scan.built.buried());
+            else plain.put(scan.chunk.pack(), scan.built.buried());
+        });
+        structures.addAll(level.keySet());
+        ArrayDeque<Long> queue = new ArrayDeque<>(structures);
+        while (!queue.isEmpty()) {
+            long key = queue.poll();
+            boolean buried = level.get(key);
+            int x = ChunkPos.getX(key), z = ChunkPos.getZ(key);
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    long near = ChunkPos.pack(x + dx, z + dz);
+                    if (!plain.containsKey(near) || plain.get(near) != buried) continue;
+                    plain.remove(near);
+                    level.put(near, buried);
+                    structures.add(near);
+                    queue.add(near);
+                }
+            }
+        }
+    }
+
+    /** What a player placed, for entities worldgen never leaves outside structures, or null. */
+    private static String placed(Entity entity) {
+        if (entity instanceof ItemFrame) return "item frame";
+        if (entity instanceof Painting) return "painting";
+        if (entity instanceof ArmorStand) return "armor stand";
+        if (entity instanceof AbstractBoat) return "boat";
+        if (entity instanceof AbstractMinecart) return "minecart";
+        return null;
+    }
+
+    /**
+     * Why spots must keep their clearance from this chunk, or null when nothing in it shows players. A structure's
+     * blocks are no sign of players; its plants, and what players left in it, are.
+     *
+     * @param live a player, placed entity or dug passage in the chunk, or null
+     */
+    private String reason(Scan scan, String live, boolean structure, FinderSettings settings) {
+        if (live != null && live.startsWith("Player here")) return live;
         if (scan.blocks != null && scan.blocks.score() >= BaseEvidence.DEFAULT_MIN_SCORE) return "Player blocks: " + scan.blocks.reasons();
+        if (scan.built != null && !structure) return "Built: " + scan.built.names();
+        if (scan.built != null && scan.built.apart() != null) return "Built: " + scan.built.apart();
+        if (live != null) return live;
         if (scan.amethyst != null) {
             ActivityArea judged = judge(scan);
             if (judged.score() > 0) return "Amethyst grew " + Math.round(judged.score() * 100) + "%";
@@ -187,11 +306,84 @@ final class GoodChunkIndex {
         long key = chunk.getPos().pack();
         Sight sight = firstSight.get(key);
         if (sight == null) {
-            sight = new Sight(clocks(chunk), exposure(chunk.getPos()), chunk.getHeight(Heightmap.Types.MOTION_BLOCKING, 8, 8));
+            sight = new Sight(clocks(chunk), exposure(chunk.getPos()), chunk.getHeight(Heightmap.Types.MOTION_BLOCKING, 8, 8),
+                    Caves.share(chunk));
             if (firstSight.size() >= MAX_SIGHTS) forgetFarFrom(chunk.getPos());
             firstSight.put(key, sight);
         }
-        return new Scan(chunk.getPos(), sight, ActivityIndex.scan(chunk), BaseIndex.blocks(chunk));
+        return new Scan(chunk.getPos(), sight, ActivityIndex.scan(chunk), BaseIndex.blocks(chunk), built(chunk));
+    }
+
+    /**
+     * The chunk's built blocks open to air, and whether any gives a structure away; null without any. Anti-xray plugins
+     * scatter fake chests and the like through buried stone, so buried blocks don't count.
+     */
+    static Built built(LevelChunk chunk) {
+        Level level = chunk.getLevel();
+        LevelChunkSection[] sections = chunk.getSections();
+        int minX = chunk.getPos().getMinBlockX(), minZ = chunk.getPos().getMinBlockZ();
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(), neighbor = new BlockPos.MutableBlockPos();
+        Map<Block, Integer> found = new IdentityHashMap<>();
+        // Every built block's height and whether it sits on the surface, to tell a build from a structure below it.
+        List<long[]> heights = new ArrayList<>();
+        int giveawayMin = Integer.MAX_VALUE, giveawayMax = Integer.MIN_VALUE;
+        boolean giveawayBuried = true, allBuried = true;
+        for (int index = 0; index < sections.length; index++) {
+            LevelChunkSection section = sections[index];
+            if (section.hasOnlyAir() || !section.maybeHas(state -> BuiltBlocks.built(state) || BuiltBlocks.structure(state))) continue;
+            int sectionY = SectionPos.sectionToBlockCoord(chunk.getSectionYFromSectionIndex(index));
+            for (int i = 0; i < 4096; i++) {
+                BlockState state = section.getBlockState(i & 15, i >> 8, (i >> 4) & 15);
+                boolean giveaway = BuiltBlocks.structure(state);
+                if (!giveaway && !BuiltBlocks.built(state)) continue;
+                pos.set(minX + (i & 15), sectionY + (i >> 8), minZ + ((i >> 4) & 15));
+                if (!BaseIndex.exposed(level, chunk, pos, neighbor)) continue;
+                found.merge(state.getBlock(), 1, Integer::sum);
+                int surface = chunk.getHeight(Heightmap.Types.MOTION_BLOCKING, pos.getX(), pos.getZ());
+                allBuried &= pos.getY() < surface - BURIED;
+                if (giveaway) {
+                    giveawayMin = Math.min(giveawayMin, pos.getY());
+                    giveawayMax = Math.max(giveawayMax, pos.getY());
+                    giveawayBuried &= pos.getY() < surface - BURIED;
+                } else {
+                    heights.add(new long[] {pos.getY(), Block.getId(state), pos.getY() >= surface - ON_SURFACE ? 1 : 0});
+                }
+            }
+        }
+        if (found.isEmpty()) return null;
+        boolean giveaways = giveawayMin != Integer.MAX_VALUE;
+        boolean structure = giveaways || allBuried && mineshaftPiece(found.keySet());
+        // A structure's own blocks stay within some 16 blocks of what gives it away, and one that is all underground has
+        // none on the surface: a crafting table on the ground above a mineshaft is someone's.
+        Map<Block, Integer> apart = new IdentityHashMap<>();
+        if (giveaways) {
+            for (long[] height : heights) {
+                boolean far = height[0] < giveawayMin - STRUCTURE_REACH || height[0] > giveawayMax + STRUCTURE_REACH;
+                if (far || giveawayBuried && height[2] == 1) apart.merge(Block.stateById((int) height[1]).getBlock(), 1, Integer::sum);
+            }
+        }
+        return new Built(names(found), structure, apart.isEmpty() ? null : names(apart), giveaways ? giveawayBuried : allBuried);
+    }
+
+    /** Only what mineshafts are made of, with some of their supports or chains: a corridor without rails or cobwebs. */
+    private static boolean mineshaftPiece(java.util.Set<Block> blocks) {
+        boolean frame = false;
+        for (Block block : blocks) {
+            if (!BuiltBlocks.mineshaft(block)) return false;
+            frame |= BuiltBlocks.mineshaftFrame(block);
+        }
+        return frame;
+    }
+
+    /** The most common first, such as "12 stone bricks, torch". */
+    private static String names(Map<Block, Integer> counts) {
+        List<Map.Entry<Block, Integer>> most = new ArrayList<>(counts.entrySet());
+        most.sort(Map.Entry.<Block, Integer>comparingByValue().reversed());
+        List<String> parts = new ArrayList<>();
+        for (Map.Entry<Block, Integer> entry : most.subList(0, Math.min(3, most.size()))) {
+            parts.add(entry.getValue() == 1 ? BuiltBlocks.name(entry.getKey()) : entry.getValue() + " " + BuiltBlocks.name(entry.getKey()));
+        }
+        return String.join(", ", parts) + (most.size() > 3 ? ", ..." : "");
     }
 
     private void forgetFarFrom(ChunkPos pos) {
@@ -297,10 +489,22 @@ final class GoodChunkIndex {
     }
 
     /**
-     * A chunk's plants as first read, how long we had been within simulation distance of it by then, and the surface
-     * in its middle column.
+     * A chunk's plants as first read, how long we had been within simulation distance of it by then, the surface in its
+     * middle column, and the share of its underground that is open.
      */
-    private record Sight(GrowthClocks clocks, int ownTicks, int surfaceY) { }
+    private record Sight(GrowthClocks clocks, int ownTicks, int surfaceY, float caves) { }
 
-    private record Scan(ChunkPos chunk, Sight sight, ActivityArea amethyst, BaseArea blocks) { }
+    /** @param built the chunk's built blocks, or null */
+    private record Scan(ChunkPos chunk, Sight sight, ActivityArea amethyst, BaseArea blocks, Built built) { }
+
+    /**
+     * Built blocks open to air in one chunk.
+     *
+     * @param names the most common first, such as "12 stone bricks, torch"
+     * @param structure one of them gives a structure away
+     * @param apart in a structure's chunk, the built blocks far above or below what gives it away, which are someone's
+     *              build; otherwise null
+     * @param buried in a structure's chunk, what gives it away is all underground; otherwise every built block is
+     */
+    record Built(String names, boolean structure, String apart, boolean buried) { }
 }

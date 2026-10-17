@@ -332,10 +332,14 @@ public final class HighlightRenderer implements AutoCloseable {
         if (!settings.showSigns) return;
         int signFill = settings.mode != RenderMode.OUTLINE ? argb(settings.secondaryColor, settings.fillOpacity * 0.6) : 0;
         int signOutline = settings.mode != RenderMode.FILL ? argb(settings.secondaryColor, settings.outlineOpacity * 0.5) : 0;
+        int structureOutline = settings.mode != RenderMode.FILL ? argb(settings.tertiaryColor, settings.outlineOpacity * 0.5) : 0;
         for (ChunkSign sign : scanner.chunkSigns()) {
             AABB square = sign.surfaceBounds();
-            out.box(square, signFill, signOutline, width * 0.75f, settings.throughWalls);
-            if (out.labelling) out.label(square, sign.reason(), settings.secondaryColor, sign.horizontalDistance(out.camera));
+            // Structures only rule out their own surroundings, so they get an outline in a color of their own.
+            if (sign.structure()) out.box(square, 0, structureOutline, width * 0.75f, settings.throughWalls);
+            else out.box(square, signFill, signOutline, width * 0.75f, settings.throughWalls);
+            int color = sign.structure() ? settings.tertiaryColor : settings.secondaryColor;
+            if (out.labelling) out.label(square, sign.reason(), color, sign.horizontalDistance(out.camera));
         }
     }
 

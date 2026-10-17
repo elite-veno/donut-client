@@ -392,6 +392,7 @@ public final class FinderScanner implements ChunkEvents.Listener {
                     : best != null ? "clear " + best.clearance() + ", unseen " + GoodChunkIndex.duration(best.unseenMinutes())
                     : stats.scanned() < 9 ? ""
                     : stats.roomy() == 0 ? (stats.signs() > 0 ? "signs all around" : "clearance past view")
+                    : stats.solid() == 0 ? "too much cave below"
                     : stats.withClocks() == 0 ? "no plants to judge by" : "too few plants to judge by";
             lines.add(new FinderSummary("Chunks", goodChunks.size(), best == null ? null : best.center(), config.chunks.color, note,
                     !stats.overworld()));
@@ -448,11 +449,12 @@ public final class FinderScanner implements ChunkEvents.Listener {
         if (config.bases.enabled && (BaseEvidence.ANY.test(previous) || BaseEvidence.ANY.test(current))) {
             baseIndex.markDirty(SectionPos.blockToSectionCoord(pos.getX()), SectionPos.blockToSectionCoord(pos.getZ()));
         }
-        // Player blocks and amethyst are read again; plants keep their first reading.
-        if (config.chunks.enabled && (BaseEvidence.ANY.test(previous) || BaseEvidence.ANY.test(current)
+        // Built blocks and amethyst are read again; plants and caves keep their first reading.
+        if (config.chunks.enabled && (BuiltBlocks.built(previous) || BuiltBlocks.built(current)
                 || amethyst(previous) || amethyst(current))) {
             goodIndex.markDirty(SectionPos.blockToSectionCoord(pos.getX()), SectionPos.blockToSectionCoord(pos.getZ()));
         }
+        if (config.chunks.enabled && TunnelIndex.matters(previous, current)) goodIndex.passageChanged(pos);
         if (config.activity.enabled && (amethyst(previous) || amethyst(current))) {
             // A bud on the chunk's edge can belong to budding amethyst next door.
             int chunkX = SectionPos.blockToSectionCoord(pos.getX()), chunkZ = SectionPos.blockToSectionCoord(pos.getZ());
@@ -507,7 +509,7 @@ public final class FinderScanner implements ChunkEvents.Listener {
         }
         if (config.tunnels.enabled) tunnelIndex.markDirty(pos);
         if (config.bases.enabled) baseIndex.markDirty(pos.x(), pos.z());
-        if (config.chunks.enabled) goodIndex.markDirty(pos.x(), pos.z());
+        if (config.chunks.enabled) goodIndex.chunkLoaded(pos);
         if (config.activity.enabled) {
             // Faces on the edges next to this chunk read as missing until it loads.
             activity.markDirty(pos.x(), pos.z());

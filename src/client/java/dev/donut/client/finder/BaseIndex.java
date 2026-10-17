@@ -140,7 +140,7 @@ final class BaseIndex {
     }
 
     /** Anti-xray only disguises blocks whose six neighbors all conduct redstone, as stone does. */
-    private static boolean exposed(Level level, LevelChunk chunk, BlockPos pos, BlockPos.MutableBlockPos neighbor) {
+    static boolean exposed(Level level, LevelChunk chunk, BlockPos pos, BlockPos.MutableBlockPos neighbor) {
         for (Direction direction : DIRECTIONS) {
             neighbor.setWithOffset(pos, direction);
             BlockState state;

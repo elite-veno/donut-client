@@ -6,7 +6,8 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * A base spot ChunkFinder picked: a chunk with no sign of players in it or the chunks around it.
+ * A base spot ChunkFinder picked: a chunk with no sign of players or structures in it or the chunks around it, and
+ * little open cave under it.
  *
  * @param surfaceY the highest motion-blocking block in the chunk's middle column, as the server first sent it
  * @param confidence the chance that a player spending ten minutes near the spot would have left growth there
@@ -14,8 +15,11 @@ import net.minecraft.world.phys.Vec3;
  *                  ends it as a sign would, since nothing is known past it
  * @param freshClocks plants within the clearance square that would show a visit by growing
  * @param unseenMinutes how long a player could have stayed nearby with one chance in twenty of leaving no growth
+ * @param caves the share of the chunk's underground, from the ground down to the bedrock floor, that is open: air,
+ *              water or lava, from 0 to 1 ({@link Caves})
  */
-public record GoodChunk(ChunkPos chunk, int surfaceY, double confidence, int clearance, int freshClocks, double unseenMinutes) {
+public record GoodChunk(ChunkPos chunk, int surfaceY, double confidence, int clearance, int freshClocks, double unseenMinutes,
+                        double caves) {
     public Vec3 center() { return new Vec3(chunk.getMinBlockX() + 8.0, surfaceY + 1, chunk.getMinBlockZ() + 8.0); }
 
     /** The surface block in the chunk's middle column. */

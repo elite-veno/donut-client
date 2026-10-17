@@ -2,11 +2,13 @@ package dev.donut.client.gametest;
 
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.finder.ChunkEvents;
+import dev.donut.client.finder.Caves;
 import dev.donut.client.finder.ChunkSign;
 import dev.donut.client.finder.ChunkStats;
 import dev.donut.client.finder.FinderScanner;
 import dev.donut.client.finder.GoodChunk;
 import dev.donut.client.render.HighlightRenderer;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -18,16 +20,22 @@ import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestServerContext;
 import net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CactusBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.ChunkAccess;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
+import net.minecraft.world.level.levelgen.Heightmap;
 
 /**
- * ChunkFinder against real worldgen. Freshly generated chunks, a few hundred of them, must show no sign of players:
- * that checks what the plant clocks take worldgen to leave. Cactus random ticks grew before anyone came near must be a
- * sign that spots keep away from, and cactus placed and left alone must vouch for a spot.
+ * ChunkFinder against real worldgen. Freshly generated chunks, a few thousand of them, must show no sign of players,
+ * only structures: that checks what the plant clocks take worldgen to leave, and which blocks only builds have. Cactus
+ * random ticks grew before anyone came near, a crafting table and a dug hole must each be a sign that spots keep away
+ * from, and cactus placed and left alone must vouch for a spot.
  */
 public final class GoodChunkGameTest implements FabricClientGameTest {
     /** DonutSMP's seed, so the plants are the kind its overworld has. */
@@ -36,6 +44,8 @@ public final class GoodChunkGameTest implements FabricClientGameTest {
     private static final int[][] STOPS = {{0, 0}, {3000, 0}, {-3000, 1500}, {1500, -3000}, {-1500, -3000}};
     /** Pads of cactus: one grown by random ticks before the player arrives, one left as placed. */
     private static final int GROWN_X = 9000, GROWN_Z = 9000, FRESH_X = -9000, FRESH_Z = 9000, PAD_Y = 230;
+    /** Where a crafting table is left, and a hole dug 64 blocks east of it, on ground nobody else has been near. */
+    private static final int TRACE_X = 9000, TRACE_Z = -9000;
 
     @Override
     public void runTest(ClientGameTestContext context) {
@@ -64,26 +74,50 @@ public final class GoodChunkGameTest implements FabricClientGameTest {
             server.runCommand("gamemode spectator @a");
             int clearance = (int) Math.round(config.chunks.minClearance);
 
-            Map<ChunkPos, String> signs = new HashMap<>();
-            int scanned = 0, withPlants = 0, spots = 0;
+            // Fresh ground has no players: signs of them may only be structures' blocks that give nothing away, in a structure.
+            Map<ChunkPos, String> wrong = new HashMap<>(), unexplained = new HashMap<>();
+            List<Float> caves = new ArrayList<>();
+            int scanned = 0, withPlants = 0, spots = 0, structures = 0;
             for (int[] stop : STOPS) {
                 teleport(context, server, stop[0], 120, stop[1]);
                 settle(context, scanner);
                 ChunkStats stats = context.computeOnClient(client -> scanner.chunkStats());
                 List<GoodChunk> found = context.computeOnClient(client -> scanner.goodChunks());
-                context.runOnClient(client -> {
-                    for (ChunkSign sign : scanner.chunkSigns()) signs.put(sign.chunk(), sign.reason());
-                });
+                List<ChunkSign> signs = context.computeOnClient(client -> scanner.chunkSigns());
+                for (ChunkSign sign : signs) {
+                    if (sign.structure()) { structures++; continue; }
+                    boolean built = sign.reason().startsWith("Built") || sign.reason().startsWith("Dug");
+                    String in = structuresAt(server, sign.chunk());
+                    if (!built || in.isEmpty()) wrong.put(sign.chunk(), sign.reason());
+                    else unexplained.put(sign.chunk(), sign.reason() + " in " + in);
+                }
+                caves.addAll(context.computeOnClient(client -> {
+                    List<Float> shares = new ArrayList<>();
+                    for (int dx = -10; dx <= 10; dx++) {
+                        for (int dz = -10; dz <= 10; dz++) {
+                            LevelChunk chunk = client.level.getChunkSource().getChunk((stop[0] >> 4) + dx, (stop[1] >> 4) + dz, ChunkStatus.FULL, false);
+                            if (chunk != null) shares.add(Caves.share(chunk));
+                        }
+                    }
+                    return shares;
+                }));
                 scanned += stats.scanned();
                 withPlants += stats.withClocks();
                 spots += found.size();
-                log("stop %d,%d: %d chunks, %d with plants, %d signs, %d spots%s", stop[0], stop[1], stats.scanned(),
-                        stats.withClocks(), stats.signs(), found.size(), found.isEmpty() ? "" : ", best " + describe(found.getFirst()));
+                log("stop %d,%d: %d chunks, %d with plants, %d signs, %d clear, %d solid, %d spots%s", stop[0], stop[1], stats.scanned(),
+                        stats.withClocks(), stats.signs(), stats.roomy(), stats.solid(), found.size(),
+                        found.isEmpty() ? "" : ", best " + describe(found.getFirst()));
             }
-            log("fresh worldgen: %d chunks read, %d with plants, %d spots, signs %s", scanned, withPlants, spots, signs);
+            caves.sort(null);
+            log("fresh worldgen: %d chunks read, %d with plants, %d spots, %d structure chunks, caves by decile %s",
+                    scanned, withPlants, spots, structures, deciles(caves));
+            log("structure pieces read as player builds: %s", unexplained);
+            log("player signs on fresh ground: %s", wrong);
             require(scanned >= 2000, "Only " + scanned + " chunks were read");
             require(withPlants >= 50, "Too few chunks with plants to judge: " + withPlants);
-            require(signs.isEmpty(), "Freshly generated chunks showed signs of players: " + signs);
+            require(wrong.isEmpty(), "Freshly generated chunks showed signs of players: " + wrong);
+            // A structure piece with no giveaway block of its own, such as a lone shipwreck, reads as a build; it is rare.
+            require(unexplained.size() * 100 <= scanned, "Too many structure pieces read as player builds: " + unexplained);
             require(spots > 0, "No spot was found on fresh ground");
 
             // Someone stays near a cactus pad for a while before we come: random ticks age every top.
@@ -115,16 +149,58 @@ public final class GoodChunkGameTest implements FabricClientGameTest {
             }
             overlook(context, server, GROWN_X, GROWN_Z, "donut-chunkfinder-grown-pad");
 
+            // A player's crafting table on the surface, and a hole dug straight down, each far from anything else.
+            ChunkPos table = ChunkPos.containing(new BlockPos(TRACE_X, 0, TRACE_Z));
+            ChunkPos hole = ChunkPos.containing(new BlockPos(TRACE_X + 64, 0, TRACE_Z));
+            server.runCommand("forceload add %d %d %d %d".formatted(TRACE_X, TRACE_Z, TRACE_X + 64, TRACE_Z));
+            context.waitTicks(100);
+            server.runCommand("execute in minecraft:overworld positioned %d 0 %d positioned over motion_blocking run setblock ~ ~ ~ minecraft:crafting_table"
+                    .formatted(TRACE_X, TRACE_Z));
+            int top = server.computeOnServer(mcServer -> mcServer.overworld().getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, TRACE_X + 64, TRACE_Z));
+            server.runCommand("execute in minecraft:overworld run fill %d %d %d %d %d %d minecraft:air".formatted(
+                    TRACE_X + 64, top - 24, TRACE_Z, TRACE_X + 64, top - 1, TRACE_Z));
+            server.runCommand("forceload remove all");
+            teleport(context, server, TRACE_X + 32, 200, TRACE_Z);
+            for (int second = 0; second < 60; second++) {
+                context.waitTicks(20);
+                List<ChunkSign> signs = context.computeOnClient(client -> scanner.chunkSigns());
+                if (signs.stream().anyMatch(sign -> sign.chunk().equals(table)) && signs.stream().anyMatch(sign -> sign.chunk().equals(hole))) break;
+            }
+            settle(context, scanner);
+            String tableSign = signAt(context, scanner, table), holeSign = signAt(context, scanner, hole);
+            List<GoodChunk> nearTraces = context.computeOnClient(client -> scanner.goodChunks());
+            log("crafting table: %s; dug hole: %s; %d spots; giveaways in the table's chunk: %s", tableSign, holeSign, nearTraces.size(),
+                    context.computeOnClient(client -> {
+                        StringBuilder at = new StringBuilder();
+                        for (BlockPos pos : BlockPos.betweenClosed(table.getMinBlockX(), client.level.getMinY(), table.getMinBlockZ(),
+                                table.getMaxBlockX(), client.level.getMaxY(), table.getMaxBlockZ())) {
+                            BlockState state = client.level.getBlockState(pos);
+                            if (dev.donut.client.finder.BuiltBlocks.structure(state) || state.is(Blocks.CRAFTING_TABLE)) {
+                                at.append(state.getBlock().getDescriptionId()).append('@').append(pos.toShortString()).append(' ');
+                            }
+                        }
+                        return at.toString();
+                    }));
+            require(tableSign.equals("Built: crafting table"), "The crafting table's chunk was not read as built: " + tableSign);
+            require(holeSign.startsWith("Dug hole"), "The dug hole's chunk was not read as dug: " + holeSign);
+            for (GoodChunk spot : nearTraces) {
+                require(distance(spot.chunk(), table) > clearance && distance(spot.chunk(), hole) > clearance,
+                        "A spot within the clearance of a player's trace: " + describe(spot));
+            }
+
             ChunkPos fresh = ChunkPos.containing(new BlockPos(FRESH_X, PAD_Y, FRESH_Z));
             teleport(context, server, FRESH_X, PAD_Y + 4, FRESH_Z);
             context.waitFor(client -> scanner.bestGoodChunk() != null, 1200);
             settle(context, scanner);
-            GoodChunk best = context.computeOnClient(client -> scanner.bestGoodChunk());
+            List<GoodChunk> nearPad = context.computeOnClient(client -> scanner.goodChunks());
             boolean freshSign = context.computeOnClient(client -> scanner.chunkSigns().stream().anyMatch(sign -> sign.chunk().equals(fresh)));
-            log("fresh pad: best %s", best == null ? "none" : describe(best));
+            // The pad floats, so its own chunk reads as hollow; a spot beside it has the pad's cacti in its clearance.
+            GoodChunk vouched = nearPad.stream().filter(spot -> distance(spot.chunk(), fresh) <= clearance && spot.freshClocks() >= 49)
+                    .findFirst().orElse(null);
+            log("fresh pad: %d spots, best %s, beside the pad %s", nearPad.size(), nearPad.isEmpty() ? "none" : describe(nearPad.getFirst()),
+                    vouched == null ? "none" : describe(vouched));
             require(!freshSign, "The untouched pad was read as a sign");
-            require(best != null && distance(best.chunk(), fresh) <= clearance && best.freshClocks() >= 49,
-                    "The untouched pad did not vouch for a spot: " + (best == null ? "none" : describe(best)));
+            require(vouched != null, "The untouched pad did not vouch for a spot");
             overlook(context, server, FRESH_X, FRESH_Z, "donut-chunkfinder-fresh-pad");
         } finally {
             active.set(false);
@@ -166,6 +242,39 @@ public final class GoodChunkGameTest implements FabricClientGameTest {
         server.runCommand("execute in minecraft:overworld run tp @a %d %d %d -45 35".formatted(x - 40, PAD_Y + 30, z - 40));
         context.waitTicks(60);
         context.takeScreenshot(TestScreenshotOptions.of(name).withSize(1280, 800));
+    }
+
+    /** The sign ChunkFinder gives a chunk, or an empty string. */
+    private static String signAt(ClientGameTestContext context, FinderScanner scanner, ChunkPos chunk) {
+        return context.computeOnClient(client -> scanner.chunkSigns().stream().filter(sign -> sign.chunk().equals(chunk))
+                .map(ChunkSign::reason).findFirst().orElse(""));
+    }
+
+    /** The structures the server generated in this chunk or right next to it, by name; empty when none. */
+    private static String structuresAt(TestServerContext server, ChunkPos chunk) {
+        return server.computeOnServer(mcServer -> {
+            var registry = mcServer.registryAccess().lookupOrThrow(Registries.STRUCTURE);
+            java.util.Set<String> names = new java.util.TreeSet<>();
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    ChunkAccess near = mcServer.overworld().getChunk(chunk.x() + dx, chunk.z() + dz, ChunkStatus.STRUCTURE_REFERENCES, true);
+                    near.getAllReferences().keySet().forEach(structure -> names.add(registry.getKey(structure).getPath()));
+                    near.getAllStarts().keySet().forEach(structure -> names.add(registry.getKey(structure).getPath()));
+                }
+            }
+            return String.join("+", names);
+        });
+    }
+
+    /** The values at 0%, 10%, ... 100% of a sorted list, as percentages. */
+    private static String deciles(List<Float> sorted) {
+        if (sorted.isEmpty()) return "[]";
+        StringBuilder text = new StringBuilder("[");
+        for (int decile = 0; decile <= 10; decile++) {
+            float value = sorted.get(Math.min(sorted.size() - 1, decile * (sorted.size() - 1) / 10));
+            text.append(decile == 0 ? "" : " ").append(String.format(Locale.ROOT, "%.1f", value * 100));
+        }
+        return text.append("]%").toString();
     }
 
     /** The pad's cacti as the client has them: each top's age, with a mark for one that grew a block. */

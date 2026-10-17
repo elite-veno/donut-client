@@ -72,6 +72,7 @@ public final class ClientConfig {
         FinderSettings settings = new FinderSettings();
         settings.color = 0x6EE7A0;
         settings.secondaryColor = 0xFF6B5A;
+        settings.tertiaryColor = 0xFFC66B;
         settings.perTypeColors = false;
         settings.fillOpacity = 0.1;
         // Spots need the whole loaded area to judge their surroundings, so ChunkFinder always reads all of it.

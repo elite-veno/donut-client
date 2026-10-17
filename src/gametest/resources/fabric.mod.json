@@ -5,6 +5,9 @@
   "name": "Donut Client Runtime Tests",
   "environment": "client",
   "entrypoints": {
+    "client": [
+      "dev.donut.client.gametest.ReleaseMouse"
+    ],
     "fabric-client-gametest": [
       "dev.donut.client.gametest.DonutClientGameTest",
       "dev.donut.client.gametest.FreecamGameTest",

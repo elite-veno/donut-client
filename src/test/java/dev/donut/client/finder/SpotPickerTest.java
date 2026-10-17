@@ -16,7 +16,7 @@ class SpotPickerTest {
                 for (int[] at : signs) sign |= at[0] == x && at[1] == z;
                 GrowthClocks clocks = new GrowthClocks();
                 for (int i = 0; i < canes; i++) clocks.add(GrowthClocks.Kind.CANE, false, 0);
-                cells.add(new SpotPicker.Cell(x, z, sign, clocks));
+                cells.add(new SpotPicker.Cell(x, z, sign, false, true, clocks));
             }
         }
         return cells;
@@ -61,16 +61,47 @@ class SpotPickerTest {
     void groundWithoutPlantsVouchesForNothing() {
         List<SpotPicker.Cell> bare = square(21, 0);
         assertTrue(SpotPicker.pick(bare, 4, 60, 0, 0, 16).isEmpty());
-        assertTrue(SpotPicker.roomy(bare, 4) > 0, "clear, just unproven");
+        assertTrue(SpotPicker.roomy(bare, 4, false) > 0, "clear, just unproven");
     }
 
     @Test
     void noRoomWhereSignsAreEverywhereOrTheReadAreaIsSmall() {
         int[][] grid = new int[49][];
         for (int i = 0; i < 49; i++) grid[i] = new int[] {(i % 7) * 3, (i / 7) * 3};
-        assertEquals(0, SpotPicker.roomy(square(21, 1, grid), 4));
-        assertEquals(0, SpotPicker.roomy(square(8, 1), 4), "8 chunks across has no chunk 4 rings from its edge");
+        assertEquals(0, SpotPicker.roomy(square(21, 1, grid), 4, false));
+        assertEquals(0, SpotPicker.roomy(square(8, 1), 4, false), "8 chunks across has no chunk 4 rings from its edge");
         assertTrue(SpotPicker.pick(List.of(), 4, 10, 0, 0, 16).isEmpty());
+    }
+
+    @Test
+    void cavesRuleOutTheChunkButNotItsNeighbors() {
+        List<SpotPicker.Cell> cells = new ArrayList<>();
+        for (SpotPicker.Cell cell : square(21, 1)) {
+            boolean hollow = cell.x() == 10 && cell.z() == 10;
+            cells.add(new SpotPicker.Cell(cell.x(), cell.z(), false, false, !hollow, cell.clocks()));
+        }
+        List<SpotPicker.Spot> spots = SpotPicker.pick(cells, 4, 10, 10, 10, 16);
+        assertFalse(spots.isEmpty());
+        assertTrue(spots.stream().noneMatch(spot -> spot.x() == 10 && spot.z() == 10), "the hollow chunk itself is no spot");
+        // A cave under one chunk keeps no clearance: the best spot is right beside it.
+        assertEquals(9, spots.getFirst().clear());
+        assertEquals(SpotPicker.roomy(cells, 4, false) - 1, SpotPicker.roomy(cells, 4, true));
+    }
+
+    @Test
+    void structuresKeepSpotsOutOfThemAndTheirNeighborsOnly() {
+        List<SpotPicker.Cell> cells = new ArrayList<>();
+        for (SpotPicker.Cell cell : square(21, 1)) {
+            boolean structure = cell.x() == 10 && cell.z() == 10;
+            cells.add(new SpotPicker.Cell(cell.x(), cell.z(), false, structure, true, cell.clocks()));
+        }
+        List<SpotPicker.Spot> spots = SpotPicker.pick(cells, 4, 10, 10, 10, 16);
+        for (SpotPicker.Spot spot : spots) {
+            assertTrue(Math.max(Math.abs(spot.x() - 10), Math.abs(spot.z() - 10)) >= 2, spot.x() + "," + spot.z() + " touches the structure");
+        }
+        // The structure keeps no clearance: a spot two chunks off still has the whole read area around it.
+        assertTrue(spots.stream().anyMatch(spot -> Math.max(Math.abs(spot.x() - 10), Math.abs(spot.z() - 10)) == 2 && spot.clear() >= 6));
+        assertEquals(SpotPicker.roomy(square(21, 1), 4, false) - 9, SpotPicker.roomy(cells, 4, false));
     }
 
     @Test
@@ -81,7 +112,7 @@ class SpotPickerTest {
             for (int z = 0; z < 9; z++) {
                 GrowthClocks clocks = new GrowthClocks();
                 clocks.add(GrowthClocks.Kind.CANE, false, 0);
-                cells.add(new SpotPicker.Cell(x, z, x >= 9 && x <= 21, clocks));
+                cells.add(new SpotPicker.Cell(x, z, x >= 9 && x <= 21, false, true, clocks));
             }
         }
         List<SpotPicker.Spot> spots = SpotPicker.pick(cells, 2, 10, 30, 4, 16);

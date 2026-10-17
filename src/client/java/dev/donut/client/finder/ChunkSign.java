@@ -5,10 +5,13 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * A chunk ChunkFinder keeps spots away from, with why: plants that grew, amethyst growth, player-built blocks, or a
- * player standing in it, such as "Kelp grew, ~25 min" or "Player blocks: shulker box".
+ * A chunk ChunkFinder keeps spots away from, with why, such as "Kelp grew, ~25 min", "Built: crafting table" or
+ * "Structure: rail, 20 oak planks".
+ *
+ * @param structure part of a generated structure, which only keeps spots out of it and the chunks right around it;
+ *                  every other sign keeps them a whole clearance away
  */
-public record ChunkSign(ChunkPos chunk, int surfaceY, String reason) {
+public record ChunkSign(ChunkPos chunk, int surfaceY, String reason, boolean structure) {
     public AABB surfaceBounds() {
         int x = chunk.getMinBlockX(), z = chunk.getMinBlockZ();
         return new AABB(x, surfaceY + 1, z, x + 16, surfaceY + 1.05, z + 16);

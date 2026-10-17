@@ -384,10 +384,11 @@ public final class DonutScreen extends Screen {
 
     private Module chunks() {
         FinderSettings s = config.chunks;
-        return finder(12, "ChunkFinder", "Base spots away from where players have been: no grown kelp, vines, cane or amethyst",
-                "chunks chunkfinder good chunk base spot hide hidden fresh untouched rtp kelp vines sugar cane cactus amethyst", s, c -> {
+        return finder(12, "ChunkFinder", "Base spots no player or structure is near, with solid ground to dig into",
+                "chunks chunkfinder good chunk base spot hide hidden fresh untouched rtp kelp vines sugar cane cactus amethyst structure caves", s, c -> {
             c.color("color", "Good chunks", () -> s.color, v -> s.color = v);
             c.color("secondaryColor", "Signs of players", () -> s.secondaryColor, v -> s.secondaryColor = v);
+            c.color("tertiaryColor", "Structures", () -> s.tertiaryColor, v -> s.tertiaryColor = v);
         }, c -> {
             c.section("Detection");
             c.slider("clearance", "Clearance", "Rings of chunks around a spot that must be loaded and show no sign of players",
@@ -396,6 +397,8 @@ public final class DonutScreen extends Screen {
                     () -> s.maxUnseen, v -> s.maxUnseen = v, 1, 60, 1, " min");
             c.slider("ignore", "Ignore visits under", "Growth from shorter stays, such as someone flying past, is no sign",
                     () -> s.ignoreVisitsUnder, v -> s.ignoreVisitsUnder = v, 0, 30, 1, " min");
+            c.slider("caves", "Max caves", "How much of a spot's underground may be open cave, water or lava; lower is safer to dig",
+                    () -> s.maxCaves, v -> s.maxCaves = v, 0, 0.3, .01, "%");
             c.toggle("signs", "Show signs", "Mark the chunks spots keep away from, labelled with why",
                     () -> s.showSigns, () -> s.showSigns = !s.showSigns);
             c.toggle("notify", "Announce spots", "A chat line with the coordinates when a new area has a good chunk",
@@ -413,16 +416,20 @@ public final class DonutScreen extends Screen {
         c.info("Chunks", Integer.toString(stats.scanned()), TEXT);
         c.info("With plants", Integer.toString(stats.withClocks()), TEXT);
         c.info("With signs", Integer.toString(stats.signs()), TEXT);
+        c.info("Structures", Integer.toString(stats.structures()), TEXT);
         GoodChunk best = scanner.bestGoodChunk();
         c.info("Best", best == null ? "None" : "x " + best.surfaceCenter().getX() + ", z " + best.surfaceCenter().getZ(), TEXT);
         if (!stats.overworld()) {
             c.note("Cane, cactus, kelp and vines only grow in the Overworld.", WARN);
         } else if (best == null && stats.scanned() >= 9) {
             c.note(stats.roomy() == 0 && stats.signs() == 0 ? "No chunk has a whole clearance loaded around it; lower Clearance."
-                    : stats.roomy() == 0 ? "Every loaded area is near signs of players; move on or lower Clearance."
+                    : stats.roomy() == 0 ? "Every loaded area is near signs of players or in structures; move on or lower Clearance."
+                    : stats.solid() == 0 ? "The clear chunks have too much cave under them; move on or raise Max caves."
                     : "Clear areas have too few plants to tell whether anyone was there; raise Max unseen time.", MUTED);
         }
-        c.note("Plants are judged as the server first sent them, so time you spend here doesn't count against a spot.", DIM);
+        c.note("Any built block open to air, a placed entity or a dug passage keeps spots a clearance away; buried blocks don't "
+                + "count, since anti-xray fakes them. Structures keep spots out of them and the chunks touching them. Plants are "
+                + "judged as the server first sent them, so your own time here doesn't count.", DIM);
     }
 
     /** Live counts, including chunks below the threshold, so an empty world view can be explained. */
