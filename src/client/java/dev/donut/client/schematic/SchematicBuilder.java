@@ -2427,7 +2427,7 @@ public final class SchematicBuilder {
                     Item item = BlockRules.item(plan.target(i));
                     color = i == nextIndex ? 0xFFFFFF : missing.contains(item) ? 0xFF6F6F : accent;
                 } else if (st == BuildPlan.Status.WRONG || st == BuildPlan.Status.MISPLACED || st == BuildPlan.Status.FAILED) {
-                    color = 0xF2B35E;
+                    color = 0xF28C52;
                 } else {
                     continue;
                 }

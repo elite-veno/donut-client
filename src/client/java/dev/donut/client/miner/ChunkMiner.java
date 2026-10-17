@@ -1107,7 +1107,7 @@ public final class ChunkMiner {
         List<SchematicBuilder.Preview> boxes = new ArrayList<>();
         boxes.add(new SchematicBuilder.Preview(r.main.aabb(), accent, false));
         if (r.storage != null) boxes.add(new SchematicBuilder.Preview(r.storage.aabb(), 0x7FD6FF, false));
-        boxes.add(new SchematicBuilder.Preview(r.schematic.aabb().deflate(0.05), 0xF2B35E, false));
+        boxes.add(new SchematicBuilder.Preview(r.schematic.aabb().deflate(0.05), 0xF28C52, false));
         BlockPos at = next;
         if (at != null) boxes.add(new SchematicBuilder.Preview(new AABB(at).deflate(0.25), 0xFFFFFF, true));
         preview = List.copyOf(boxes);

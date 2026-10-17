@@ -19,7 +19,7 @@ import net.minecraft.world.phys.Vec3;
 /** What the finders see, at a glance: counts, the nearest find's distance and direction, and in-world labels. */
 public final class FinderHud {
     /** The menu's colors, so the HUD reads as part of the same client. */
-    static final int TEXT = 0xFFF0F6F5, LABEL = 0xFFCAD7D5, MUTED = 0xFF8EA3A1, WARN = 0xFFF2B35E, STRIP = 0xC4081213;
+    static final int TEXT = 0xFFF5F0E6, LABEL = 0xFFD8D0BF, MUTED = 0xFF9E9483, WARN = 0xFFF28C52, STRIP = 0xC40A0908;
     /** Rows are as tall as the module list's, with the text a little below their top. */
     static final int ROW = 13;
 

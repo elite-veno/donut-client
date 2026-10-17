@@ -27,7 +27,7 @@ public final class ClientConfig {
     public MinerSettings miner = new MinerSettings();
     public HudSettings hud = new HudSettings();
     public GuiSettings gui = new GuiSettings();
-    public int accentColor = 0x5BE3C8;
+    public int accentColor = 0xD9AE4E;
     public boolean showHud = true;
 
     private static FinderSettings spawnerDefaults() {

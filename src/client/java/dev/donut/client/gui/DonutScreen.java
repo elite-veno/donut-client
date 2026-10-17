@@ -68,14 +68,18 @@ public final class DonutScreen extends Screen {
     private static final int SIDEBAR_W = 148, NAV_H = 22, CARD_H = 38, CARD_GAP = 6, HEADER_H = 50, MAX_W = 720, MAX_H = 420;
     /** The menu needs this much room; smaller screens scale the whole GUI down to fit it. */
     private static final float MIN_W = 560, MIN_H = 340;
-    /** The default accent color. */
+    /** The default accent color, gold on the black window. */
+    public static final int GOLD = 0xD9AE4E;
+    /** The previous design's accent; configs still carrying it move to gold. */
     public static final int MINT = 0x5BE3C8;
-    private static final int TEXT = 0xFFF0F6F5, LABEL = 0xFFCAD7D5, MUTED = 0xFF8EA3A1, DIM = 0xFF748C8A;
-    private static final int WINDOW = 0xF6071112, SIDEBAR = 0xFF0A1718, CARD = 0xFF0C1A1B, CARD_HOVER = 0xFF102324;
-    private static final int EDGE = 0xFF1B3031, EDGE_HOVER = 0xFF2A4646, FIELD = 0xFF061011, TRACK = 0xFF2A3D3E;
-    private static final int WARN = 0xFFF2B35E, DANGER = 0xFFFF6F6F, GOOD = 0xFF6FE3A6;
-    private static final int[] PALETTE = {MINT, 0x3FC1D6, 0x68B4FF, 0x8C9BFF, 0xBA8CFF, 0xEC80B5,
-            0xFF707B, 0xFF975F, 0xF2B35E, 0xC5E774, 0x7EDD8E, 0xF0F6F5};
+    // Warm ivory text on near-black panels whose edges carry a trace of gold.
+    private static final int TEXT = 0xFFF5F0E6, LABEL = 0xFFD8D0BF, MUTED = 0xFF9E9483, DIM = 0xFF7C7364;
+    private static final int WINDOW = 0xF80A0908, SIDEBAR = 0xFF0E0D0B, CARD = 0xFF131210, CARD_HOVER = 0xFF1B1915;
+    private static final int EDGE = 0xFF29241B, EDGE_HOVER = 0xFF4B3F27, FIELD = 0xFF070706, TRACK = 0xFF2F2A21;
+    // Warnings are orange, so they stand apart from the gold.
+    private static final int WARN = 0xFFF28C52, DANGER = 0xFFFF6F6F, GOOD = 0xFF6FE3A6;
+    private static final int[] PALETTE = {GOLD, 0xF1D79A, 0xFF975F, 0xFF707B, 0xEC80B5, 0xBA8CFF,
+            0x8C9BFF, 0x68B4FF, 0x3FC1D6, MINT, 0xC5E774, 0xF0F6F5};
     /** The page and the module whose settings are open; kept while the game runs, so the menu reopens as it was left. */
     private static String pageId = "finders", detailName;
     /** Settings showing their "More options", kept the same way. */
@@ -187,11 +191,12 @@ public final class DonutScreen extends Screen {
                 page("keybinds", "Keybinds", "keyboard", "Keys that turn modules on or off", this::drawKeybinds),
                 page("theme", "Theme", "palette", "Colors and effects", this::drawTheme));
         if (!pages.containsKey(pageId)) pageId = "finders";
-        // Configs from before this design carry the winter theme's colors; they move to its mint once.
-        if (config.gui.theme == null) {
-            config.gui.theme = "mint";
-            config.accentColor = MINT;
-            config.gui.snow = false;
+        // Configs from before the mint design carry the winter theme's colors, and mint ones its accent; both move to
+        // gold once. An accent picked by hand stays.
+        if (config.gui.theme == null || config.gui.theme.equals("mint")) {
+            if (config.gui.theme == null || config.accentColor == MINT) config.accentColor = GOLD;
+            if (config.gui.theme == null) config.gui.snow = false;
+            config.gui.theme = "gold";
             save.run();
         }
         content.scroll = content.scrollTarget = SCROLLS.getOrDefault(view(), 0.0);
@@ -1097,7 +1102,7 @@ public final class DonutScreen extends Screen {
         moving = false;
         tooltip = null;
         hovered = regionAt(mouseX, mouseY);
-        g.fill(0, 0, width, height, 0x9A030808);
+        g.fill(0, 0, width, height, 0xA0050403);
         g.pose().pushMatrix();
         g.pose().scale(scale, scale);
         UiPaint.pixelScale(pixels);
@@ -1142,12 +1147,24 @@ public final class DonutScreen extends Screen {
         graphics.enableScissor(wx, wy, wx + ww, wy + wh);
         shadow(graphics, mainX() + mainW() / 5, wy - 46, mainW() * 3 / 5, 44, 40, alpha(config.accentColor, .13));
         graphics.disableScissor();
-        outline(graphics, wx, wy, ww, wh, 10, EDGE);
+        // A fine accent rim, brightest along the top edge where the glow is.
+        outline(graphics, wx, wy, ww, wh, 10, blend(EDGE, accent(), .32));
+        fadeLine(wx + 24, wy, ww - 48, .55);
         drawSidebar();
         drawing = chrome;
         drawHeader();
+        fadeLine(mainX(), wy + HEADER_H, mainW(), .3);
         drawPage();
         drawing = null;
+    }
+
+    /** A one-unit accent line that fades out toward both ends; strength is its opacity in the middle. */
+    private void fadeLine(int x, int y, int w, double strength) {
+        int parts = 32;
+        for (int i = 0; i < parts; i++) {
+            double t = (i + .5) / parts * 2 - 1;
+            round(graphics, x + (float) w * i / parts, y, (float) w / parts, 1, 0, alpha(config.accentColor, strength * (1 - t * t)));
+        }
     }
 
     private void drawSidebar() {
@@ -1454,7 +1471,7 @@ public final class DonutScreen extends Screen {
         if (position < .99) outline(graphics, (float) x, (float) y, w, h, h / 2f, alpha(0xFFFFFF, .12 * (1 - position)));
         float knob = h - 4f, knobX = x + 2f + (w - h) * (float) position;
         round(graphics, knobX, y + 2.6f, knob, knob, knob / 2, 0x55000000);
-        round(graphics, knobX, y + 2f, knob, knob, knob / 2, usable ? 0xFFFFFFFF : 0xFF9AAAA8);
+        round(graphics, knobX, y + 2f, knob, knob, knob / 2, usable ? 0xFFFFFFFF : 0xFFA59F92);
     }
 
     private void chevron(float cx, float cy, boolean down, int color) {
@@ -1480,7 +1497,7 @@ public final class DonutScreen extends Screen {
         int h = lines.size() * 11 + 9;
         int x = (int) Math.min(mouseX + 10, layoutW - w - 4), y = (int) Math.min(mouseY + 14, layoutH - h - 4);
         shadow(graphics, x, y + 2, w, h, 6, 0x90000000);
-        round(graphics, x, y, w, h, 6, 0xF5112122);
+        round(graphics, x, y, w, h, 6, 0xF5161411);
         outline(graphics, x, y, w, h, 6, EDGE_HOVER);
         for (int i = 0; i < lines.size(); i++) draw(lines.get(i), Size.SMALL, x + 8, y + 5 + i * 11, LABEL);
     }
@@ -1491,7 +1508,7 @@ public final class DonutScreen extends Screen {
         // Modal hit testing replaces the window's controls.
         hits.clear();
         clips.clear();
-        graphics.fill(0, 0, layoutW, layoutH, 0x99030808);
+        graphics.fill(0, 0, layoutW, layoutH, 0xA0050403);
         int w = 206, h = 168, x = (layoutW - w) / 2, y = (layoutH - h) / 2;
         int color = colorEditor.getter.getAsInt();
         shadow(graphics, x, y + 3, w, h, 10, 0xC0000000);
@@ -1522,7 +1539,7 @@ public final class DonutScreen extends Screen {
         hit("hex", x + 14, y + 134, 90, 20, () -> { colorEditor.hexFocused = true; colorEditor.replaceHex = true; }, null);
         boolean overDone = inside(x + w - 84, y + 134, 70, 20);
         round(graphics, x + w - 84, y + 134, 70, 20, 6, overDone ? accent() : alpha(accent(), .85));
-        bold("Done", x + w - 49 - width("Done", Size.BASE) / 2, y + 141, 0xFF041011);
+        bold("Done", x + w - 49 - width("Done", Size.BASE) / 2, y + 141, 0xFF140F04);
         hit("colorDone", x + w - 84, y + 134, 70, 20, this::closeColor, null);
     }
 
