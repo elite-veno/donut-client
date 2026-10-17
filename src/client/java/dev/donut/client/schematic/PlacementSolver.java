@@ -275,17 +275,37 @@ public final class PlacementSolver {
         Level level = player.level();
         boolean partnerReady = partnerReady(level, pos, target);
         // The faces to click are those of the view: with blocks not placed yet put in, theirs count too.
+        Click fallback = null;
         for (Spot spot : spots(view, pos, target, eye, reach, unclickable, eye)) {
             if (!spot.facesEye() || !allowed(view, spot, pos, crouch)) continue;
             Vec3 point = spot.hit().getLocation();
             BlockHitResult seen = seen(view, player, eye, point, spot.hit().getDirection());
             if (seen == null || !seen.getBlockPos().equals(spot.hit().getBlockPos())) continue;
             float[] look = look(eye, point);
-            BlockState placed = simulate(player, pos, stack, seen, look[0], look[1], crouch, planned(view, level, spot));
-            if (placed != null && BlockRules.placementMatches(placed, target, partnerReady)) return new Click(seen, look[0], look[1], crouch);
+            boolean planned = planned(view, level, spot);
+            BlockState placed = simulate(player, pos, stack, seen, look[0], look[1], crouch, planned);
+            if (placed == null || !BlockRules.placementMatches(placed, target, partnerReady)) continue;
+            Click click = new Click(seen, look[0], look[1], crouch);
+            // A look on the edge between two facings, an observer looked at at 45 degrees say, flips with the least
+            // drift of the aim: one that keeps its facing a few degrees off either way is taken if there is one.
+            if (steady(player, pos, stack, seen, look, crouch, planned, target, partnerReady)) return click;
+            if (fallback == null) fallback = click;
         }
-        return null;
+        return fallback;
     }
+
+    /** Whether the click places the same block with the look a few degrees off in every direction. */
+    private static boolean steady(LocalPlayer player, BlockPos pos, ItemStack stack, BlockHitResult hit, float[] look, boolean crouch,
+                                  boolean planned, BlockState target, boolean partnerReady) {
+        for (float[] off : new float[][] {{STEADY, 0}, {-STEADY, 0}, {0, STEADY}, {0, -STEADY}}) {
+            BlockState placed = simulate(player, pos, stack, hit, look[0] + off[0], Math.clamp(look[1] + off[1], -90, 90), crouch, planned);
+            if (placed == null || !BlockRules.placementMatches(placed, target, partnerReady)) return false;
+        }
+        return true;
+    }
+
+    /** How far a look may drift, in degrees, and still give a steady click the same facing. */
+    static final float STEADY = 4;
 
     /** For the log: how many spots around the block each check lets through, looked at from {@code eye}. */
     static String explain(LocalPlayer player, Vec3 eye, boolean crouch, BlockPos pos, BlockState target, ItemStack stack, double reach,
@@ -502,12 +522,20 @@ public final class PlacementSolver {
      * the spot runs into it. The player steps aside first.
      */
     static boolean sharesSpot(AABB body, Level level, BlockPos pos, BlockState target) {
-        return !target.getCollisionShape(level, pos).isEmpty() && body.intersects(new AABB(pos));
+        return !placedForm(target).getCollisionShape(level, pos).isEmpty() && body.intersects(new AABB(pos));
+    }
+
+    /**
+     * The block as a click first puts it in: a door, trapdoor or fence gate goes in closed and is opened after, so
+     * it is in the way of a body as a closed one.
+     */
+    private static BlockState placedForm(BlockState target) {
+        return target.hasProperty(BlockStateProperties.OPEN) ? target.setValue(BlockStateProperties.OPEN, false) : target;
     }
 
     /** Whether the block, once placed, would take up space a body there stands in. */
     public static boolean inTheWay(AABB body, Level level, BlockPos pos, BlockState target) {
-        VoxelShape shape = target.getCollisionShape(level, pos);
+        VoxelShape shape = placedForm(target).getCollisionShape(level, pos);
         if (shape.isEmpty()) return false;
         for (AABB part : shape.toAabbs()) if (part.move(pos).intersects(body)) return true;
         return false;

@@ -139,6 +139,15 @@ public final class SchematicBuilder {
     /** Blocks whose click the crosshair missed from where the player stands, at {@code missedAt}: tried elsewhere first. */
     private final Set<Integer> missedHere = new HashSet<>();
     private BlockPos missedAt;
+    /**
+     * Blocks with no click from where the player stands, and why, worked out at {@code noClickFrom} in that stance: passed
+     * over until the player moves, a block goes in or a couple of seconds go by. A long row of them would otherwise use
+     * up each tick's planning time before a walk is worked out, and the next tick would start over with the same ones.
+     */
+    private final Map<Integer, PlacementSolver.Problem> noClickHere = new HashMap<>();
+    private Vec3 noClickFrom;
+    private boolean noClickCrouch;
+    private long noClickTick;
     private int restingTicks;
     /** The block whose missing place to stand was last explained in the log, and when: once in ten seconds is enough. */
     private int lastExplained = -1;
@@ -189,6 +198,12 @@ public final class SchematicBuilder {
     private int swapFrom = -1, swapTo, swapTicks, swapAt, swapClose;
 
     private Restock restock = Restock.NONE;
+    /**
+     * The item a walk to open ground was for, to fetch first thing on arrival, before the blocks in reach send the
+     * player back; and how many such walks in a row found no room yet.
+     */
+    private Item restockAfterWalk;
+    private int restockWalks;
     private Item restockItem;
     private BlockPos box;
     private PlacementSolver.Click boxClick;
@@ -457,11 +472,14 @@ public final class SchematicBuilder {
         shortageReported = false;
         restockFailures = 0;
         restock = Restock.NONE;
+        restockAfterWalk = null;
+        restockWalks = 0;
         aim = null;
         buildSlot = -1;
         walkFailures = 0;
         uselessSpots.clear();
         missedHere.clear();
+        noClickHere.clear();
         helpers.clear();
         helperSpot.clear();
         helpersLeft.clear();
@@ -531,6 +549,14 @@ public final class SchematicBuilder {
         if (!player.onGround() && !player.isInWater() && !player.onClimbable()) return;
         if (removeUsedHelper(client, player)) return;
         if (refill(client, player, false)) return;
+        if (restockAfterWalk != null) {
+            Item wanted = restockAfterWalk;
+            restockAfterWalk = null;
+            if (!creative && materials.loose(wanted) == 0 && materials.total(wanted) > 0) {
+                startRestock(client, player, wanted, materials);
+                return;
+            }
+        }
         // The layer: the lowest with a block that can go in now; lower blocks still waiting need something above them.
         // Each layer lists its blocks in placing order, so the first block found also sets the group.
         boolean byGroup = settings().redstoneLast;
@@ -588,6 +614,12 @@ public final class SchematicBuilder {
         PlacementSolver.Problem seen = null;
         int nearest = -1;
         boolean sealing = false;
+        if (!player.position().equals(noClickFrom) || player.isShiftKeyDown() != noClickCrouch || tick - noClickTick > 40) {
+            noClickHere.clear();
+            noClickFrom = player.position();
+            noClickCrouch = player.isShiftKeyDown();
+            noClickTick = tick;
+        }
         for (int i : candidates) {
             BlockPos pos = plan.pos(i);
             boolean far = Vec3.atCenterOf(pos).distanceTo(eye) > reach + 1;
@@ -611,6 +643,11 @@ public final class SchematicBuilder {
             }
             if (missedHere.contains(i) && player.blockPosition().equals(missedAt)) {
                 if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
+                continue;
+            }
+            PlacementSolver.Problem known = noClickHere.get(i);
+            if (known != null) {
+                if (seen == null || known == PlacementSolver.Problem.IN_THE_WAY) seen = known;
                 continue;
             }
             if (System.nanoTime() - started > PLAN_NANOS) return;
@@ -662,9 +699,11 @@ public final class SchematicBuilder {
                 if (result.problem() == PlacementSolver.Problem.NO_SUPPORT && helper != null) {
                     if (placeHelper(client, player, i, helper, layerNumber)) return;
                     if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
+                    noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH);
                     continue;
                 }
                 if (seen == null || result.problem() == PlacementSolver.Problem.IN_THE_WAY) seen = result.problem();
+                noClickHere.put(i, result.problem());
                 continue;
             }
             if (!lift && !wayOut(player, i)) {
@@ -957,8 +996,10 @@ public final class SchematicBuilder {
             return;
         }
         // Aimed from where the eye is now, not where it was when the click was worked out: a few centimetres of slide or
-        // crouch would otherwise move a look that only just clears an edge onto it.
+        // crouch would otherwise move a look that only just clears an edge onto it. Only where that look still gives
+        // the block its facing; else the look worked out stands.
         float[] aimed = PlacementSolver.look(player.getEyePosition(), click.hit().getLocation());
+        if (planned.act() == Act.PLACE && !sameResult(player, planned, aimed)) aimed = new float[] {click.yaw(), click.pitch()};
         if (!looked(player, aimed[0], aimed[1])) return;
         // The camera turned during the wait since the last click; the click itself waits for its time.
         if (System.nanoTime() - nextClick < 0) return;
@@ -984,10 +1025,18 @@ public final class SchematicBuilder {
         clicked(planned, hit);
     }
 
+    /** Whether a look places the planned block just as the look it was worked out with does. */
+    private boolean sameResult(LocalPlayer player, Aim planned, float[] look) {
+        BlockState placed = PlacementSolver.simulate(player, planned.at(), new ItemStack(planned.item()), planned.click().hit(), look[0], look[1],
+                planned.click().crouch(), false);
+        return placed != null && BlockRules.placementMatches(placed, plan.target(planned.index()));
+    }
+
     /** What follows a click: the next wait, and what the status line says. */
     private void clicked(Aim planned, BlockHitResult hit) {
         int i = planned.index(), layerNumber = planned.layerNumber();
         uselessSpots.clear();
+        noClickHere.clear();
         walkFailures = 0;
         String layer = "Layer " + layerNumber + " of " + plan.layers().size() + " (y " + layerY + "): ";
         switch (planned.act()) {
@@ -1165,6 +1214,8 @@ public final class SchematicBuilder {
         BlockState state = client.level.getBlockState(breaking);
         if (state.isAir() || state.canBeReplaced()) {
             helpers.remove(breaking.asLong());
+            // With the helper gone, a look may reach a block it was in front of.
+            noClickHere.clear();
             breaking = null;
             nextAction = System.nanoTime() + quick();
             return;
@@ -1993,7 +2044,10 @@ public final class SchematicBuilder {
         BlockState boxState = ((BlockItem) shulker.getItem()).getBlock().defaultBlockState().setValue(ShulkerBoxBlock.FACING, Direction.UP);
         BlockPos spot = null;
         PlacementSolver.Click placeClick = null;
-        for (BlockPos candidate : boxSpots(player, player.blockPosition(), player.position())) {
+        // Beside where the player stands, worked out as the walk there did: in a hopper's bowl the feet are inside the
+        // hopper's own block, a block lower than the spot stood on.
+        BlockPos feet = Navigator.standingAt(player.level(), player).floor().above();
+        for (BlockPos candidate : boxSpots(player, feet, player.position())) {
             PlacementSolver.Result result = PlacementSolver.find(player, candidate, boxState, shulker, player.blockInteractionRange(),
                     helpers::containsKey);
             // A click in the other stance does too: placing the box crouches or stands up for it first.
@@ -2016,13 +2070,16 @@ public final class SchematicBuilder {
                     }
                     return 0;
                 });
-                if (path != null && path.nodes().size() > 1) {
+                if (path != null && path.nodes().size() > 1 && restockWalks < 3) {
                     releaseKeys(client);
                     walker.start(path.nodes());
+                    restockAfterWalk = item;
+                    restockWalks++;
                     show("Walking to open ground to empty a shulker box", false);
                     return;
                 }
             }
+            restockWalks = 0;
             show("No room beside you to open a shulker box: stand on open, flat ground", true);
             nextAction = System.nanoTime() + 1_000_000_000L;
             return;
@@ -2039,6 +2096,7 @@ public final class SchematicBuilder {
             return;
         }
         restock = Restock.PLACE;
+        restockWalks = 0;
         restockItem = item;
         box = spot;
         boxClick = placeClick;
