@@ -107,4 +107,31 @@ class NavigatorTest {
         assertNotEquals(first, around.nodes().get(1));
         assertEquals(2, around.end().x());
     }
+
+    @Test
+    void fencesAndClosedGatesAreNarrowTopsAndFloorsAreNot() {
+        assertTrue(narrow(Blocks.SPRUCE_FENCE_GATE.defaultBlockState()), "a closed gate is a ridge a quarter of a block wide");
+        assertTrue(narrow(Blocks.OAK_FENCE.defaultBlockState()));
+        assertFalse(narrow(Blocks.STONE.defaultBlockState()));
+        assertFalse(narrow(Blocks.HOPPER.defaultBlockState()), "a hopper's bowl floor is wide enough");
+        assertFalse(narrow(Blocks.OAK_SLAB.defaultBlockState()));
+    }
+
+    @Test
+    void noCornerIsCutOffANarrowTop() {
+        // Standing on a closed gate, the block diagonally beside it is reached with two straight steps, not one across.
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        blocks.put(new BlockPos(0, 65, 0), Blocks.SPRUCE_FENCE_GATE.defaultBlockState());
+        blocks.put(new BlockPos(1, 65, 1), Blocks.STONE.defaultBlockState());
+        blocks.put(new BlockPos(1, 65, 0), Blocks.STONE.defaultBlockState());
+        Navigator.Node start = new Navigator.Node(0, 65, 0, 66.5, Navigator.Move.START);
+        Navigator.Path path = navigator(world(blocks)).find(start, node -> node.x() == 1 && node.z() == 1 && node.feet() == 66 ? 1 : 0);
+        assertNotNull(path);
+        Navigator.Node first = path.nodes().get(1);
+        assertFalse(first.x() != start.x() && first.z() != start.z(), "the first step off the gate is straight");
+    }
+
+    private static boolean narrow(BlockState state) {
+        return Navigator.narrowTop(state.getCollisionShape(world(Map.of()), BlockPos.ZERO));
+    }
 }

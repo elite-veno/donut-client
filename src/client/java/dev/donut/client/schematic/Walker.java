@@ -31,6 +31,8 @@ final class Walker {
     private static final float TURN = 40;
     /** How far the pitch turns in a tick, at most. */
     private static final float TILT = 22;
+    /** Facing further than this from the next step, the player turns on the spot before walking on. */
+    private static final float TURN_FIRST = 35;
 
     private List<Navigator.Node> path;
     private int index;
@@ -90,15 +92,19 @@ final class Walker {
                     + player.getDeltaMovement() + (client.options.keyJump.isDown() ? ", jumping" : ""));
         }
         turnToward(player, dx, dz);
+        // Facing well away from the next step, a player on the ground turns first and walks after, as on a ledge: walking
+        // while turning swings them out sideways, off a narrow top or over the edge of a walkway.
+        float off = Math.abs(Mth.wrapDegrees((float) Math.toDegrees(Math.atan2(-dx, dz)) - player.getYRot()));
+        boolean facing = off <= TURN_FIRST || !player.onGround() || distance < 0.5;
         // Near the end of the path, let go a little early: friction carries the rest, much further on ice, where a
         // player who has come to a stop short of the spot steps on again.
         boolean slippery = player.onGround() && slippery(player);
         double letGo = last ? (slippery ? 0.9 : 0.2) : slippery ? 0.35 : 0.05;
         boolean stopped = player.getDeltaMovement().horizontalDistanceSqr() < 0.02 * 0.02;
-        client.options.keyUp.setDown(distance > letGo || stopped && distance > (last ? 0.2 : 0.05));
+        client.options.keyUp.setDown(facing && (distance > letGo || stopped && distance > (last ? 0.2 : 0.05)));
         client.options.keySprint.setDown(false);
         // A step up from where the player really is, though the path planned it from elsewhere, slid off ice say.
-        boolean jump = (to.move() == Navigator.Move.JUMP || to.feet() - at.y > Navigator.STEP) && player.onGround() && distance < 1.3;
+        boolean jump = facing && (to.move() == Navigator.Move.JUMP || to.feet() - at.y > Navigator.STEP) && player.onGround() && distance < 1.3;
         // In water the feet are never on the ground: holding jump swims up and over the edge, as a player climbs out.
         if (player.isInWater() && to.feet() > at.y + 0.3 && distance < 1.6) jump = true;
         client.options.keyJump.setDown(jump);

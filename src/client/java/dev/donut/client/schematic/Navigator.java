@@ -195,6 +195,8 @@ public final class Navigator {
         // Water slows the player down: dry ground is taken where there is some. Ice carries them past where they stop.
         if (!level.getFluidState(feet).isEmpty() || !level.getFluidState(feet.above()).isEmpty()) cost += 2;
         if (level.getBlockState(to.floor()).getBlock().getFriction() > 0.7f) cost += 2;
+        // A narrow top holds the player, but a little drift drops them off it: wider ground is taken where there is some.
+        if (narrow(to.x(), to.y(), to.z())) cost += 3;
         return cost;
     }
 
@@ -226,6 +228,9 @@ public final class Navigator {
                 // one, so each needs ground at about the height of the step, or the step goes around by the sides.
                 if (diagonal && (!holds(from.x() + d[0], from.z(), ny, from.y(), from.feet(), feet)
                         || !holds(from.x(), from.z() + d[1], ny, from.y(), from.feet(), feet))) continue;
+                // On a narrow top, such as a closed fence gate's, only straight steps: cutting a corner swings the body
+                // off it sideways.
+                if (diagonal && (narrow(nx, ny, nz) || narrow(from.x(), from.y(), from.z()))) continue;
                 Move move = over > STEP ? Move.JUMP : rise < -STEP ? Move.DROP : Move.WALK;
                 Node next = new Node(nx, ny, nz, feet, move);
                 if (!badSteps.isEmpty() && badSteps.contains(stepKey(from, next))) continue;
@@ -307,6 +312,29 @@ public final class Navigator {
             if (box.minX < 0.8 && box.maxX > 0.2 && box.minZ < 0.8 && box.maxZ > 0.2) top = Double.isNaN(top) ? box.maxY : Math.max(top, box.maxY);
         }
         return top;
+    }
+
+    /** Whether the block at x, y, z is stood on by a top less than half a block wide: a fence, a closed gate, a pane. */
+    private boolean narrow(int x, int y, int z) {
+        BlockPos pos = new BlockPos(x, y, z);
+        return narrowTop(level.getBlockState(pos).getCollisionShape(level, pos));
+    }
+
+    /**
+     * Whether the shape's top, where a player stands on it, leaves the middle of the block open somewhere: the middle,
+     * from 0.3 to 0.7 each way, isn't all under it. However the shape is cut into boxes.
+     */
+    static boolean narrowTop(VoxelShape shape) {
+        double top = topUnderFeet(shape);
+        if (Double.isNaN(top)) return false;
+        List<AABB> tops = shape.toAabbs().stream().filter(box -> Math.abs(box.maxY - top) < 1e-6).toList();
+        for (double x = 0.3; x < 0.75; x += 0.1) {
+            for (double z = 0.3; z < 0.75; z += 0.1) {
+                double px = x, pz = z;
+                if (tops.stream().noneMatch(box -> box.minX <= px && px <= box.maxX && box.minZ <= pz && pz <= box.maxZ)) return true;
+            }
+        }
+        return false;
     }
 
     /** Whether nothing solid or harmful fills the column between two heights; the block {@code floorY} is left out. */
