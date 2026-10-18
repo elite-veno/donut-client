@@ -3473,6 +3473,8 @@ public final class SchematicBuilder {
                 if (level.getBlockState(at.below()).getBlock().getFriction() > 0.6f) continue;
                 // Not beside a drop either: the box, once broken, can bounce into it, down out of reach.
                 if (besideDrop(level, at)) continue;
+                // Nor where the dropped box is carried off before it is picked up: into a hopper, or down a stream.
+                if (carriedOff(level, at)) continue;
                 // Never on a spot the schematic fills.
                 if (plan.indexOf(at) >= 0) continue;
                 (keepClear.contains(Vec3.atCenterOf(at)) ? inside : outside).add(at);
@@ -3513,6 +3515,22 @@ public final class SchematicBuilder {
             case Y -> new Vec3(a, 0, b);
             case Z -> new Vec3(a, b, 0);
         };
+    }
+
+    /**
+     * Whether a box dropped at {@code at} could be carried off before it is picked up: a hopper under the spot or one
+     * beside it draws in what lies in the block above it, and water beside it washes an item away. A dropped item
+     * comes out with a little push to the side, enough to reach the next block over.
+     */
+    private static boolean carriedOff(Level level, BlockPos at) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                BlockPos beside = at.offset(dx, 0, dz);
+                if (level.getBlockState(beside.below()).getBlock() instanceof HopperBlock) return true;
+                if (!level.getFluidState(beside).isEmpty()) return true;
+            }
+        }
+        return false;
     }
 
     /** Whether a spot beside {@code at} is open with nothing under it to stop a dropped item falling. */
