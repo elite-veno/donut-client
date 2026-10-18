@@ -232,6 +232,8 @@ public final class SchematicBuilder {
     /** Dug-out ground filled in with something else, for want of the block that was there; and spots never filled. */
     private int refilledOther;
     private final List<BlockPos> dugLeft = new ArrayList<>();
+    /** Walks made during the build to fill in dug ground, by spot: one that still can't be filled from there is left for the end. */
+    private final Map<Long, Integer> refillWalks = new HashMap<>();
     /** A pit being dug to stand in, and for how long. */
     private Pit pit;
     private int digTicks;
@@ -449,6 +451,7 @@ public final class SchematicBuilder {
         helperSpot.clear();
         helpersLeft.clear();
         dug.clear();
+        refillWalks.clear();
         plan = null;
         planKey = "";
         planLevel = null;
@@ -634,6 +637,7 @@ public final class SchematicBuilder {
         helperSpot.clear();
         helpersLeft.clear();
         dug.clear();
+        refillWalks.clear();
         dugLeft.clear();
         refilledOther = 0;
         pit = lastPit = null;
@@ -2384,6 +2388,10 @@ public final class SchematicBuilder {
         if (!finish && dug.containsKey(player.blockPosition().asLong())) return false;
         List<BlockPos> open = dug.keySet().stream().map(BlockPos::of).sorted(Comparator.comparingInt(BlockPos::getY)).toList();
         AABB body = player.getBoundingBox().inflate(0.1);
+        // The nearest spot out of reach from here, to walk to once nothing in reach is left to fill.
+        BlockPos far = null;
+        Item farItem = null;
+        double farDistance = Double.MAX_VALUE;
         for (BlockPos cell : open) {
             // Bottom first, and never under the player.
             if (dug.containsKey(cell.below().asLong())) continue;
@@ -2410,7 +2418,15 @@ public final class SchematicBuilder {
                 startAim(client, player, new Aim(Act.REFILL, -1, result.click(), item, cell, level.getBlockState(cell), 0));
                 return true;
             }
-            if (!finish) continue;
+            if (!finish) {
+                double away = player.position().distanceToSqr(Vec3.atCenterOf(cell));
+                if (away < farDistance && refillWalks.getOrDefault(cell.asLong(), 0) < 2) {
+                    far = cell;
+                    farItem = item;
+                    farDistance = away;
+                }
+                continue;
+            }
             if (settings().walk) {
                 Item fill = item;
                 double reach = player.blockInteractionRange() - 0.2;
@@ -2427,6 +2443,24 @@ public final class SchematicBuilder {
             dug.remove(cell.asLong());
             dugLeft.add(cell);
             return true;
+        }
+        // Out of the pit or trench, what was dug is filled in before building on, as a player does: left open, a later
+        // walk could step down into it and a block of the next layer close it over them.
+        if (far != null && settings().walk) {
+            refillWalks.merge(far.asLong(), 1, Integer::sum);
+            BlockPos cell = far;
+            Item fill = farItem;
+            BlockState state = Block.byItem(fill).defaultBlockState();
+            double reach = player.blockInteractionRange() - 0.2;
+            Navigator.Path path = navigator(player, true).find(Navigator.standingAt(level, player), node -> PlacementSolver.fromSpot(player,
+                    node.standing(), cell, state, new ItemStack(fill), reach, helpers::containsKey) != null ? 1 : 0);
+            if (path != null && path.nodes().size() > 1 && !dropsIntoTrap(player, path)) {
+                if (!climbReady(client, player, path)) return true;
+                releaseKeys(client);
+                walker.start(path.nodes());
+                show("Walking over to fill in the ground dug out", false);
+                return true;
+            }
         }
         return false;
     }
