@@ -58,6 +58,7 @@ import net.minecraft.world.level.block.BasePressurePlateBlock;
 import net.minecraft.world.level.block.BaseRailBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.BubbleColumnBlock;
 import net.minecraft.world.level.block.CarpetBlock;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.CrossCollisionBlock;
@@ -78,6 +79,7 @@ import net.minecraft.world.level.block.TrapDoorBlock;
 import net.minecraft.world.level.block.WallBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -322,6 +324,9 @@ public final class SchematicBuilder {
     private final Set<Item> repairDrops = new HashSet<>();
     /** Walks made to a block to place again, by index: one still out of view after these is left as it is. */
     private final Map<Integer, Integer> repairWalks = new HashMap<>();
+    /** How often each block was broken to go in again into water, and the tick it last was. */
+    private final Map<Integer, Integer> drains = new HashMap<>();
+    private final Map<Integer, Long> drainedAt = new HashMap<>();
     /** Ground dug out to stand lower, by position, with the block that was there; filled in again on the way out. */
     private final Map<Long, BlockState> dug = new LinkedHashMap<>();
     /** Dug-out ground filled in with something else, for want of the block that was there; and spots never filled. */
@@ -378,8 +383,11 @@ public final class SchematicBuilder {
     private int noRoomDone = -1;
     /** When helper blocks were last taken out of a box for running low: not tried again for a while, should it fail. */
     private long helperFetchTick = -100_000;
-    /** Dropped helper blocks a walk went to pick up, by entity id: not walked to again, should they have stayed where they were. */
-    private final Set<Integer> pickupTried = new HashSet<>();
+    /**
+     * Walks made to pick up a dropped block, by entity id: a helper block is not walked to again, should it have stayed
+     * where it was; a block broken to go in again is, a few times.
+     */
+    private final Map<Integer, Integer> pickupTried = new HashMap<>();
     /** Walks planned to a dropped box since it broke, a few at a time; and whether the player was asked to pick it up. */
     private int boxWalks;
     /** Walks to where the placed box can be seen, and rounds of trying to get at it, since this box was placed. */
@@ -778,6 +786,8 @@ public final class SchematicBuilder {
         repairs.clear();
         repairDrops.clear();
         repairWalks.clear();
+        drains.clear();
+        drainedAt.clear();
         repairing = -1;
         helperFetchTick = -100_000;
         helpers.clear();
@@ -939,7 +949,7 @@ public final class SchematicBuilder {
                 continue;
             }
             double turn = away < 1e-6 ? 0 : Math.toDegrees(Math.acos(Mth.clamp(to.normalize().dot(view), -1, 1)));
-            boolean inHand = creative || atHand.contains(BlockRules.item(plan.target(i)));
+            boolean inHand = creative || atHand.contains(plan.item(i));
             order.put(i, turn / 60 + (inHand ? 0 : 2) + Math.sqrt(away) * 0.3);
         }
         candidates.sort(Comparator.comparingDouble(order::get));
@@ -1017,6 +1027,70 @@ public final class SchematicBuilder {
                 }
                 if (floods(level, pos, player.position())) {
                     // It would run where the player stands and push them off: poured from somewhere else.
+                    if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
+                    noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH);
+                    continue;
+                }
+                if (!creative && materials.loose(bucket) == 0) {
+                    startRestock(client, player, bucket, materials);
+                    return;
+                }
+                startAim(client, player, new Aim(Act.POUR, i, pour, bucket, pos, current, layerNumber));
+                return;
+            }
+            if (plan.soaking(i) && !BlockRules.fillsInPlace(current)) {
+                // In place but dry where the schematic has it full of water, and a chest or the like: clicked, it opens,
+                // and crouched, a bucket pours in front of it. As a player does it, it is broken, the water poured into its
+                // spot, and the block placed again into the water.
+                if (edge) continue;
+                if (drains.getOrDefault(i, 0) >= REPAIRS || !getsBack(player, current) || !safeToDrain(level, pos)) {
+                    // Left dry, and counted as failed: the build goes on rather than wait for it.
+                    if (debug()) LOGGER.info("Leaving {} at {} dry: it can't be broken to go in again into water", target, pos.toShortString());
+                    plan.giveUp(i);
+                    plan.update(level, i);
+                    continue;
+                }
+                if (!inView(player, eye, pos, reach - 0.25)) {
+                    if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
+                    noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH);
+                    continue;
+                }
+                drains.merge(i, 1, Integer::sum);
+                drainedAt.put(i, tick);
+                plan.drain(i);
+                Item item = BlockRules.item(target);
+                if (!creative && item != null) repairDrops.add(item);
+                if (debug()) LOGGER.info("Breaking {} at {} to place it again into water", target, pos.toShortString());
+                startBreak(pos);
+                repairing = i;
+                return;
+            }
+            if (plan.soaking(i) || plan.needsPour(i)) {
+                // A block in place but dry where the schematic has it full of water gets a bucket emptied onto it; the spot
+                // of one broken for that gets the water before the block goes in again. Either goes in with the layer's
+                // other water, as the water runs out of it as from a source.
+                Item bucket = Items.WATER_BUCKET;
+                if (!creative && materials.total(bucket) == 0) {
+                    if (!missing.contains(bucket)) missing.add(bucket);
+                    continue;
+                }
+                if (!creative && waitsForDrop(level, i, materials)) {
+                    // What breaking it dropped is picked up first: the water would carry it off.
+                    if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
+                    continue;
+                }
+                if (edge) continue;
+                if (player.isShiftKeyDown()) {
+                    stance(client, false);
+                    return;
+                }
+                PlacementSolver.Click pour = plan.soaking(i) ? PlacementSolver.fill(player, eye, pos, reach)
+                        : PlacementSolver.pour(level, player, eye, pos, Fluids.WATER, reach);
+                if (pour == null) {
+                    if (seen == null) seen = PlacementSolver.Problem.NO_VIEW;
+                    continue;
+                }
+                if (floods(level, pos, player.position())) {
                     if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
                     noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH);
                     continue;
@@ -1138,7 +1212,7 @@ public final class SchematicBuilder {
         if (!creative) {
             for (int i : candidates) {
                 if (plan.status(i) != BuildPlan.Status.PENDING) continue;
-                Item item = BlockRules.item(plan.target(i));
+                Item item = plan.item(i);
                 if (item != null && materials.total(item) == 0 && !missing.contains(item)) missing.add(item);
             }
         }
@@ -1248,7 +1322,7 @@ public final class SchematicBuilder {
         for (int j : plan.earlierNear(i)) {
             BuildPlan.Status st = plan.status(j);
             if (st == BuildPlan.Status.UNLOADED) return false;
-            if (st != BuildPlan.Status.PENDING) continue;
+            if (st != BuildPlan.Status.PENDING || plan.soaking(j) || plan.refilling(j)) continue;
             byte support = support(player, j, started);
             // Not worked out yet: it waits for a later decision.
             if (support == 0) return false;
@@ -1656,8 +1730,10 @@ public final class SchematicBuilder {
     private void fire(Minecraft client, LocalPlayer player) {
         Aim planned = aim;
         ClientLevel level = client.level;
+        // A block to fill with water that is gone, or stands otherwise, takes none: the bucket would pour into its spot.
         boolean changed = planned.act() == Act.POUR
                 ? plan.update(level, planned.index()) != BuildPlan.Status.PENDING
+                        || plan.kind(planned.index()) != BlockRules.Kind.FLUID && !plan.soaking(planned.index()) && !plan.needsPour(planned.index())
                 : level.getBlockState(planned.at()) != planned.before();
         if (changed) {
             aim = null;
@@ -1815,7 +1891,8 @@ public final class SchematicBuilder {
                 pitTries.keySet().removeIf(p -> Math.abs(p.x() - in.getX()) <= 3 && Math.abs(p.z() - in.getZ()) <= 3);
                 if (debug()) {
                     LocalPlayer player = Minecraft.getInstance().player;
-                    LOGGER.info("Placed {} at {}: {} face of {} at {}, look {} {} (clicked with {} {}){}", plan.target(i),
+                    boolean water = planned.act() == Act.POUR && plan.kind(i) != BlockRules.Kind.FLUID;
+                    LOGGER.info("{} {} at {}: {} face of {} at {}, look {} {} (clicked with {} {}){}", water ? "Poured water for" : "Placed", plan.target(i),
                             planned.at().toShortString(), hit.getDirection(), hit.getBlockPos().toShortString(), hit.getLocation(),
                             planned.click().yaw(), planned.click().pitch(), player == null ? "?" : Mth.wrapDegrees(player.getYRot()),
                             player == null ? "?" : player.getXRot(), planned.click().crouch() ? ", crouching" : "");
@@ -1824,7 +1901,9 @@ public final class SchematicBuilder {
                 plan.tried(i, planned.act() == Act.POUR ? Blocks.AIR.defaultBlockState() : planned.before());
                 paceAfterClick(delay());
                 BlockPos pos = planned.at();
-                show(layer + "placed " + plan.target(i).getBlock().getName().getString() + " at " + pos.getX() + " " + pos.getY() + " "
+                String done = planned.act() != Act.POUR || plan.kind(i) == BlockRules.Kind.FLUID ? "placed "
+                        : planned.before().getBlock() == plan.target(i).getBlock() ? "poured water into " : "poured water for ";
+                show(layer + done + plan.target(i).getBlock().getName().getString() + " at " + pos.getX() + " " + pos.getY() + " "
                         + pos.getZ(), false);
             }
         }
@@ -1973,21 +2052,23 @@ public final class SchematicBuilder {
         boolean helpersShort = loose < 64;
         List<ItemEntity> drops = player.level().getEntitiesOfClass(ItemEntity.class, player.getBoundingBox().inflate(8, 4, 8),
                 item -> (!helpersFull && isHelper(item.getItem()) || repairDrops.contains(item.getItem().getItem()))
-                        && !pickupTried.contains(item.getId()));
+                        && pickupTried.getOrDefault(item.getId(), 0) < (repairDrops.contains(item.getItem().getItem()) ? 3 : 1));
         drops.sort(Comparator.comparingDouble(item -> item.distanceToSqr(player)));
         Navigator.Node start = Navigator.standingAt(player.level(), player);
         for (ItemEntity drop : drops) {
             int most = helpersShort || repairDrops.contains(drop.getItem().getItem()) ? 12 : 3;
             // Further off than that, it is left for now, for when the player passes by.
             if (drop.distanceTo(player) > most + 2) continue;
-            pickupTried.add(drop.getId());
+            pickupTried.merge(drop.getId(), 1, Integer::sum);
             AABB item = drop.getBoundingBox();
-            // Picked up within a block of the body sideways and half a block up or down, as vanilla does.
+            // Picked up within a block of the body sideways and half a block up or down, as vanilla does; planned from the
+            // middle of the block half a block short of that sideways, as a walk comes to rest up to about that far off it.
             Navigator.Path path = navigator(player, false).limit(1500).find(start, node -> new AABB(node.x() + 0.2, node.feet(),
-                    node.z() + 0.2, node.x() + 0.8, node.feet() + 1.8, node.z() + 0.8).inflate(1, 0.5, 1).intersects(item) ? 1 : 0);
+                    node.z() + 0.2, node.x() + 0.8, node.feet() + 1.8, node.z() + 0.8).inflate(1 - PICKUP_SLACK, 0.5, 1 - PICKUP_SLACK)
+                    .intersects(item) ? 1 : 0);
             if (path == null || path.nodes().size() < 2 || dropsIntoTrap(player, path)) continue;
             if (path.nodes().size() - 1 > most) {
-                pickupTried.remove(drop.getId());
+                pickupTried.merge(drop.getId(), -1, Integer::sum);
                 continue;
             }
             releaseKeys(client);
@@ -1997,6 +2078,22 @@ public final class SchematicBuilder {
             return true;
         }
         return false;
+    }
+
+    /** How far off the middle of a block a walk to pick something up may come to rest, sideways. */
+    private static final double PICKUP_SLACK = 0.5;
+
+    /**
+     * Whether the water for block {@code i}, broken to go in again into water, waits for what breaking it dropped to be
+     * picked up: the water would carry it off. Without another of its item at hand it waits however long that takes; with
+     * one, ten seconds at most.
+     */
+    private boolean waitsForDrop(Level level, int i, Materials materials) {
+        if (!plan.needsPour(i)) return false;
+        Item own = BlockRules.item(plan.target(i));
+        if (own == null || level.getEntitiesOfClass(ItemEntity.class, new AABB(plan.pos(i)).inflate(8, 4, 8),
+                drop -> drop.getItem().is(own)).isEmpty()) return false;
+        return materials.total(own) == 0 || tick - drainedAt.getOrDefault(i, 0L) < 200;
     }
 
     /** Whether a helper block may go here: an empty, dry spot the schematic leaves empty, or only has water run through. */
@@ -2062,7 +2159,8 @@ public final class SchematicBuilder {
                 startBreak(at);
                 return true;
             }
-            if (serves < 0 || plan.update(client.level, serves) == BuildPlan.Status.PENDING) continue;
+            // A block placed against it that only waits for its water is done with it.
+            if (serves < 0 || plan.update(client.level, serves) == BuildPlan.Status.PENDING && !plan.soaking(serves)) continue;
             if (!missedMining(player, at) && inView(player, player.getEyePosition(), at, reach)) {
                 startBreak(at);
                 return true;
@@ -2305,6 +2403,28 @@ public final class SchematicBuilder {
         return true;
     }
 
+    /**
+     * Whether a block can be broken to go in again into water, as a chest is filled: water beside it may run into its
+     * spot, which gets water anyway, but nothing may rest on it, hang from it or grow on it, and no hopper may feed it.
+     */
+    private static boolean safeToDrain(Level level, BlockPos pos) {
+        for (Direction side : Direction.values()) {
+            BlockPos next = pos.relative(side);
+            BlockState there = level.getBlockState(next);
+            if (there.isAir() || there.getBlock() instanceof LiquidBlock || there.getBlock() instanceof BubbleColumnBlock) continue;
+            if (there.getBlock() instanceof HopperBlock && next.relative(there.getValue(HopperBlock.FACING)).equals(pos)) return false;
+            if (there.getBlock() instanceof FallingBlock) {
+                if (side == Direction.UP) return false;
+                continue;
+            }
+            if (there.isCollisionShapeFullBlock(level, next) || standsAlone(there)) continue;
+            if (side != Direction.UP && restsOnFloor(there)) continue;
+            if (there.getBlock() instanceof MultifaceBlock && !MultifaceBlock.hasFace(there, side.getOpposite())) continue;
+            return false;
+        }
+        return true;
+    }
+
     /** Blocks that rest on the block under them and on nothing else. */
     private static boolean restsOnFloor(BlockState state) {
         Block block = state.getBlock();
@@ -2467,8 +2587,8 @@ public final class SchematicBuilder {
         for (int i : candidates) {
             if (plan.status(i) != BuildPlan.Status.PENDING || support(player, i, started) != 1) continue;
             if (!lift && seals(player, i, started) == 1) continue;
-            Item item = BlockRules.item(plan.target(i));
-            if (item == null || !creative && materials.total(item) == 0) continue;
+            Item item = plan.item(i);
+            if (item == null || !creative && (materials.total(item) == 0 || waitsForDrop(level, i, materials))) continue;
             near.add(i);
             if (near.size() >= 48) break;
         }
@@ -2671,6 +2791,9 @@ public final class SchematicBuilder {
         if (plan.kind(i) == BlockRules.Kind.FLUID) {
             return !floods(level, pos, feet) && PlacementSolver.pour(level, player, eye, pos, target.getFluidState().getType(), reach) != null ? 2 : 0;
         }
+        if (plan.soaking(i) && !BlockRules.fillsInPlace(current)) return inView(player, eye, pos, reach - 0.25) ? 2 : 0;
+        if (plan.soaking(i)) return !floods(level, pos, feet) && PlacementSolver.fill(player, eye, pos, reach) != null ? 2 : 0;
+        if (plan.needsPour(i)) return !floods(level, pos, feet) && PlacementSolver.pour(level, player, eye, pos, Fluids.WATER, reach) != null ? 2 : 0;
         if (current.getBlock() == target.getBlock() && BlockRules.missing(current, target) == 0) {
             return PlacementSolver.use(player, eye, pos, reach, target) != null ? 2 : 0;
         }
@@ -3368,6 +3491,8 @@ public final class SchematicBuilder {
                 BlockRules.Kind kind = BlockRules.kind(target);
                 if (kind == BlockRules.Kind.FLUID) counts.merge(BlockRules.item(target), 1, Integer::sum);
                 else if (kind == BlockRules.Kind.PLACE) counts.merge(BlockRules.item(target), BlockRules.itemsNeeded(air, target), Integer::sum);
+                // A block full of water takes a bucket of it besides.
+                if (kind == BlockRules.Kind.PLACE && BlockRules.soaked(target)) counts.merge(Items.WATER_BUCKET, 1, Integer::sum);
             }
             Map<Item, Integer> sorted = new LinkedHashMap<>();
             counts.entrySet().stream().sorted(Map.Entry.<Item, Integer>comparingByValue().reversed())
@@ -4028,9 +4153,10 @@ public final class SchematicBuilder {
                 if (st != BuildPlan.Status.PENDING && st != BuildPlan.Status.UNLOADED) continue;
                 // Water and kelp wait for the solid blocks of their layer: their buckets, a slot each, stay in the box till then.
                 if (plan.wetWaits(i)) continue;
-                Item item = BlockRules.item(plan.target(i));
+                Item item = plan.item(i);
                 if (item == null) continue;
-                int count = plan.kind(i) == BlockRules.Kind.FLUID ? 1 : BlockRules.itemsNeeded(level.getBlockState(plan.pos(i)), plan.target(i));
+                int count = plan.kind(i) == BlockRules.Kind.FLUID || plan.soaking(i) ? 1
+                        : BlockRules.itemsNeeded(level.getBlockState(plan.pos(i)), plan.target(i));
                 needs.merge(item, count, Integer::sum);
             }
         }
@@ -4193,7 +4319,7 @@ public final class SchematicBuilder {
                 if (Vec3.atCenterOf(pos).distanceToSqr(at) > PREVIEW_RANGE * PREVIEW_RANGE) continue;
                 int color;
                 if (st == BuildPlan.Status.PENDING) {
-                    Item item = BlockRules.item(plan.target(i));
+                    Item item = plan.item(i);
                     color = i == nextIndex ? 0xFFFFFF : missing.contains(item) ? 0xFF6F6F : accent;
                 } else if (st == BuildPlan.Status.WRONG || st == BuildPlan.Status.MISPLACED || st == BuildPlan.Status.FAILED) {
                     color = 0xF28C52;

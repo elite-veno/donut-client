@@ -10,10 +10,13 @@ import java.util.Map;
 import java.util.TreeMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.phys.AABB;
 
 /**
@@ -65,6 +68,16 @@ public final class BuildPlan {
     /** Each block's layer, by its place from the bottom (-1 for none); and the blocks not wet still to go in, by layer. */
     private final int[] layerOf;
     private int[] dryLeft = new int[0];
+    /** Whether each block is counted in {@link #dryLeft} now. */
+    private final boolean[] inDryLeft;
+    /**
+     * Whether each block holds water in the schematic; of those, whether it stands placed but still dry, whether it was
+     * taken away to go in again into water, and whether its spot holds that water now.
+     */
+    private final boolean[] soak;
+    private final boolean[] dryDone;
+    private final boolean[] drained;
+    private final boolean[] waterIn;
     public final AABB bounds;
     private int cursor;
     private Map<Item, Integer> needs = Map.of();
@@ -83,6 +96,11 @@ public final class BuildPlan {
         supportStamp = new long[n];
         support = new byte[n];
         wet = new boolean[n];
+        inDryLeft = new boolean[n];
+        soak = new boolean[n];
+        dryDone = new boolean[n];
+        drained = new boolean[n];
+        waterIn = new boolean[n];
         layerOf = new int[n];
         Arrays.fill(layerOf, -1);
         int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
@@ -95,6 +113,7 @@ public final class BuildPlan {
             status[i] = placed(i) ? Status.UNLOADED : Status.SKIPPED;
             counts[status[i].ordinal()]++;
             wet[i] = BlockRules.wet(targets[i]);
+            soak[i] = kinds[i] == BlockRules.Kind.PLACE && BlockRules.soaked(targets[i]);
             minX = Math.min(minX, pos.getX());
             minY = Math.min(minY, pos.getY());
             minZ = Math.min(minZ, pos.getZ());
@@ -113,7 +132,10 @@ public final class BuildPlan {
         for (int[] layer : layers.values()) {
             for (int i : layer) {
                 layerOf[i] = number;
-                if (!wet[i] && left(status[i])) dryLeft[number]++;
+                if (!wet[i] && left(status[i])) {
+                    dryLeft[number]++;
+                    inDryLeft[i] = true;
+                }
             }
             number++;
         }
@@ -193,12 +215,37 @@ public final class BuildPlan {
     public boolean wet(int i) { return wet[i]; }
 
     /**
-     * Whether wet block {@code i} still waits: blocks other than water, lava and what grows in water are still to go in,
-     * or not read yet, in its layer or one below it. Water flows sideways and down only, so those are what hold it in;
-     * it goes in before the layer above roofs it over, while it can still be reached from above.
+     * Whether block {@code i} stands as the schematic has it but for the water it holds, a chest or trapdoor placed dry:
+     * a bucket poured into it is all it still takes. It counts as in for the blocks placed after it, and gets its water
+     * with the rest of its layer's.
+     */
+    public boolean soaking(int i) { return dryDone[i] && status[i] == Status.PENDING; }
+
+    /**
+     * Notes that block {@code i}, {@link #soaking}, is taken away to go in again into water, as a chest is filled: water
+     * poured into its spot first, then the block placed into it.
+     */
+    public void drain(int i) {
+        if (soak[i]) drained[i] = true;
+    }
+
+    /** Whether block {@code i} was taken away to go in again into water, and its spot is still without it. */
+    public boolean refilling(int i) { return drained[i] && status[i] == Status.PENDING && !dryDone[i]; }
+
+    /** Whether block {@code i} is {@link #refilling} and its spot wants the water poured first. */
+    public boolean needsPour(int i) { return refilling(i) && !waterIn[i]; }
+
+    /** The item block {@code i} takes next: a water bucket for one {@link #soaking} or {@link #needsPour}, else its own. */
+    public Item item(int i) { return soaking(i) || needsPour(i) ? Items.WATER_BUCKET : BlockRules.item(targets[i]); }
+
+    /**
+     * Whether wet block {@code i}, or one {@link #soaking} or {@link #refilling}, still waits: blocks other than water,
+     * lava and what grows in water are still to go in, or not read yet, in its layer or one below it. Water flows sideways
+     * and down only, so those are what hold it in; it goes in before the layer above roofs it over, while it can still be
+     * reached from above.
      */
     public boolean wetWaits(int i) {
-        if (!wet[i] || layerOf[i] < 0) return false;
+        if (!wet[i] && !soaking(i) && !refilling(i) || layerOf[i] < 0) return false;
         for (int layer = 0; layer <= layerOf[i]; layer++) if (dryLeft[layer] > 0) return true;
         return false;
     }
@@ -230,7 +277,9 @@ public final class BuildPlan {
                 Item item = BlockRules.item(targets[cursor]);
                 BlockState current = now == Status.UNLOADED ? net.minecraft.world.level.block.Blocks.AIR.defaultBlockState()
                         : level.getBlockState(pos(cursor));
-                int need = kinds[cursor] == BlockRules.Kind.FLUID ? 1 : BlockRules.itemsNeeded(current, targets[cursor]);
+                boolean bucket = soaking(cursor) || needsPour(cursor);
+                int need = kinds[cursor] == BlockRules.Kind.FLUID || bucket ? 1 : BlockRules.itemsNeeded(current, targets[cursor]);
+                if (bucket) item = Items.WATER_BUCKET;
                 if (item != null && need > 0) needsBuilding.merge(item, need, Integer::sum);
             }
             if (++cursor == n) {
@@ -243,23 +292,41 @@ public final class BuildPlan {
 
     /** What block {@code i} needs now, read from the world. */
     public Status update(Level level, int i) {
-        Status now = compute(level, i);
+        if (!placed(i)) return set(i, Status.SKIPPED);
+        if (!LoadedChunks.has(level, pos(i))) return set(i, Status.UNLOADED);
+        return update(i, level.getBlockState(pos(i)));
+    }
+
+    /** What block {@code i} needs with {@code current} in its spot, as read from the world. */
+    Status update(int i, BlockState current) {
+        return set(i, placed(i) ? compute(current, i) : Status.SKIPPED);
+    }
+
+    private Status set(int i, Status now) {
+        if (now != Status.PENDING) {
+            dryDone[i] = false;
+            waterIn[i] = false;
+        }
+        if (now == Status.DONE || now == Status.SKIPPED) drained[i] = false;
         if (now != status[i]) {
             counts[status[i].ordinal()]--;
             counts[now.ordinal()]++;
-            if (!wet[i] && layerOf[i] >= 0 && left(status[i]) != left(now)) {
-                dryLeft[layerOf[i]] += left(now) ? 1 : -1;
-            }
             status[i] = now;
+        }
+        // A block standing dry for its water, or taken away to go in again into water, is in for the layer's other blocks:
+        // the water waits for those, not they for it.
+        boolean dry = !wet[i] && layerOf[i] >= 0 && left(now) && !dryDone[i] && !drained[i];
+        if (dry != inDryLeft[i]) {
+            dryLeft[layerOf[i]] += dry ? 1 : -1;
+            inDryLeft[i] = dry;
         }
         return now;
     }
 
-    private Status compute(Level level, int i) {
-        if (!placed(i)) return Status.SKIPPED;
-        BlockPos pos = pos(i);
-        if (!LoadedChunks.has(level, pos)) return Status.UNLOADED;
-        BlockState current = level.getBlockState(pos), target = targets[i];
+    private Status compute(BlockState current, int i) {
+        BlockState target = targets[i];
+        dryDone[i] = false;
+        waterIn[i] = false;
         if (kinds[i] == BlockRules.Kind.FLUID) {
             // Only a source counts: water flowing past is no source, and the builder pours over it. Kelp grown up into
             // it, or a bubble column it turned into, is that water still.
@@ -268,12 +335,17 @@ public final class BuildPlan {
             return current.canBeReplaced() ? Status.PENDING : Status.WRONG;
         }
         if (BlockRules.satisfied(current, target)) return Status.DONE;
+        dryDone[i] = soak[i] && BlockRules.needsWater(current, target) && BlockRules.placedFully(current, target);
+        waterIn[i] = drained[i] && current.getBlock() instanceof LiquidBlock && current.getFluidState().isSourceOfType(Fluids.WATER);
         if (failed[i]) return Status.FAILED;
         if (BlockRules.sameBlock(current.getBlock(), target.getBlock())) {
             return BlockRules.placementMatches(current, target) ? Status.PENDING : Status.MISPLACED;
         }
         return current.canBeReplaced() ? Status.PENDING : Status.WRONG;
     }
+
+    /** Gives up on block {@code i}: it counts as failed until it stands as the schematic has it. */
+    public void giveUp(int i) { failed[i] = true; }
 
     /** Notes a click at block {@code i}; three in a row that leave it unchanged give up on it. */
     public void tried(int i, BlockState before) {

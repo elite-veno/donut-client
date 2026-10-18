@@ -203,7 +203,40 @@ public final class BlockRules {
 
     /** The world's block is the target as far as the builder can make it. */
     public static boolean satisfied(BlockState current, BlockState target) {
+        return placedFully(current, target) && !needsWater(current, target);
+    }
+
+    /**
+     * As {@link #satisfied}, but for the water a waterlogged target holds: placed, topped up and clicked as it should be.
+     */
+    public static boolean placedFully(BlockState current, BlockState target) {
         return placementMatches(current, target) && missing(current, target) == 0 && adjustClicks(current, target) == 0;
+    }
+
+    /**
+     * Whether the target stands full of water, as a chest, trapdoor, slab or leaves can: placed dry like any block, then
+     * filled from a bucket. A block full of water runs it out as a source does, and many farms feed their item streams
+     * from one, so leaving it dry is no small difference.
+     */
+    public static boolean soaked(BlockState target) {
+        return target.hasProperty(BlockStateProperties.WATERLOGGED) && target.getValue(BlockStateProperties.WATERLOGGED);
+    }
+
+    /** Whether the world's block is the soaked target's block, still dry. */
+    public static boolean needsWater(BlockState current, BlockState target) {
+        return soaked(target) && current.getBlock() == target.getBlock() && current.hasProperty(BlockStateProperties.WATERLOGGED)
+                && !current.getValue(BlockStateProperties.WATERLOGGED);
+    }
+
+    /**
+     * Whether a bucket emptied onto the placed block, standing, fills it with water, as with slabs, stairs, leaves or bars.
+     * Clicked, a block with a use, a chest or a wooden trapdoor, is used instead; and crouched, the bucket pours in front
+     * of what it is aimed at rather than into it. Such a block is filled as a player fills one: placed into water.
+     */
+    public static boolean fillsInPlace(BlockState state) {
+        Block block = state.getBlock();
+        if (block instanceof TrapDoorBlock) return !openByHand(state);
+        return !interactive(block);
     }
 
     /** Whether a glow lichen or the like grows on {@code side} of its spot. */

@@ -234,12 +234,26 @@ public final class PlacementSolver {
      * come from its far side. It is clicked standing: crouching with something in hand would skip the block's use.
      */
     public static Click use(LocalPlayer player, Vec3 eye, BlockPos pos, double reach, BlockState target) {
+        Direction keep = target.getBlock() instanceof FenceGateBlock ? target.getValue(FenceGateBlock.FACING) : null;
+        return onBlock(player, eye, pos, reach, keep, false);
+    }
+
+    /**
+     * How to pour water from a bucket into the block at {@code pos} itself, a slab or leaves the schematic has full of
+     * water, looked at from {@code eye}: the nearest spot on it in view. The bucket fills a block that takes water where
+     * its trace meets it, whichever face that is. It is clicked standing: crouched, the bucket pours in front of it.
+     */
+    public static Click fill(LocalPlayer player, Vec3 eye, BlockPos pos, double reach) {
+        return onBlock(player, eye, pos, reach, null, false);
+    }
+
+    /** The nearest spot in view on the block at {@code pos}, with no look from the far side of {@code keep}. */
+    private static Click onBlock(LocalPlayer player, Vec3 eye, BlockPos pos, double reach, Direction keep, boolean crouch) {
         Level level = player.level();
         BlockState state = level.getBlockState(pos);
         VoxelShape shape = state.getShape(level, pos);
         if (shape.isEmpty()) return null;
         AABB box = shape.bounds();
-        Direction keep = target.getBlock() instanceof FenceGateBlock ? target.getValue(FenceGateBlock.FACING) : null;
         Click best = null;
         double bestDistance = Double.MAX_VALUE;
         for (Direction face : Direction.values()) {
@@ -252,7 +266,7 @@ public final class PlacementSolver {
                     if (keep != null && Direction.fromYRot(look[0]) == keep.getOpposite()) continue;
                     BlockHitResult seen = seen(level, player, eye, point, face);
                     if (seen == null || !seen.getBlockPos().equals(pos)) continue;
-                    best = new Click(seen, look[0], look[1], false);
+                    best = new Click(seen, look[0], look[1], crouch);
                     bestDistance = distance;
                 }
             }

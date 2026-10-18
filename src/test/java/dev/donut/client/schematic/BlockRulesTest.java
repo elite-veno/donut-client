@@ -167,6 +167,45 @@ class BlockRulesTest {
     }
 
     @Test
+    void blocksFullOfWaterArePlacedDryAndFilledAfter() {
+        BlockState chest = Blocks.CHEST.defaultBlockState().setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.EAST);
+        BlockState wetChest = chest.setValue(BlockStateProperties.WATERLOGGED, true);
+        assertTrue(BlockRules.soaked(wetChest));
+        assertFalse(BlockRules.soaked(chest));
+        assertEquals(BlockRules.Kind.PLACE, BlockRules.kind(wetChest), "placed with its own item");
+        assertEquals(net.minecraft.world.item.Items.CHEST, BlockRules.item(wetChest));
+        assertFalse(BlockRules.wet(wetChest), "it goes in with the solid blocks");
+        assertTrue(BlockRules.placementMatches(chest, wetChest), "placing it dry starts it");
+        assertTrue(BlockRules.placedFully(chest, wetChest));
+        assertTrue(BlockRules.needsWater(chest, wetChest));
+        assertFalse(BlockRules.satisfied(chest, wetChest), "dry, it is not done: its water feeds what flows from it");
+        assertTrue(BlockRules.satisfied(wetChest, wetChest));
+        assertFalse(BlockRules.needsWater(Blocks.AIR.defaultBlockState(), wetChest), "the chest itself goes in first");
+        assertTrue(BlockRules.satisfied(wetChest, chest), "water in a block meant dry is left as it is");
+
+        BlockState trapdoor = Blocks.MANGROVE_TRAPDOOR.defaultBlockState().setValue(BlockStateProperties.HALF, Half.TOP)
+                .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.SOUTH);
+        BlockState wetTrapdoor = trapdoor.setValue(BlockStateProperties.WATERLOGGED, true);
+        assertTrue(BlockRules.needsWater(trapdoor, wetTrapdoor));
+        assertFalse(BlockRules.satisfied(trapdoor, wetTrapdoor));
+        assertFalse(BlockRules.placedFully(trapdoor.setValue(BlockStateProperties.HALF, Half.BOTTOM), wetTrapdoor), "a bottom trapdoor is no top one");
+
+        BlockState leaves = Blocks.PALE_OAK_LEAVES.defaultBlockState().setValue(BlockStateProperties.PERSISTENT, true);
+        BlockState wetLeaves = leaves.setValue(BlockStateProperties.DISTANCE, 7).setValue(BlockStateProperties.WATERLOGGED, true);
+        assertTrue(BlockRules.needsWater(leaves.setValue(BlockStateProperties.DISTANCE, 3), wetLeaves));
+        assertFalse(BlockRules.satisfied(leaves, wetLeaves));
+        assertTrue(BlockRules.satisfied(wetLeaves.setValue(BlockStateProperties.DISTANCE, 2), wetLeaves), "a leaf's distance is the game's");
+
+        assertFalse(BlockRules.soaked(Blocks.IRON_BARS.defaultBlockState()), "dry bars stay dry");
+
+        assertFalse(BlockRules.fillsInPlace(chest), "clicked, a chest opens");
+        assertFalse(BlockRules.fillsInPlace(trapdoor), "clicked, a wooden trapdoor opens");
+        assertTrue(BlockRules.fillsInPlace(Blocks.IRON_TRAPDOOR.defaultBlockState()), "no hand opens an iron one");
+        assertTrue(BlockRules.fillsInPlace(leaves));
+        assertTrue(BlockRules.fillsInPlace(Blocks.OAK_SLAB.defaultBlockState()));
+    }
+
+    @Test
     void aKelpStemIsPlacedAsKelpAndCountsAsIt() {
         BlockState stem = Blocks.KELP_PLANT.defaultBlockState(), tip = Blocks.KELP.defaultBlockState();
         assertEquals(BlockRules.Kind.PLACE, BlockRules.kind(stem));

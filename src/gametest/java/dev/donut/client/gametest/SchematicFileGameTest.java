@@ -24,6 +24,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.Mirror;
@@ -127,6 +128,7 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                         s.overworld().setBlock(pos, target, Block.UPDATE_CLIENTS);
                         Item item = BlockRules.item(target);
                         if (item != null) taken.merge(item, kind == BlockRules.Kind.FLUID ? 1 : BlockRules.itemsNeeded(air, target), Integer::sum);
+                        if (kind == BlockRules.Kind.PLACE && BlockRules.soaked(target)) taken.merge(Items.WATER_BUCKET, 1, Integer::sum);
                         n++;
                     }
                     return n;
