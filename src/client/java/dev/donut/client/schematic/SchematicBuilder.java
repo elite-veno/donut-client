@@ -1267,7 +1267,12 @@ public final class SchematicBuilder {
             noClickCrouch = player.isShiftKeyDown();
             noClickTick = tick;
         }
+        // A block whose going in would take the last look at a farther one still to go in here waits for it, as long as
+        // something else goes in this tick; else it goes in after all.
+        Aim held = null;
+        int place = -1;
         for (int i : candidates) {
+            place++;
             BlockPos pos = plan.pos(i);
             boolean far = Vec3.atCenterOf(pos).distanceTo(eye) > reach + 1;
             if (plan.status(i) == BuildPlan.Status.UNLOADED) {
@@ -1301,7 +1306,10 @@ public final class SchematicBuilder {
                 helpersHeld.add(i);
                 continue;
             }
-            if (System.nanoTime() - started > PLAN_NANOS) return;
+            if (System.nanoTime() - started > PLAN_NANOS) {
+                if (held != null) startAim(client, player, held);
+                return;
+            }
             BlockState current = level.getBlockState(pos), target = plan.target(i);
             if (plan.kind(i) == BlockRules.Kind.FLUID) {
                 // Just filled a bucket from it: it comes back by itself, or is found not to, in a moment.
@@ -1494,7 +1502,22 @@ public final class SchematicBuilder {
                 startRestock(client, player, item, materials);
                 return;
             }
-            startAim(client, player, new Aim(Act.PLACE, i, result.click(), item, pos, current, layerNumber));
+            Aim aim = new Aim(Act.PLACE, i, result.click(), item, pos, current, layerNumber);
+            if (held == null && System.nanoTime() - started < PLAN_NANOS) {
+                int behind = takesLastLook(player, i, candidates.subList(place + 1, candidates.size()), atHandItems(player), reach);
+                if (behind >= 0) {
+                    if (debug()) LOGGER.info("{} at {} waits: it would take the last look at {} at {}", target, pos.toShortString(),
+                            plan.target(behind), plan.pos(behind).toShortString());
+                    held = aim;
+                    continue;
+                }
+            }
+            startAim(client, player, aim);
+            return;
+        }
+        if (held != null) {
+            // What it waited for didn't go in after all.
+            startAim(client, player, held);
             return;
         }
         // Nothing in reach goes in without a helper: the helpers held back go down as before, in order.
@@ -2234,6 +2257,56 @@ public final class SchematicBuilder {
         }
         plan.support(i, stamp, supported);
         return plan.support(i, stamp);
+    }
+
+    /** The items in the hotbar. */
+    private static Set<Item> atHandItems(LocalPlayer player) {
+        Set<Item> items = new HashSet<>();
+        for (int slot = 0; slot < Inventory.getSelectionSize(); slot++) items.add(player.getInventory().getItem(slot).getItem());
+        return items;
+    }
+
+    /** How many farther blocks {@link #takesLastLook} weighs at most: each costs two look searches. */
+    private static final int LAST_LOOK_CHECKS = 4;
+
+    /**
+     * Of {@code later}, a farther block still to go in that has a look from where the player stands now and would have
+     * none with block {@code i} in place, its cell in the way of every one: the first such, or -1. Only blocks the line
+     * from the eye to a face of passes through {@code i}'s cell are weighed, and a few at most.
+     */
+    private int takesLastLook(LocalPlayer player, int i, List<Integer> later, Set<Item> atHand, double reach) {
+        if (plan.kind(i) != BlockRules.Kind.PLACE) return -1;
+        Level level = player.level();
+        Vec3 eye = player.getEyePosition();
+        BlockPos pos = plan.pos(i);
+        AABB cell = new AABB(pos).deflate(0.05);
+        double near = Vec3.atCenterOf(pos).distanceToSqr(eye);
+        boolean creative = player.hasInfiniteMaterials();
+        Overlay placed = null;
+        int checks = 0;
+        for (int j : later) {
+            BlockPos behind = plan.pos(j);
+            Vec3 middle = Vec3.atCenterOf(behind);
+            double far = middle.distanceToSqr(eye);
+            if (far <= near || far > (reach + 0.5) * (reach + 0.5)) continue;
+            if (plan.kind(j) != BlockRules.Kind.PLACE || plan.status(j) != BuildPlan.Status.PENDING || noClickHere.containsKey(j)) continue;
+            Item item = BlockRules.item(plan.target(j));
+            if (item == null || !creative && !atHand.contains(item)) continue;
+            boolean inLine = cell.clip(eye, middle).isPresent();
+            for (Direction side : Direction.values()) {
+                if (inLine) break;
+                inLine = cell.clip(eye, middle.add(side.getStepX() * 0.5, side.getStepY() * 0.5, side.getStepZ() * 0.5)).isPresent();
+            }
+            if (!inLine) continue;
+            if (checks++ >= LAST_LOOK_CHECKS) break;
+            int index = j;
+            LongPredicate notThere = at -> unclickable(at, index);
+            ItemStack stack = new ItemStack(item);
+            if (PlacementSolver.fromSpot(player, level, player.position(), behind, plan.target(j), stack, reach, notThere) == null) continue;
+            if (placed == null) placed = new Overlay(level, Map.of(pos.asLong(), plan.target(i)));
+            if (PlacementSolver.fromSpot(player, placed, player.position(), behind, plan.target(j), stack, reach, notThere) == null) return j;
+        }
+        return -1;
     }
 
     /** Whether a placement for block {@code i} must leave this block alone: helper blocks come out again, except its own. */
