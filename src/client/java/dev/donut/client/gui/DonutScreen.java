@@ -646,10 +646,12 @@ public final class DonutScreen extends Screen {
             c.toggle("breaks", "Breaks", "Stops now and then for a while and looks about, as a player does",
                     () -> s.breaks, () -> s.breaks = !s.breaks);
             if (s.breaks) {
-                c.slider("breakEvery", "Break every", "About how often; each wait is up to a third shorter or longer",
+                c.slider("breakEvery", "Break every", "About how often; most waits near it, now and then much sooner or later",
                         () -> s.breakEvery, v -> s.breakEvery = v, 1, 30, 0.5, v -> String.format(Locale.ROOT, "%.1f min", v));
-                c.slider("breakLength", "Longest break", "Each break lasts between a fifth of this and all of it",
+                c.slider("breakLength", "Longest break", "Most breaks last about half of this, a few all of it",
                         () -> s.breakLength, v -> s.breakLength = v, 5, 120, 1, v -> String.format(Locale.ROOT, "%.0f s", v));
+                c.slider("pauseEvery", "Pause every", "About how often a pause of a second or a few comes between blocks, to look about",
+                        () -> s.pauseEvery, v -> s.pauseEvery = v, 15, 300, 5, v -> String.format(Locale.ROOT, "%.0f s", v));
             }
             c.section("Moving");
             c.toggle("walk", "Walk", "Walks, jumps and climbs to each block by itself, as a player on foot; off, you walk and it places what comes in reach",

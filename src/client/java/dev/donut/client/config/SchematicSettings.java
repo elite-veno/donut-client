@@ -27,6 +27,8 @@ public final class SchematicSettings {
     public double breakEvery = 4;
     /** The longest break, in seconds: each lasts between a fifth of it and all of it. */
     public double breakLength = 25;
+    /** About how often, in seconds, a pause of a second or a few comes between blocks, a look about, with breaks on. */
+    public double pauseEvery = 45;
     /** How quickly the view turns, as a share of a player's usual pace: never a jump, only a quicker or calmer hand. */
     public double turnSpeed = 1;
     /** After a click, the longest moment before the view turns on to the next block, in seconds; each is a third to all of it. */
@@ -74,6 +76,7 @@ public final class SchematicSettings {
         if (maxDelay < minDelay) maxDelay = minDelay;
         breakEvery = Double.isFinite(breakEvery) ? Math.clamp(breakEvery, 1, 30) : 4;
         breakLength = Double.isFinite(breakLength) ? Math.clamp(breakLength, 5, 120) : 25;
+        pauseEvery = Double.isFinite(pauseEvery) ? Math.clamp(pauseEvery, 15, 300) : 45;
         // Slower than this, turning round on the spot outlasts the walker's patience; quicker, a turn is near a flick.
         turnSpeed = Double.isFinite(turnSpeed) ? Math.clamp(turnSpeed, 0.8, 2) : 1;
         reaction = Double.isFinite(reaction) ? Math.clamp(reaction, 0, 0.5) : 0.12;

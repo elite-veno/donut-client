@@ -306,6 +306,9 @@ public final class SchematicBuilder {
     private final Walker walker = new Walker(head);
     /** When the next break starts, and while on one, when it ends and where the player glances next and when. */
     private long breakAt = -1, breakEnds = -1, nextGlance;
+    /** When the next pause of a second or a few comes, and whether the one under way is such a pause rather than a break. */
+    private long pauseAt = -1;
+    private boolean pausing;
     private float glanceYaw, glancePitch;
     private int walkFailures;
     /** For the debug log: the blocks the walk under way was planned for, and where it was to end. */
@@ -887,15 +890,18 @@ public final class SchematicBuilder {
         SchematicSettings s = settings();
         long now = System.nanoTime();
         if (!s.breaks) {
-            breakAt = breakEnds = -1;
+            breakAt = breakEnds = pauseAt = -1;
             return false;
         }
         ThreadLocalRandom random = ThreadLocalRandom.current();
         if (breakEnds > 0) {
             if (now - breakEnds >= 0) {
                 breakEnds = -1;
-                breakAt = -1;
-                nextAction = now + 300_000_000L;
+                if (pausing) pauseAt = -1;
+                else breakAt = pauseAt = -1;
+                pausing = false;
+                // Back to it after a moment, mostly a short one.
+                nextAction = now + (long) (skewed(random, 0.4, 0.5, 0.2, 1.2) * 1e9);
                 show("Back to building", false);
                 return false;
             }
@@ -906,25 +912,42 @@ public final class SchematicBuilder {
                 nextGlance = now + (long) ((1.2 + random.nextDouble() * 3.5) * 1e9);
             }
             head.aim(player, glanceYaw, glancePitch);
-            show("Taking a short break (" + (breakEnds - now + 999_999_999L) / 1_000_000_000L + " s)", false);
+            show(pausing ? "Looking about" : "Taking a short break (" + (breakEnds - now + 999_999_999L) / 1_000_000_000L + " s)", false);
             return true;
         }
         if (breakAt < 0) {
-            // Every few minutes, a third either way of the setting.
-            double minutes = s.breakEvery * (0.67 + random.nextDouble() * 0.66);
+            // Every few minutes as set, mostly near it, now and then much sooner or later: no two stretches alike.
+            double minutes = skewed(random, s.breakEvery, 0.5, s.breakEvery * 0.25, s.breakEvery * 3);
             breakAt = now + (long) (minutes * 60e9);
             return false;
         }
-        if (now - breakAt < 0 || !player.onGround() || player.isInWater()) return false;
-        double seconds = s.breakLength * (0.2 + random.nextDouble() * 0.8);
+        if (pauseAt < 0) {
+            pauseAt = now + (long) (skewed(random, s.pauseEvery, 0.6, s.pauseEvery * 0.2, s.pauseEvery * 4) * 1e9);
+            return false;
+        }
+        if (!player.onGround() || player.isInWater()) return false;
+        boolean breakDue = now - breakAt >= 0;
+        if (!breakDue && now - pauseAt < 0) return false;
+        pausing = !breakDue;
+        // A break mostly about half the longest, a few as long; a pause a second or two, a few some seconds.
+        double seconds = pausing ? skewed(random, 1.6, 0.5, 0.8, 4)
+                : skewed(random, s.breakLength * 0.45, 0.6, Math.min(3, s.breakLength), s.breakLength);
         breakEnds = now + (long) (seconds * 1e9);
         nextGlance = now + (long) (random.nextDouble() * 1.5e9);
         glanceYaw = player.getYRot();
         glancePitch = player.getXRot();
         releaseKeys(client);
         if (player.isShiftKeyDown() && !onNarrowEdge(player)) setCrouch(client, false);
-        if (debug()) LOGGER.info("A break of {} s", Math.round(seconds));
+        if (debug()) LOGGER.info(pausing ? "A pause of {} s" : "A break of {} s", String.format(Locale.ROOT, "%.1f", seconds));
         return true;
+    }
+
+    /**
+     * A time about {@code median}, as people's pauses go: most near it, a few much longer, fewer much shorter (log-normal
+     * with {@code sigma}), within {@code least} and {@code most}.
+     */
+    private static double skewed(ThreadLocalRandom random, double median, double sigma, double least, double most) {
+        return Math.clamp(median * Math.exp(sigma * random.nextGaussian()), least, Math.max(least, most));
     }
 
     private boolean begin(Minecraft client, LocalPlayer player) {
