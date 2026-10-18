@@ -67,6 +67,16 @@ final class Walker {
     private static final int SPRINT_FOOD = 14;
     /** How many ticks of the walk the log gets when it fails. */
     private static final int TRAIL = 12;
+    /**
+     * How far, in degrees, the block a walk is for may drift from the eyes kept on it before they catch up: between
+     * these, picked for each walk.
+     */
+    private static final float SLACK_MIN = 0.5f, SLACK_MAX = 1.4f;
+    /**
+     * The pitch the eyes come back toward on the way, in degrees, a little below the horizon; how far each new pitch
+     * goes back toward it; and how far each may wander off, as a spread, in degrees.
+     */
+    private static final float EYE_LEVEL = 15, BACK_TO_LEVEL = 0.2f, PITCH_WANDER = 2;
 
     private final Head head;
     private List<Navigator.Node> path;
@@ -79,6 +89,14 @@ final class Walker {
     private int strafeHold;
     /** What the player turns toward while coming to rest at the end, as the block the walk is for; null for nothing. */
     private Vec3 lookAt;
+    /** How far this walk lets {@link #lookAt} drift from the eyes before they catch up, in degrees. */
+    private float slack;
+    /**
+     * The pitch the eyes keep on the way, a new one now and then, as a player's rise and fall a little as they walk; NaN
+     * until the walk's first turn picks one; and for how many more ticks it holds.
+     */
+    private float walkPitch = Float.NaN;
+    private int walkPitchFor;
     /**
      * Whether this walk sidesteps: a few steps on open ground toward more of the same work, which a player takes
      * without turning away from it, keys to the side, the view on the next block. Worked out on the walk's first tick.
@@ -124,6 +142,8 @@ final class Walker {
             offsets[i] = new double[] {(random.nextDouble() * 2 - 1) * WANDER, (random.nextDouble() * 2 - 1) * WANDER};
         }
         hesitate = random.nextInt(100) < hesitateChance ? 3 + random.nextInt(8) : 0;
+        slack = SLACK_MIN + random.nextFloat() * (SLACK_MAX - SLACK_MIN);
+        walkPitch = Float.NaN;
         sidestep = null;
         bridgeCrouch = false;
         edgeCrouch = false;
@@ -157,7 +177,7 @@ final class Walker {
             // the aim after it has less to turn.
             if (lookAt != null) {
                 float[] look = PlacementSolver.look(player.getEyePosition(), lookAt);
-                head.turn(player, look[0], look[1]);
+                head.follow(player, look[0], look[1], slack);
             }
             // Wait until the player has as good as come to rest, so a block placed next is aimed from where they stand: a
             // last few centimetres of slide the aim follows, as it is worked out again from the eye each tick.
@@ -250,7 +270,7 @@ final class Walker {
             brake(client, player);
             if (lookAt != null) {
                 float[] look = PlacementSolver.look(player.getEyePosition(), lookAt);
-                head.turn(player, look[0], look[1]);
+                head.follow(player, look[0], look[1], slack);
             }
             return State.WALKING;
         }
@@ -259,9 +279,9 @@ final class Walker {
                 && to.move() == Navigator.Move.WALK && open(player, to) && open(player, from);
         if (sidestep || eyesAhead) {
             // The view stays on the work, turning calmly toward the block the walk is for; the feet step there sideways
-            // or back as needed, as a player building a row does.
+            // or back as needed, as a player building a row does. The eyes follow it as a player's do, a little behind.
             float[] look = PlacementSolver.look(player.getEyePosition(), lookAt);
-            head.turn(player, look[0], look[1]);
+            head.follow(player, look[0], look[1], slack);
             boolean go = distance > (last ? 0.2 : 0.05) || player.getDeltaMovement().horizontalDistanceSqr() < 0.02 * 0.02 && distance > 0.12;
             strafe(client, player, dx, dz, go);
             client.options.keyJump.setDown(false);
@@ -581,13 +601,27 @@ final class Walker {
 
     private void turnToward(LocalPlayer player, double dx, double dz) { turnToward(player, dx, dz, true); }
 
-    /** Turns toward a step, smoothly; {@code lookAhead} also brings a look at the ground back up, which a climb keeps. */
+    /**
+     * Turns toward a step, smoothly; {@code lookAhead} also brings a look at the ground back up, which a climb keeps, and
+     * lets the eyes rise and fall a little on the way.
+     */
     private void turnToward(LocalPlayer player, double dx, double dz, boolean lookAhead) {
         if (dx * dx + dz * dz < 1e-4) return;
         float want = (float) Math.toDegrees(Math.atan2(-dx, dz));
         float pitch = player.getXRot();
-        // Looking ahead again after a climb or a click looked down.
-        if (lookAhead && Math.abs(pitch) > 35) pitch = Math.signum(pitch) * 25;
+        if (lookAhead) {
+            if (Float.isNaN(walkPitch) || --walkPitchFor <= 0) {
+                // Looking ahead again after a climb or a click looked down; and now and then the eyes settle a little
+                // higher or lower, back toward the horizon's way more often than not.
+                ThreadLocalRandom random = ThreadLocalRandom.current();
+                float from = Float.isNaN(walkPitch) ? pitch : walkPitch;
+                if (Math.abs(from) > 35) from = Math.signum(from) * 25;
+                from += (EYE_LEVEL - from) * BACK_TO_LEVEL;
+                walkPitch = Mth.clamp(from + (float) random.nextGaussian() * PITCH_WANDER, -25, 35);
+                walkPitchFor = 15 + random.nextInt(40);
+            }
+            pitch = walkPitch;
+        }
         head.turn(player, want, pitch);
     }
 

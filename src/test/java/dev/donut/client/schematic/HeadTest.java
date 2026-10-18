@@ -167,6 +167,36 @@ class HeadTest {
         assertEquals(1, head.offGrid());
     }
 
+    @Test
+    void aFollowedSpotDriftsWithinTheSlackThenTheEyesCatchUp() {
+        Head head = new Head();
+        RandomGenerator random = new SplittableRandom(9);
+        float[] view = {0, 0};
+        int ticks = 0;
+        while (!head.followStep(view, 20, 5, 1, MOUSE, random)) assertTrue(++ticks < 60, "it gets there");
+        // The spot drifts by 0.2 degrees a tick, as the block a walk is for does while the player walks past.
+        int still = 0;
+        for (int tick = 1; tick <= 60; tick++) {
+            float yaw = 20 + tick * 0.2f, before = view[0];
+            head.followStep(view, yaw, 5, 1, MOUSE, random);
+            assertWholeSteps(view, MOUSE);
+            assertTrue(Math.abs(yaw - view[0]) < 2.5f, "never far behind: " + (yaw - view[0]));
+            if (view[0] == before) still++;
+        }
+        assertTrue(still >= 25 && still <= 50, "now and then, not every tick: still " + still + " of 60 ticks");
+        // A turn without slack keeps on it, a step at a time.
+        Head close = new Head();
+        float[] onIt = {20, 5};
+        int closeStill = 0;
+        close.step(onIt, 20, 5, false, MOUSE, random);
+        for (int tick = 1; tick <= 60; tick++) {
+            float before = onIt[0];
+            close.step(onIt, 20 + tick * 0.2f, 5, false, MOUSE, random);
+            if (onIt[0] == before) closeStill++;
+        }
+        assertTrue(closeStill < still, "slack lets it lag: " + closeStill + " against " + still);
+    }
+
     /** The view is a whole number of mouse steps from where it started, at 0 0. */
     private static void assertWholeSteps(float[] view, float mouse) {
         float steps = view[0] / mouse, pitchSteps = view[1] / mouse;

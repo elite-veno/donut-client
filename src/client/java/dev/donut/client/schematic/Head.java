@@ -77,6 +77,8 @@ final class Head {
     private static final int LANDING_STEPS = 3;
     /** Landings with no look in whole mouse steps that passed their check, which went onto the target exactly instead. */
     private int offGrid;
+    /** For {@link #follow}: how far, in degrees, the spot followed may drift from a view resting on it; 0 otherwise. */
+    private float slack;
 
     /**
      * Whether a look, as yaw and pitch, does what an aim is for: the crosshair on the face meant, the block it places
@@ -105,6 +107,28 @@ final class Head {
      * holding still while the look it rests on still passes.
      */
     boolean aim(LocalPlayer player, float yaw, float pitch, Check check) { return move(player, yaw, pitch, true, check); }
+
+    /**
+     * One tick of keeping the eyes on a spot while moving, as on the way to a block: {@link #turn}, but resting, the view
+     * lets the spot drift up to {@code slack} degrees before it catches up, in a short turn of its own, as a hand that
+     * follows something does, now and then rather than every tick.
+     */
+    boolean follow(LocalPlayer player, float yaw, float pitch, float slack) {
+        float[] view = {player.getYRot(), player.getXRot()};
+        boolean there = followStep(view, yaw, pitch, slack, mouseStep(), ThreadLocalRandom.current());
+        set(player, view[0], view[1]);
+        return there;
+    }
+
+    /** One tick of {@link #follow} for {@code view}, as {yaw, pitch}. */
+    boolean followStep(float[] view, float yaw, float pitch, float slack, float mouse, RandomGenerator random) {
+        this.slack = slack;
+        try {
+            return step(view, yaw, pitch, false, null, mouse, random);
+        } finally {
+            this.slack = 0;
+        }
+    }
 
     /** One tick of turning the yaw toward {@code yaw}, the pitch staying where it is; true once there. */
     boolean turnYaw(LocalPlayer player, float yaw) {
@@ -186,11 +210,11 @@ final class Head {
 
     /**
      * Whether a view resting on its target stays put: while the look it has still passes the check; without one, while
-     * no whole mouse step would bring it nearer the target.
+     * no whole mouse step would bring it nearer the target, or while it is within the slack of a spot followed.
      */
-    private static boolean holds(float[] view, float dyaw, float dpitch, Check check, float mouse) {
+    private boolean holds(float[] view, float dyaw, float dpitch, Check check, float mouse) {
         if (check != null) return check.ok(view[0], view[1]);
-        float near = Math.max(HOLD, mouse * 0.5f + 1e-4f);
+        float near = Math.max(Math.max(HOLD, mouse * 0.5f + 1e-4f), slack);
         return Math.abs(dyaw) <= near && Math.abs(dpitch) <= near;
     }
 
