@@ -575,6 +575,10 @@ public final class DonutScreen extends Screen {
                 m.section("Timing");
                 m.slider("interval", "Interval", "Waits longer when the server reports a cooldown",
                         () -> s.intervalSeconds, v -> s.intervalSeconds = v, 5, 600, 5, " s");
+                m.slider("intervalSpread", "Interval spread", "How much each wait varies about the interval, so the command doesn't go out on a clock",
+                        () -> s.intervalSpread, v -> s.intervalSpread = v, 0, 0.5, .05, "%");
+                m.slider("menuDelay", "Menu delay", "The usual moment from the menu showing to the click; each varies about it",
+                        () -> s.menuDelay, v -> s.menuDelay = v, 0.15, 1.5, .05, " s");
                 m.slider("scan", "Scan time", "Time ActivityFinder scans after each teleport", () -> s.scanSeconds, v -> s.scanSeconds = v, 2, 30, 1, " s");
                 m.slider("attempts", "Max attempts", "Stops after this many teleports", () -> s.maxAttempts,
                         v -> s.maxAttempts = (int) Math.round(v), 1, 200, 1, "");

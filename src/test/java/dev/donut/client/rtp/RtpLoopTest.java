@@ -259,4 +259,21 @@ class RtpLoopTest {
         assertFalse(RtpLoop.matchesMenuItem("Nether", List.of("Hot"), "Overworld"));
         assertFalse(RtpLoop.matchesMenuItem("Overworld", List.of(), "  "));
     }
+
+    @Test
+    void withASpreadTheWaitsVaryButNeverComeTooSoon() {
+        RtpLoop spread = new RtpLoop(new java.util.SplittableRandom(7));
+        spread.configure(20, 8, 25, 0.25);
+        java.util.Set<Long> seen = new java.util.HashSet<>();
+        for (int i = 0; i < 200; i++) {
+            long wait = spread.interval();
+            assertTrue(wait >= Math.round(20 * 20 * 0.75), "never much sooner than the interval: " + wait);
+            assertTrue(wait <= Math.round(20 * 20 * 2.5) + 30 * 20, "never endlessly later: " + wait);
+            seen.add(wait);
+        }
+        assertTrue(seen.size() > 50, "not a clock: " + seen.size() + " different waits");
+        RtpLoop exact = new RtpLoop(new java.util.SplittableRandom(7));
+        exact.configure(20, 8, 25);
+        assertEquals(20 * 20, exact.interval(), "no spread, the interval itself");
+    }
 }

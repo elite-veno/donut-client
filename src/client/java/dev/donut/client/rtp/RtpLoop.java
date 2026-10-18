@@ -2,8 +2,10 @@ package dev.donut.client.rtp;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.SplittableRandom;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.random.RandomGenerator;
 
 /**
  * The Auto RTP state machine, kept free of game classes: send the command, wait for the teleport,
@@ -45,6 +47,17 @@ public final class RtpLoop {
             "(?<![\\d.])(\\d{1,6}(?:\\.\\d+)?)\\s*(h|hours?|hrs?|m|min|mins|minutes?|s|sec|secs|seconds?)(?![a-z])");
 
     private int intervalTicks = 20 * 20, scanTicks = 8 * 20, maxAttempts = 25;
+    /**
+     * How much each wait between commands varies, as the sigma of a log-normal around the interval: 0 keeps it exact.
+     * A person resends when they get round to it, not on a clock; a command log would show the clock.
+     */
+    private double spread;
+    private final RandomGenerator random;
+
+    public RtpLoop() { this(new SplittableRandom()); }
+
+    /** With the randomness given, for tests. */
+    RtpLoop(RandomGenerator random) { this.random = random; }
     private Phase phase = Phase.IDLE;
     private Result result;
     private int attempts, missedTeleports, blindAreas, areaAttempt;
@@ -57,9 +70,14 @@ public final class RtpLoop {
     private boolean commandPending;
 
     public void configure(double intervalSeconds, double scanSeconds, int maxAttempts) {
+        configure(intervalSeconds, scanSeconds, maxAttempts, 0);
+    }
+
+    public void configure(double intervalSeconds, double scanSeconds, int maxAttempts, double spread) {
         this.intervalTicks = (int) Math.round(intervalSeconds * 20);
         this.scanTicks = (int) Math.round(scanSeconds * 20);
         this.maxAttempts = maxAttempts;
+        this.spread = Math.max(0, spread);
     }
 
     public void start(long tick) {
@@ -156,7 +174,9 @@ public final class RtpLoop {
             refused = true;
             phase = Phase.COOLDOWN;
         }
-        nextSend = Math.max(nextSend, tick + (Math.min(seconds, MAX_COOLDOWN) + 1) * 20L);
+        // Never sooner than the notice says, and then when a hand gets to it: mostly a moment, now and then a second or two.
+        long after = spread > 0 ? Math.round(Math.clamp(0.7 * Math.exp(0.6 * random.nextGaussian()), 0.3, 2) * 20) : 20;
+        nextSend = Math.max(nextSend, tick + Math.min(seconds, MAX_COOLDOWN) * 20L + after);
         return true;
     }
 
@@ -177,7 +197,19 @@ public final class RtpLoop {
 
     private void waitForNext(long tick) {
         phase = Phase.COOLDOWN;
-        nextSend = Math.max(nextSend, Math.max(tick, sentAt + intervalTicks));
+        nextSend = Math.max(nextSend, Math.max(tick, sentAt + interval()));
+    }
+
+    /**
+     * The wait from one command to the next: the interval, or with a spread, about it, mostly near, a few much later
+     * (0.75-2.5 times it), and one in eight with 5-30 s more on top, as when looking at something else a while.
+     */
+    long interval() {
+        if (spread <= 0) return intervalTicks;
+        double factor = Math.clamp(Math.exp(spread * random.nextGaussian()), 0.75, 2.5);
+        long wait = Math.round(intervalTicks * factor);
+        if (random.nextInt(8) == 0) wait += Math.round((5 + random.nextDouble() * 25) * 20);
+        return wait;
     }
 
     private Action finish(Result why) {

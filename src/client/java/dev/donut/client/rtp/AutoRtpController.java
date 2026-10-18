@@ -9,6 +9,7 @@ import dev.donut.client.miner.ChunkMiner;
 import dev.donut.client.schematic.SchematicBuilder;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ThreadLocalRandom;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.ContainerScreen;
@@ -42,6 +43,9 @@ public final class AutoRtpController {
     /** The menu that was open when the command went out; only a menu opened after it can be the command's. */
     private int sentMenuId = -1;
     private boolean menuHandled;
+    /** The menu whose items showed, and the tick the click on it may come: a moment to read it, as a person takes. */
+    private int menuSeen = -1;
+    private long menuClickAt;
     private float lastHealth = -1;
     private int lastMenuSlot = -1;
     private String lastMessage = "";
@@ -104,7 +108,7 @@ public final class AutoRtpController {
         }
         RtpSettings s = settings();
         // Timing changes made during a run apply to its next step.
-        loop.configure(s.intervalSeconds, s.scanSeconds, s.maxAttempts);
+        loop.configure(s.intervalSeconds, s.scanSeconds, s.maxAttempts, s.intervalSpread);
 
         float health = client.player.getHealth();
         boolean hurt = lastHealth >= 0 && health < lastHealth;
@@ -114,8 +118,14 @@ public final class AutoRtpController {
         if (loop.phase() == RtpLoop.Phase.AWAIT_TELEPORT && !menuHandled && sinceSend <= MENU_WINDOW
                 && client.gui.screen() instanceof ContainerScreen menu && menu.getMenu().containerId != sentMenuId && hasItems(menu)) {
             // Items can arrive a tick or a few packets after the screen opens, so a menu without a match gets the
-            // rest of the window before the run gives up on it.
-            if (clickMenuItem(client, menu)) menuHandled = true;
+            // rest of the window before the run gives up on it. Never on the tick it fills: a moment to find the item.
+            if (menu.getMenu().containerId != menuSeen) {
+                menuSeen = menu.getMenu().containerId;
+                double seconds = Math.clamp(s.menuDelay * Math.exp(0.45 * ThreadLocalRandom.current().nextGaussian()),
+                        s.menuDelay * 0.55, s.menuDelay * 3.3);
+                menuClickAt = tick + Math.max(3, Math.round(seconds * 20));
+            }
+            if (tick >= menuClickAt && clickMenuItem(client, menu)) menuHandled = true;
             else if (sinceSend == MENU_WINDOW) { finish(client, RtpLoop.Result.MENU_MISSING); return; }
         }
 
@@ -161,6 +171,7 @@ public final class AutoRtpController {
         sentTick = tick;
         sentMenuId = client.player.containerMenu.containerId;
         menuHandled = false;
+        menuSeen = -1;
         // Sent exactly as if typed in chat; the local line shows it, since chat does not echo commands.
         client.player.connection.sendCommand(settings().command);
         message(client, "/" + settings().command + " (attempt " + loop.attempts() + " of " + loop.maxAttempts() + ")",

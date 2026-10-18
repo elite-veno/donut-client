@@ -11,6 +11,10 @@ public final class RtpSettings {
     /** Growth a chunk needs before Auto RTP stops; separate from ActivityFinder's square threshold. */
     public double stopAtGrowth = 0.55;
     public double intervalSeconds = 20;
+    /** How much each wait between commands varies about the interval (log-normal sigma); 0 is a fixed clock. */
+    public double intervalSpread = 0.25;
+    /** The usual moment, in seconds, from a command's menu showing its items to the click on one. */
+    public double menuDelay = 0.45;
     public double scanSeconds = 8;
     public int maxAttempts = 25;
     public boolean stopWhenHurt = true;
@@ -20,6 +24,8 @@ public final class RtpSettings {
         menuItem = menuItem == null ? "Overworld" : menuItem.strip();
         stopAtGrowth = Double.isFinite(stopAtGrowth) ? Math.clamp(stopAtGrowth, 0, 1) : 0.55;
         intervalSeconds = Double.isFinite(intervalSeconds) ? Math.clamp(intervalSeconds, 5, 600) : 20;
+        intervalSpread = Double.isFinite(intervalSpread) ? Math.clamp(intervalSpread, 0, 0.5) : 0.25;
+        menuDelay = Double.isFinite(menuDelay) ? Math.clamp(menuDelay, 0.15, 1.5) : 0.45;
         scanSeconds = Double.isFinite(scanSeconds) ? Math.clamp(scanSeconds, 2, 30) : 8;
         maxAttempts = Math.clamp(maxAttempts, 1, 200);
     }
