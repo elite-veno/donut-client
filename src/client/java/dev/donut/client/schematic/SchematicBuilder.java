@@ -1517,12 +1517,6 @@ public final class SchematicBuilder {
         return walking;
     }
 
-    /** Whether a helper block at {@code at} stands in a cell the build fills with a block, not only water run through. */
-    private boolean inBuildCell(BlockPos at) {
-        int i = plan.indexOf(at);
-        return i >= 0 && !(plan.kind(i) == BlockRules.Kind.AUTO && plan.target(i).getBlock() instanceof LiquidBlock);
-    }
-
     /**
      * Whether the player stands on a narrow top, a closed gate's or a fence's, with a drop of two blocks or more right
      * beside it: a few centimetres of drift off it and they are down there.
@@ -2039,7 +2033,10 @@ public final class SchematicBuilder {
         return true;
     }
 
-    /** Breaks a helper block whose block is in, once it is in reach; helper blocks climbed on wait for the end. */
+    /**
+     * Breaks a helper block whose block is in, once it is in reach, and one climbed on in a cell of the build once the
+     * player is out; helper blocks climbed on elsewhere wait for the end.
+     */
     private boolean removeUsedHelper(Minecraft client, LocalPlayer player) {
         double reach = player.blockInteractionRange() - 0.25;
         for (Iterator<Map.Entry<Long, Helper>> it = helpers.entrySet().iterator(); it.hasNext(); ) {
@@ -2050,9 +2047,11 @@ public final class SchematicBuilder {
                 continue;
             }
             int serves = entry.getValue().serves();
-            if (serves < 0 && inBuildCell(at)) {
-                // Climbed on in a cell the build fills, on the way out of where the player was shut in: taken away once they
-                // are out, the top of its column first, while they still have a way out without it.
+            if (serves < 0 && plan.indexOf(at) >= 0) {
+                // Climbed on in a cell of the build: one the build fills, on the way out of where the player was shut in, or
+                // one only water runs through, where it holds the water back and the build closes in on it, as a shaft
+                // roofed over with water poured onto it, out of reach by the end. Taken away once the player is out, the
+                // top of its column first, while they still have a way out without it.
                 if (helpers.containsKey(at.above().asLong()) || tick - escapeChecked < 20 || missedMining(player, at)
                         || !inView(player, player.getEyePosition(), at, reach)) continue;
                 Level level = client.level;
