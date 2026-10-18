@@ -235,6 +235,11 @@ public final class SchematicBuilder {
     /** A pit being dug to stand in, and for how long. */
     private Pit pit;
     private int digTicks;
+    /**
+     * Whether the pit is dug from beside, from the floor of the one the player stands in, so the pits run on as a
+     * trench; and whether its upper block goes first.
+     */
+    private boolean pitAlong, pitTopFirst;
     /** The last pit dug, whether a block went in since, and pits that didn't help. */
     private Pit lastPit;
     private boolean placedSincePit;
@@ -439,6 +444,7 @@ public final class SchematicBuilder {
         releaseKeys(client);
         breaking = null;
         pit = null;
+        pitAlong = false;
         helpers.clear();
         helperSpot.clear();
         helpersLeft.clear();
@@ -2073,6 +2079,7 @@ public final class SchematicBuilder {
         double reach = player.blockInteractionRange() - 0.2;
         boolean creative = player.hasInfiniteMaterials();
         long started = System.nanoTime();
+        if (digAlong(player, candidates, materials, layerNumber, lift, reach, started)) return true;
         int tried = 0;
         for (int i : candidates) {
             if (plan.status(i) != BuildPlan.Status.PENDING || plan.kind(i) != BlockRules.Kind.PLACE || support(player, i, started) != 1) continue;
@@ -2101,6 +2108,7 @@ public final class SchematicBuilder {
                     if (debug()) LOGGER.info("Digging a pit {} deep at {} {} {} for {} at {}", depth, candidate.x(), candidate.top(),
                             candidate.z(), target, pos.toShortString());
                     pit = lastPit = candidate;
+                    pitAlong = false;
                     placedSincePit = false;
                     digTicks = 0;
                     if (path.nodes().size() > 1) {
@@ -2114,6 +2122,63 @@ public final class SchematicBuilder {
             }
         }
         return false;
+    }
+
+    /**
+     * Standing at the bottom of a pit, the next block that needs one is placed from a pit beside this one where it can
+     * be: dug from here, sideways, and stepped into, so the pits run on as a trench, as a player digs along a row of
+     * blocks to place from below, rather than climbing out and digging in again for each. True when one is begun.
+     */
+    private boolean digAlong(LocalPlayer player, List<Integer> candidates, Materials materials, int layerNumber, boolean lift,
+                             double reach, long started) {
+        if (lastPit == null || !inPit(player, lastPit)) return false;
+        Level level = player.level();
+        boolean creative = player.hasInfiniteMaterials();
+        int tried = 0;
+        for (int i : candidates) {
+            if (plan.status(i) != BuildPlan.Status.PENDING || plan.kind(i) != BlockRules.Kind.PLACE || support(player, i, started) != 1) continue;
+            if (!lift && seals(player, i, started) == 1) continue;
+            BlockPos pos = plan.pos(i);
+            BlockState target = plan.target(i);
+            if (level.getBlockState(pos).getBlock() == target.getBlock()) continue;
+            Item item = BlockRules.item(target);
+            if (item == null || !creative && materials.total(item) == 0) continue;
+            if (++tried > 6 || System.nanoTime() - started > 40_000_000L) break;
+            for (Direction side : Direction.Plane.HORIZONTAL) {
+                Pit candidate = pitAt(level, lastPit.x() + side.getStepX(), pos.getY(), lastPit.z() + side.getStepZ(), lastPit.depth());
+                if (candidate == null || candidate.top() != lastPit.top() || uselessPits.contains(candidate)) continue;
+                // Only a column or two from the block, as any pit for it.
+                if (Math.abs(candidate.x() - pos.getX()) > 2 || Math.abs(candidate.z() - pos.getZ()) > 2) continue;
+                Map<Long, BlockState> hollow = new HashMap<>();
+                for (int k = 0; k < candidate.depth(); k++) hollow.put(candidate.cell(k).asLong(), Blocks.AIR.defaultBlockState());
+                int index = i;
+                PlacementSolver.Click click = PlacementSolver.fromSpot(player, new Overlay(level, hollow), candidate.feet(), pos, target,
+                        new ItemStack(item), reach, at -> unclickable(at, index));
+                if (click == null) continue;
+                if (debug()) LOGGER.info("Digging on along to {} {} {} for {} at {}", candidate.x(), candidate.top(), candidate.z(), target,
+                        pos.toShortString());
+                pit = lastPit = candidate;
+                pitAlong = true;
+                pitTopFirst = ThreadLocalRandom.current().nextBoolean();
+                placedSincePit = false;
+                digTicks = 0;
+                show("Layer " + layerNumber + " of " + plan.layers().size() + ": digging on along to place "
+                        + target.getBlock().getName().getString() + " from below", false);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether the player stands on the floor of {@code pit}, dug out above them. */
+    private boolean inPit(LocalPlayer player, Pit pit) {
+        if (!player.onGround() || Math.abs(player.getY() - pit.feet().y) > 0.1) return false;
+        if (Math.floor(player.getX()) != pit.x() || Math.floor(player.getZ()) != pit.z()) return false;
+        Level level = player.level();
+        for (int k = 0; k < pit.depth(); k++) {
+            if (!level.getBlockState(pit.cell(k)).getCollisionShape(level, pit.cell(k)).isEmpty()) return false;
+        }
+        return true;
     }
 
     /** Columns beside a block to dig a pit in, nearest first. */
@@ -2178,6 +2243,10 @@ public final class SchematicBuilder {
             abandonPit(client, "took too long");
             return;
         }
+        if (pitAlong) {
+            digOnAlong(client, player);
+            return;
+        }
         BlockPos next = null;
         for (int k = 0; k < pit.depth(); k++) {
             BlockPos cell = pit.cell(k);
@@ -2227,12 +2296,66 @@ public final class SchematicBuilder {
         if (!mine(client, player, next)) abandonPit(client, "can't see the ground under the feet");
     }
 
+    /**
+     * Mines the pit beside the one the player stands in, its blocks one after the other, looking at them from where the
+     * player stands; then steps into it.
+     */
+    private void digOnAlong(Minecraft client, LocalPlayer player) {
+        ClientLevel level = client.level;
+        BlockPos next = null;
+        for (int n = 0; n < pit.depth(); n++) {
+            BlockPos cell = pit.cell(pitTopFirst ? n : pit.depth() - 1 - n);
+            if (!level.getBlockState(cell).getCollisionShape(level, cell).isEmpty()) {
+                next = cell;
+                break;
+            }
+        }
+        if (!player.onGround()) return;
+        if (Math.abs(player.getY() - pit.feet().y) > 0.1) {
+            abandonPit(client, "isn't standing at its floor");
+            return;
+        }
+        double dx = pit.x() + 0.5 - player.getX(), dz = pit.z() + 0.5 - player.getZ();
+        if (next == null) {
+            client.gameMode.stopDestroyBlock();
+            if (dx * dx + dz * dz <= 0.25 * 0.25) {
+                pit = null;
+                pitAlong = false;
+                nextAction = System.nanoTime();
+            } else if (dx * dx + dz * dz > 2 * 2) {
+                abandonPit(client, "is too far from it");
+            } else {
+                // A step into it, as any walk: the walker brings the player to rest in its middle.
+                walker.start(List.of(Navigator.standingAt(level, player),
+                        new Navigator.Node(pit.x(), pit.top() - pit.depth(), pit.z(), pit.feet().y, Navigator.Move.WALK)));
+            }
+            return;
+        }
+        if (dx * dx + dz * dz > 1.6 * 1.6) {
+            abandonPit(client, "is too far from it");
+            return;
+        }
+        stopWalking(client);
+        if (player.isShiftKeyDown()) setCrouch(client, false);
+        if (!dug.containsKey(next.asLong())) {
+            if (!holdTool(client, player, level.getBlockState(next))) return;
+            dug.put(next.asLong(), level.getBlockState(next));
+            pours.put(next.asLong(), tick);
+            restingTicks = 0;
+            shutIn.clear();
+            traps.clear();
+        }
+        show("Digging on along at " + pit.x() + " " + pit.top() + " " + pit.z() + " to place a block from below", false);
+        if (!mine(client, player, next)) abandonPit(client, "can't see the ground beside");
+    }
+
     private void abandonPit(Minecraft client, String why) {
         if (debug()) LOGGER.info("Gave up the pit at {} {} {}: {}", pit.x(), pit.top(), pit.z(), why);
         stopWalking(client);
         if (client.gameMode != null) client.gameMode.stopDestroyBlock();
         if (pitTries.merge(pit, 1, Integer::sum) >= 3) uselessPits.add(pit);
         pit = null;
+        pitAlong = false;
         // Not dug, so not the pit to blame if nothing goes in next.
         lastPit = null;
         nextAction = System.nanoTime() + 200_000_000L;
@@ -2256,6 +2379,9 @@ public final class SchematicBuilder {
         Level level = player.level();
         dug.entrySet().removeIf(e -> !level.getBlockState(BlockPos.of(e.getKey())).canBeReplaced());
         if (dug.isEmpty()) return false;
+        // Standing in a pit or a trench, what is dug stays open till the player is out: filling in behind would have them
+        // turn about for each block, and a trench may still run on.
+        if (!finish && dug.containsKey(player.blockPosition().asLong())) return false;
         List<BlockPos> open = dug.keySet().stream().map(BlockPos::of).sorted(Comparator.comparingInt(BlockPos::getY)).toList();
         AABB body = player.getBoundingBox().inflate(0.1);
         for (BlockPos cell : open) {
@@ -2356,6 +2482,7 @@ public final class SchematicBuilder {
         if ((breaking != null || pit != null) && client.gameMode != null) client.gameMode.stopDestroyBlock();
         breaking = null;
         pit = null;
+        pitAlong = false;
         active = false;
         settings().enabled = false;
         next = null;
