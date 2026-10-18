@@ -237,6 +237,8 @@ public final class SchematicBuilder {
     private Vec3 noClickFrom;
     private boolean noClickCrouch;
     private long noClickTick;
+    /** How far a player still sliding may get from where {@link #noClickHere} was worked out before it is worked out again. */
+    private static final double NO_CLICK_SLIDE = 0.25;
     /**
      * Ticks a look has rested on its spot, and is to rest before the click, so the server has the head turned the same
      * way: as many as set, now and then one more, as a hand doesn't click on the very same beat each time.
@@ -1133,7 +1135,11 @@ public final class SchematicBuilder {
         PlacementSolver.Problem seen = null;
         int nearest = -1;
         boolean sealing = false;
-        if (!player.position().equals(noClickFrom) || player.isShiftKeyDown() != noClickCrouch || tick - noClickTick > 40) {
+        // Still sliding to rest after a walk, the player moves a little each tick: what has no click stays known until they
+        // are still, else each tick starts the row over and the next walk waits seconds for it. Once still, once more.
+        boolean sliding = player.getDeltaMovement().horizontalDistanceSqr() > 1e-5;
+        double drift = noClickFrom == null ? Double.POSITIVE_INFINITY : player.position().distanceToSqr(noClickFrom);
+        if (drift > (sliding ? NO_CLICK_SLIDE * NO_CLICK_SLIDE : 1e-6) || player.isShiftKeyDown() != noClickCrouch || tick - noClickTick > 40) {
             noClickHere.clear();
             noClickFrom = player.position();
             noClickCrouch = player.isShiftKeyDown();
@@ -2330,6 +2336,7 @@ public final class SchematicBuilder {
             }
             case HELPER -> {
                 helpers.put(planned.at().asLong(), new Helper(i, Block.byItem(planned.item())));
+                if (debug()) LOGGER.info("Helper block at {} for {} at {}", planned.at().toShortString(), plan.target(i), plan.pos(i).toShortString());
                 paceAfterClick(quick());
                 show(layer + "a helper block to place " + plan.target(i).getBlock().getName().getString() + " against", false);
                 return;
@@ -3301,14 +3308,29 @@ public final class SchematicBuilder {
         PlacementSolver.Click click = PlacementSolver.fromSpot(player, feet, pos, target, new ItemStack(item), reach, unclickable);
         if (click != null) return steadyFrom(player, feet, click, reach) ? 2 : 1;
         BlockPos helper = helperSpot.get(i);
-        if (helper == null || !level.getBlockState(helper).canBeReplaced()) return 0;
-        BlockState helperState = Block.byItem(helperItem(player) == null ? Items.DIRT : helperItem(player)).defaultBlockState();
-        return PlacementSolver.fromSpot(player, feet, helper, helperState, new ItemStack(helperState.getBlock()), reach,
-                helpers::containsKey) != null ? 2 : 0;
+        Item helperItem = helperItem(player);
+        if (helper == null || helperItem == null || !level.getBlockState(helper).canBeReplaced()) return 0;
+        BlockState helperState = Block.byItem(helperItem).defaultBlockState();
+        PlacementSolver.Click put = PlacementSolver.fromSpot(player, feet, helper, helperState, new ItemStack(helperItem), reach,
+                helpers::containsKey);
+        if (put == null) return 0;
+        // Worth a walk when the block itself then goes in against the helper from here too. Only the helper counts for little:
+        // the walk puts it down, nothing more can go in, and the next walk comes back from somewhere else for the block.
+        Overlay withHelper = new Overlay(level, Map.of(helper.asLong(), helperState));
+        PlacementSolver.Click then = PlacementSolver.fromSpot(player, withHelper, feet, pos, target, new ItemStack(item), reach, unclickable);
+        if (then == null) return 1;
+        return steadyFrom(player, level, feet, put, reach) && steadyFrom(player, withHelper, feet, then, reach) ? 2 : 1;
     }
 
-    /** Whether the click's spot, aimed at from {@code feet} give or take {@link #REST_SPREAD}, is hit first, on its face. */
     private static boolean steadyFrom(LocalPlayer player, Vec3 feet, PlacementSolver.Click click, double reach) {
+        return steadyFrom(player, player.level(), feet, click, reach);
+    }
+
+    /**
+     * Whether the click's spot, aimed at from {@code feet} give or take {@link #REST_SPREAD}, is hit first, on its face,
+     * tracing through {@code view}.
+     */
+    private static boolean steadyFrom(LocalPlayer player, BlockGetter view, Vec3 feet, PlacementSolver.Click click, double reach) {
         Vec3 point = click.hit().getLocation();
         double height = click.crouch() ? PlacementSolver.CROUCH_EYE : PlacementSolver.STAND_EYE;
         for (double dx : new double[] {-REST_SPREAD, REST_SPREAD}) {
@@ -3316,7 +3338,7 @@ public final class SchematicBuilder {
                 Vec3 eye = feet.add(dx, height, dz);
                 if (eye.distanceTo(point) > reach) return false;
                 Vec3 end = eye.add(point.subtract(eye).normalize().scale(eye.distanceTo(point) + 0.5));
-                BlockHitResult hit = player.level().clip(new ClipContext(eye, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
+                BlockHitResult hit = view.clip(new ClipContext(eye, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
                 if (hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(click.hit().getBlockPos())
                         || hit.getDirection() != click.hit().getDirection()) return false;
             }
