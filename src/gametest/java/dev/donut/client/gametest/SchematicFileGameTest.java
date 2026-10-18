@@ -6,8 +6,11 @@ import dev.donut.client.schematic.Schematic;
 import dev.donut.client.schematic.SchematicBuilder;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
@@ -15,8 +18,14 @@ import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestServerContext;
 import net.fabricmc.fabric.api.client.gametest.v1.screenshot.TestScreenshotOptions;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.Mirror;
+import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.level.block.state.BlockState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -93,7 +102,25 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                 settings.useShulkers = true;
                 settings.helperBlocks = "dirt";
             });
-            Map<Item, Integer> bill = context.computeOnClient(client -> builder.bill());
+            Map<Item, Integer> bill = new LinkedHashMap<>(context.computeOnClient(client -> builder.bill()));
+            // DONUT_SCHEMATIC_PREPLACE names blocks (deepslate, say) set in place before the build: a plain fill that
+            // teaches the builder nothing and takes long. They count as built, and none of them is handed out.
+            Set<Block> preplace = preplaced();
+            if (!preplace.isEmpty()) {
+                int placed = server.computeOnServer(s -> {
+                    int n = 0;
+                    for (int i = 0; i < schematic.size(); i++) {
+                        BlockState target = Schematic.place(schematic.state(i), Mirror.NONE, Rotation.NONE);
+                        if (!preplace.contains(target.getBlock())) continue;
+                        s.overworld().setBlock(Schematic.place(schematic.pos(i), ORIGIN, Mirror.NONE, Rotation.NONE), target, Block.UPDATE_CLIENTS);
+                        n++;
+                    }
+                    return n;
+                });
+                for (Block block : preplace) bill.remove(block.asItem());
+                LOGGER.info("Set {} blocks of {} in place before the build", placed, preplace);
+                context.waitTicks(20);
+            }
             giveInShulkers(server, bill);
             server.runCommand("give @a minecraft:dirt 448");
             server.runCommand("give @a minecraft:diamond_pickaxe");
@@ -149,6 +176,19 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
         } finally {
             context.runOnClient(client -> builder.setEnabled(false));
         }
+    }
+
+    /** The blocks DONUT_SCHEMATIC_PREPLACE names, comma separated, by id with or without "minecraft:". */
+    private static Set<Block> preplaced() {
+        String list = System.getenv("DONUT_SCHEMATIC_PREPLACE");
+        Set<Block> blocks = new HashSet<>();
+        if (list == null) return blocks;
+        for (String id : list.split("[\\s,]+")) {
+            if (id.isEmpty()) continue;
+            Identifier name = Identifier.tryParse(id.contains(":") ? id : "minecraft:" + id);
+            if (name != null) BuiltInRegistries.BLOCK.getOptional(name).ifPresent(blocks::add);
+        }
+        return blocks;
     }
 
     /** Packs everything the build takes into shulker boxes, a stack per slot, and gives them to the player. */
