@@ -142,7 +142,7 @@ final class Walker {
         if (index >= path.size()) {
             release(client);
             Navigator.Node end = path.getLast();
-            if (!edgeCrouch && player.onGround() && Math.abs(player.getY() - end.feet()) < 0.05
+            if (!edgeCrouch && player.onGround() && Math.abs(player.getY() - end.feet()) < 0.05 && within(player.position(), end)
                     && Navigator.narrowOverDrop(player.level(), end)) {
                 // Sliding to a stop on a narrow top over a drop: crouched, the edge holds the player.
                 climb.crouch(true);
@@ -195,9 +195,10 @@ final class Walker {
         double distance = Math.sqrt(dx * dx + dz * dz);
         // Onto a narrow top over a drop, a closed gate's or a fence's, the last bit is walked crouched, as a player edges
         // onto one: crouched, the edge holds them, where the run-on of a step or the slide to a stop carries a player
-        // walking upright off the top, a block or more down, into what may be a pit with no way out. Only once the feet
-        // are at the top's height: crouched, a player can't step down onto it.
-        if (last && !edgeCrouch && player.onGround() && Math.abs(at.y - to.feet()) < 0.05 && distance < 1.2
+        // walking upright off the top, a block or more down, into what may be a pit with no way out. Only once standing
+        // on that top itself, in its block at its height: crouched, a player can't step down onto it, nor across the gap
+        // between two gates' tops, which upright they cross in a stride.
+        if (last && !edgeCrouch && player.onGround() && Math.abs(at.y - to.feet()) < 0.05 && within(at, to)
                 && Navigator.narrowOverDrop(player.level(), to)) {
             climb.crouch(true);
             edgeCrouch = true;
@@ -510,6 +511,11 @@ final class Walker {
     private static double keep(LocalPlayer player) {
         BlockPos below = BlockPos.containing(player.getX(), player.getY() - 0.05, player.getZ());
         return player.level().getBlockState(below).getBlock().getFriction() * 0.91;
+    }
+
+    /** Whether the feet at {@code at} are within the block of the place to stand, seen from above. */
+    private static boolean within(Vec3 at, Navigator.Node node) {
+        return Mth.floor(at.x) == node.x() && Mth.floor(at.z) == node.z();
     }
 
     /** Whether the place to stand has full, sturdy ground under it and on all four sides at its height: no edge near. */
