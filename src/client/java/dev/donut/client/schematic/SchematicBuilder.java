@@ -1373,7 +1373,7 @@ public final class SchematicBuilder {
     private boolean looked(LocalPlayer player, float yaw, float pitch) {
         float yawBefore = player.getYRot(), pitchBefore = player.getXRot();
         boolean there = head.turn(player, yaw, pitch);
-        boolean moved = Math.abs(player.getYRot() - yawBefore) > 0.05f || Math.abs(player.getXRot() - pitchBefore) > 0.05f;
+        boolean moved = Math.abs(player.getYRot() - yawBefore) > 1e-3f || Math.abs(player.getXRot() - pitchBefore) > 1e-3f;
         if (!there || moved) {
             restingTicks = 0;
             return false;
