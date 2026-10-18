@@ -3159,9 +3159,23 @@ public final class SchematicBuilder {
             cleanupFrom = here.key();
         }
         double reach = player.blockInteractionRange() - 0.25;
-        // The top of each column: a helper block with another on it waits for that one.
+        // The top of each column: a helper block with another on it waits for that one, and so does one a bridge hangs
+        // from: taken first, it leaves the bridge and what stands on it in the air, out of reach from the ground.
+        Map<Long, Integer> fromGround = helperDepths(client.level);
         List<BlockPos> tops = new ArrayList<>();
-        for (long key : helpers.keySet()) if (!helpers.containsKey(BlockPos.offset(key, Direction.UP))) tops.add(BlockPos.of(key));
+        for (long key : helpers.keySet()) {
+            int depth = fromGround.getOrDefault(key, 0);
+            boolean held = false;
+            for (Direction side : Direction.values()) {
+                if (side == Direction.DOWN) continue;
+                long next = BlockPos.offset(key, side);
+                if (side == Direction.UP ? helpers.containsKey(next) : fromGround.getOrDefault(next, -1) > depth) {
+                    held = true;
+                    break;
+                }
+            }
+            if (!held) tops.add(BlockPos.of(key));
+        }
         tops.sort(Comparator.comparingInt((BlockPos pos) -> pos.getY()).reversed());
         // Just climbed for one: that one first, before the blocks climbed on to reach it, whose going would take the
         // player back down out of its reach. Still out of view, that climb from there isn't tried again.
@@ -4328,6 +4342,34 @@ public final class SchematicBuilder {
         head.turnYaw(player, want);
         client.options.keyUp.setDown(Math.abs(Mth.wrapDegrees(want - player.getYRot())) < 30);
         walking = true;
+    }
+
+    /**
+     * How far each helper block is from one standing on the ground, counted through helper blocks beside, under or over
+     * one another: 0 for one with something not a helper block right under it. Those that reach no ground are left out.
+     */
+    private Map<Long, Integer> helperDepths(Level level) {
+        Map<Long, Integer> depth = new HashMap<>();
+        ArrayDeque<Long> queue = new ArrayDeque<>();
+        for (long key : helpers.keySet()) {
+            long below = BlockPos.offset(key, Direction.DOWN);
+            BlockPos under = BlockPos.of(below);
+            if (!helpers.containsKey(below) && !level.getBlockState(under).getCollisionShape(level, under).isEmpty()) {
+                depth.put(key, 0);
+                queue.add(key);
+            }
+        }
+        while (!queue.isEmpty()) {
+            long key = queue.poll();
+            int next = depth.get(key) + 1;
+            for (Direction side : Direction.values()) {
+                long other = BlockPos.offset(key, side);
+                if (!helpers.containsKey(other) || depth.containsKey(other)) continue;
+                depth.put(other, next);
+                queue.add(other);
+            }
+        }
+        return depth;
     }
 
     /**
