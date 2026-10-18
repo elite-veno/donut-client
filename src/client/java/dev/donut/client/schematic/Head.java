@@ -10,7 +10,10 @@ import net.minecraft.util.Mth;
  * little on its way, and every turn has a pace of its own.
  */
 final class Head {
-    /** The fastest a turn goes, in degrees a tick, picked for each turn between these. */
+    /**
+     * The fastest a turn goes, in degrees a tick, picked for each turn between these. Not below 8: a walk setting off
+     * facing the other way turns about on the spot first, and must be round well within Walker's ticks for being stuck.
+     */
     private static final float PEAK_MIN = 8, PEAK_MAX = 15;
     /** How quickly a turn speeds up and slows down, in degrees a tick per tick, picked the same way. */
     private static final float PUSH_MIN = 2.2f, PUSH_MAX = 3.6f;

@@ -3,7 +3,10 @@ package dev.donut.client.schematic;
 import dev.donut.client.mixin.BlockItemAccess;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 import java.util.function.Predicate;
 import net.minecraft.client.player.LocalPlayer;
@@ -41,6 +44,8 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 public final class PlacementSolver {
     /** Where on a face to click: its middle first, then toward its edges, which top slabs, stairs and door hinges need. */
     private static final double[] SPOTS = {0.5, 0.2, 0.8};
+    /** How far, as a share of the face, a spot aimed at may be off one of those. */
+    private static final double JITTER = 0.06;
     /** Looks tried to tell whether a block can go in at all: along the axes, between them, and steeply up and down. */
     private static final float[] YAWS = {0, 90, 180, -90, 45, 135, -135, -45};
     private static final float[] PITCHES = {0, 90, -90, 45, -45, 60, -60, 25, -25};
@@ -397,7 +402,11 @@ public final class PlacementSolver {
             if (!unclickable.test(pos.relative(side).asLong())) addSpots(spots, level, pos.relative(side), side.getOpposite(), eye, reach, facing);
             if (adding) addSpots(spots, level, pos, side, eye, reach, facing);
         }
-        spots.sort(Comparator.comparing((Spot s) -> !s.facesEye()).thenComparingDouble(s -> s.hit().getLocation().distanceToSqr(eye)));
+        // Nearest first, give or take: a click doesn't aim at the very same spot, at the very same angle, each time.
+        Map<Spot, Double> order = new IdentityHashMap<>();
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        for (Spot spot : spots) order.put(spot, spot.hit().getLocation().distanceToSqr(eye) * (0.8 + 0.4 * random.nextDouble()));
+        spots.sort(Comparator.comparing((Spot s) -> !s.facesEye()).thenComparingDouble(order::get));
         return spots;
     }
 
@@ -408,9 +417,11 @@ public final class PlacementSolver {
         VoxelShape shape = state.getShape(level, clicked);
         if (shape.isEmpty()) return;
         AABB box = shape.bounds();
+        ThreadLocalRandom random = ThreadLocalRandom.current();
         for (double a : SPOTS) {
             for (double b : SPOTS) {
-                Vec3 point = facePoint(clicked, box, face, a, b);
+                // A little off the same few spots each time, as a hand aims.
+                Vec3 point = facePoint(clicked, box, face, a + (random.nextDouble() * 2 - 1) * JITTER, b + (random.nextDouble() * 2 - 1) * JITTER);
                 if (eye.distanceToSqr(point) > reach * reach) continue;
                 spots.add(new Spot(new BlockHitResult(point, face, clicked, false), facing == null || facesEye(face, point, facing)));
             }

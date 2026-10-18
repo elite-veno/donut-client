@@ -1790,6 +1790,8 @@ public final class SchematicBuilder {
         Map<Long, Boolean> wetCells = new HashMap<>();
         List<BlockPos> poured = recentPours();
         long leaning = ThreadLocalRandom.current().nextLong();
+        // The nearest block a real look reaches from each place to stand, to turn toward on arriving there.
+        Map<Long, Integer> firstFrom = new HashMap<>();
         Navigator.Goal goal = node -> {
             seen[0]++;
             if (uselessSpots.contains(node.key()) || traps.contains(node.key())) return 0;
@@ -1826,6 +1828,7 @@ public final class SchematicBuilder {
             }
             if (good > 0) {
                 seen[2]++;
+                firstFrom.put(node.key(), placeable.getFirst());
                 good += chained(player, node, reach, placeable, pool, budget);
             }
             if (good == 0) return 0;
@@ -1872,8 +1875,9 @@ public final class SchematicBuilder {
         }
         if (!climbReady(client, player, path)) return true;
         releaseKeys(client);
-        walker.start(path.nodes());
         Navigator.Node end = path.end();
+        Integer first = firstFrom.get(end.key());
+        walker.start(path.nodes(), first == null ? null : Vec3.atCenterOf(plan.pos(first)));
         show("Layer " + layerNumber + " of " + plan.layers().size() + ": walking to " + end.x() + " " + Math.round(end.feet()) + " " + end.z(), false);
         if (debug()) LOGGER.info("Walking {} steps to {} {} {}", path.nodes().size() - 1, end.x(), end.feet(), end.z());
         return true;

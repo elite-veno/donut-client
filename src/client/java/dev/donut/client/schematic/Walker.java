@@ -40,6 +40,13 @@ final class Walker {
     private double[][] offsets;
     /** Ticks still to stand before setting off, as a player looks before walking. */
     private int hesitate;
+    /** What the player turns toward while coming to rest at the end, as the block the walk is for; null for nothing. */
+    private Vec3 lookAt;
+    /**
+     * Whether this walk sidesteps: a few steps on open ground toward more of the same work, which a player takes
+     * without turning away from it, keys to the side, the view on the next block. Worked out on the walk's first tick.
+     */
+    private Boolean sidestep;
     private int index;
     private int stuck, climbTicks, climbTries, jumpTicks, placedAt;
     private double closest;
@@ -52,14 +59,18 @@ final class Walker {
 
     Walker(Head head) { this.head = head; }
 
-    void start(List<Navigator.Node> path) {
+    void start(List<Navigator.Node> path) { start(path, null); }
+
+    void start(List<Navigator.Node> path, Vec3 lookAt) {
         this.path = path;
+        this.lookAt = lookAt;
         ThreadLocalRandom random = ThreadLocalRandom.current();
         offsets = new double[path.size()][];
         for (int i = 0; i < path.size(); i++) {
             offsets[i] = new double[] {(random.nextDouble() * 2 - 1) * WANDER, (random.nextDouble() * 2 - 1) * WANDER};
         }
         hesitate = random.nextInt(5) == 0 ? 4 + random.nextInt(18) : 0;
+        sidestep = null;
         index = 1;
         stuck = climbTicks = climbTries = jumpTicks = placedAt = 0;
         closest = Double.MAX_VALUE;
@@ -74,8 +85,14 @@ final class Walker {
         if (path == null) return State.FAILED;
         if (index >= path.size()) {
             release(client);
-            // Wait until the player has come to rest, so a block placed next is aimed from where they stand.
-            if (player.onGround() && player.getDeltaMovement().horizontalDistanceSqr() < 1e-4) {
+            // Sliding to a stop, the player already turns toward what they walked here for, which a turn doesn't slow:
+            // the aim after it has less to turn.
+            if (lookAt != null) {
+                float[] look = PlacementSolver.look(player.getEyePosition(), lookAt);
+                head.turn(player, look[0], look[1]);
+            }
+            // Wait until the player has as good as come to rest, so a block placed next is aimed from where they stand.
+            if (player.onGround() && restsWithin(player, 0.05)) {
                 path = null;
                 return State.ARRIVED;
             }
@@ -90,13 +107,16 @@ final class Walker {
             return State.WALKING;
         }
         if (to.move() == Navigator.Move.PILLAR) return climb(client, player, from, to, climb);
+        if (sidestep == null) sidestep = sidesteps(player);
         boolean last = index == path.size() - 1;
-        // On open ground a walk passes a little off the middle of each block, a line of its own; the last step, a
-        // climb, and anything near an edge or on a narrow top keep to the middle.
+        // On open ground a walk passes a little off the middle of each block, a line of its own, and ends a little off
+        // it too, so the next look isn't the very same; a climb, and anything near an edge or on a narrow top keep to
+        // the middle.
         double offX = 0, offZ = 0;
-        if (!last && to.move() == Navigator.Move.WALK && open(player, to)) {
-            offX = offsets[index][0];
-            offZ = offsets[index][1];
+        if (to.move() == Navigator.Move.WALK && open(player, to)) {
+            double share = last ? 0.7 : 1;
+            offX = offsets[index][0] * share;
+            offZ = offsets[index][1] * share;
         }
         double dx = to.x() + 0.5 + offX - at.x, dz = to.z() + 0.5 + offZ - at.z;
         double distance = Math.sqrt(dx * dx + dz * dz);
@@ -116,6 +136,17 @@ final class Walker {
             return fail(client, "stuck on the way to " + to + (player.onGround() ? ", on the ground" : ", in the air") + ", moving "
                     + player.getDeltaMovement() + (client.options.keyJump.isDown() ? ", jumping" : ""));
         }
+        if (sidestep) {
+            // The view stays on the work, turning calmly toward the block the walk is for; the feet step there sideways
+            // or back as needed, as a player building a row does.
+            float[] look = PlacementSolver.look(player.getEyePosition(), lookAt);
+            head.turn(player, look[0], look[1]);
+            boolean go = distance > (last ? 0.2 : 0.05) || player.getDeltaMovement().horizontalDistanceSqr() < 0.02 * 0.02 && distance > 0.12;
+            strafe(client, player, dx, dz, go);
+            client.options.keyJump.setDown(false);
+            client.options.keySprint.setDown(false);
+            return State.WALKING;
+        }
         turnToward(player, dx, dz);
         // Facing well away from the next step, a player on the ground turns first and walks after, as on a ledge: walking
         // while turning swings them out sideways, off a narrow top or over the edge of a walkway.
@@ -129,7 +160,9 @@ final class Walker {
         client.options.keyUp.setDown(facing && (distance > letGo || stopped && distance > (last ? 0.2 : 0.05)));
         client.options.keySprint.setDown(false);
         // A step up from where the player really is, though the path planned it from elsewhere, slid off ice say.
-        boolean jump = facing && (to.move() == Navigator.Move.JUMP || to.feet() - at.y > Navigator.STEP) && player.onGround() && distance < 1.3;
+        // Only while the feet are still below the step: hopping on once up there, the player never settles on the spot.
+        boolean jump = facing && (to.move() == Navigator.Move.JUMP && to.feet() - at.y > 0.1 || to.feet() - at.y > Navigator.STEP)
+                && player.onGround() && distance < 1.3;
         // In water the feet are never on the ground: holding jump swims up and over the edge, as a player climbs out.
         if (player.isInWater() && to.feet() > at.y + 0.3 && distance < 1.6) jump = true;
         client.options.keyJump.setDown(jump);
@@ -204,6 +237,28 @@ final class Walker {
         return State.WALKING;
     }
 
+    /** A short walk on open ground, every step a plain one, toward a block to look at the while: sidestepped. */
+    private boolean sidesteps(LocalPlayer player) {
+        if (lookAt == null || path.size() > 4) return false;
+        for (Navigator.Node node : path) {
+            if (node.move() != Navigator.Move.START && node.move() != Navigator.Move.WALK) return false;
+            if (!open(player, node)) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Holds the movement keys that take the player toward {@code dx}, {@code dz} as they face now: forward, back, left
+     * and right, two at once for a slant.
+     */
+    private static void strafe(Minecraft client, LocalPlayer player, double dx, double dz, boolean go) {
+        float angle = Mth.wrapDegrees((float) Math.toDegrees(Math.atan2(-dx, dz)) - player.getYRot());
+        client.options.keyUp.setDown(go && Math.abs(angle) <= 67.5f);
+        client.options.keyDown.setDown(go && Math.abs(angle) >= 112.5f);
+        client.options.keyRight.setDown(go && angle >= 22.5f && angle <= 157.5f);
+        client.options.keyLeft.setDown(go && angle <= -22.5f && angle >= -157.5f);
+    }
+
     /** Whether the place to stand has full, sturdy ground under it and on all four sides at its height: no edge near. */
     private static boolean open(LocalPlayer player, Navigator.Node node) {
         var level = player.level();
@@ -222,6 +277,17 @@ final class Walker {
     private static boolean slippery(LocalPlayer player) {
         BlockPos below = BlockPos.containing(player.getX(), player.getY() - 0.05, player.getZ());
         return player.level().getBlockState(below).getBlock().getFriction() > 0.7f;
+    }
+
+    /**
+     * Whether the player, on the ground with no key held, slides less than {@code slide} blocks further: each tick keeps
+     * the ground's friction times 0.91 of the speed, so what is left is the speed over one less that. On ice that takes
+     * a far slower speed than on stone.
+     */
+    private static boolean restsWithin(LocalPlayer player, double slide) {
+        BlockPos below = BlockPos.containing(player.getX(), player.getY() - 0.05, player.getZ());
+        double keep = player.level().getBlockState(below).getBlock().getFriction() * 0.91;
+        return Math.sqrt(player.getDeltaMovement().horizontalDistanceSqr()) < slide * (1 - keep);
     }
 
     private void turnToward(LocalPlayer player, double dx, double dz) { turnToward(player, dx, dz, true); }
@@ -261,6 +327,9 @@ final class Walker {
     }
 
     private static void release(Minecraft client) {
+        client.options.keyDown.setDown(false);
+        client.options.keyLeft.setDown(false);
+        client.options.keyRight.setDown(false);
         client.options.keyUp.setDown(false);
         client.options.keyJump.setDown(false);
         client.options.keySprint.setDown(false);
