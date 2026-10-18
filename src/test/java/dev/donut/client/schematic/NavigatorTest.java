@@ -77,6 +77,24 @@ class NavigatorTest {
     }
 
     @Test
+    void cornersOverAHoleAreNotCut() {
+        // A walkway of stone at y 65 bending round a hole: the diagonal over the hole's corner is never taken.
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        for (int x = -2; x <= 2; x++) for (int z = -2; z <= 2; z++) blocks.put(new BlockPos(x, 64, z), Blocks.AIR.defaultBlockState());
+        blocks.put(new BlockPos(0, 64, 0), Blocks.STONE.defaultBlockState());
+        blocks.put(new BlockPos(1, 64, 0), Blocks.STONE.defaultBlockState());
+        blocks.put(new BlockPos(1, 64, -1), Blocks.STONE.defaultBlockState());
+        blocks.put(new BlockPos(0, 64, -1), Blocks.AIR.defaultBlockState());
+        for (int y = 60; y < 64; y++) for (int x = -2; x <= 2; x++) for (int z = -2; z <= 2; z++) blocks.put(new BlockPos(x, y, z), Blocks.AIR.defaultBlockState());
+        Navigator.Node start = new Navigator.Node(0, 64, 0, 65, Navigator.Move.START);
+        Navigator.Path path = navigator(world(blocks)).find(start, node -> node.x() == 1 && node.z() == -1 && node.feet() == 65 ? 1 : 0);
+        assertNotNull(path);
+        assertEquals(3, path.nodes().size(), "round by the side, not across the corner over the hole");
+        assertEquals(1, path.nodes().get(1).x());
+        assertEquals(0, path.nodes().get(1).z());
+    }
+
+    @Test
     void aStepThatFailedIsWalkedAround() {
         BlockGetter level = world(Map.of());
         Navigator.Node start = new Navigator.Node(0, 64, 0, 65, Navigator.Move.START);

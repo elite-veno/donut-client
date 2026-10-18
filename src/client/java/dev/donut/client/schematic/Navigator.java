@@ -222,6 +222,10 @@ public final class Navigator {
                 if (diagonal && (!clear(from.x() + d[0], from.z(), Math.max(feet, from.feet()), top, Integer.MIN_VALUE)
                         || !clear(from.x(), from.z() + d[1], Math.max(feet, from.feet()), top, Integer.MIN_VALUE))) continue;
                 if (diagonal && (over > STEP || rise < -STEP)) continue;
+                // Cutting a corner, the body passes over both corner cells: a walk turns as it goes and can drift out over
+                // one, so each needs ground at about the height of the step, or the step goes around by the sides.
+                if (diagonal && (!holds(from.x() + d[0], from.z(), ny, from.y(), from.feet(), feet)
+                        || !holds(from.x(), from.z() + d[1], ny, from.y(), from.feet(), feet))) continue;
                 Move move = over > STEP ? Move.JUMP : rise < -STEP ? Move.DROP : Move.WALK;
                 Node next = new Node(nx, ny, nz, feet, move);
                 if (!badSteps.isEmpty() && badSteps.contains(stepKey(from, next))) continue;
@@ -238,6 +242,15 @@ public final class Navigator {
             if (badSteps.isEmpty() || !badSteps.contains(stepKey(from, next))) out.add(next);
         }
         return out;
+    }
+
+    /** Whether the column at x, z has ground on one of the two floors given, within a step of the feet heights a and b. */
+    private boolean holds(int x, int z, int floorA, int floorB, double a, double b) {
+        for (int y : new int[] {floorA, floorB}) {
+            Double feet = standable(x, y, z);
+            if (feet != null && feet >= Math.min(a, b) - STEP && feet <= Math.max(a, b) + STEP) return true;
+        }
+        return false;
     }
 
     /** The height of the highest part of the block at x, y, z: a bowl's rim, above where the feet rest in it. */
