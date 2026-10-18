@@ -731,14 +731,27 @@ public final class SchematicBuilder {
             if (byGroup && !inOrder(player, i, group, lift, started)) continue;
             candidates.add(i);
         }
-        // Of the blocks in reach, those whose item is in the hotbar go first: an item is swapped in from the inventory
-        // once its blocks here run out, not back and forth. Blocks out of reach follow, nearest first.
+        // Of the blocks in reach, those in front go first, as a player places what they look at before turning round:
+        // a block behind costs about what bringing another item into the hotbar does, so an item is swapped in once its
+        // blocks here run out rather than back and forth, and the view turns round once rather than to and fro.
+        // Blocks out of reach follow, nearest first.
         Set<Item> atHand = new HashSet<>();
         for (int slot = 0; slot < Inventory.getSelectionSize(); slot++) atHand.add(player.getInventory().getItem(slot).getItem());
         double inReach = (player.blockInteractionRange() + 1) * (player.blockInteractionRange() + 1);
-        candidates.sort(Comparator.comparingInt((Integer i) -> Vec3.atCenterOf(plan.pos(i)).distanceToSqr(eye) > inReach ? 2
-                        : creative || atHand.contains(BlockRules.item(plan.target(i))) ? 0 : 1)
-                .thenComparingDouble(i -> Vec3.atCenterOf(plan.pos(i)).distanceToSqr(eye)));
+        Vec3 view = player.getViewVector(1.0f);
+        Map<Integer, Double> order = new HashMap<>();
+        for (int i : candidates) {
+            Vec3 to = Vec3.atCenterOf(plan.pos(i)).subtract(eye);
+            double away = to.lengthSqr();
+            if (away > inReach) {
+                order.put(i, 1000 + away);
+                continue;
+            }
+            double turn = away < 1e-6 ? 0 : Math.toDegrees(Math.acos(Mth.clamp(to.normalize().dot(view), -1, 1)));
+            boolean inHand = creative || atHand.contains(BlockRules.item(plan.target(i)));
+            order.put(i, turn / 60 + (inHand ? 0 : 2) + Math.sqrt(away) * 0.3);
+        }
+        candidates.sort(Comparator.comparingDouble(order::get));
         if (settings().walk && wetSoon(player.level(), player.blockPosition(), recentPours(), new HashMap<>())) {
             // Water running past pushes the player about and spoils every look: out of it first, onto dry ground.
             nextAction = System.nanoTime() + 250_000_000L;
