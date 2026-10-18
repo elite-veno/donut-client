@@ -31,6 +31,38 @@ final class MinerPartsTest {
     }
 
     @Test
+    void aRoomGoesDownUnderDipsInTheGroundOverAnyColumn() {
+        Room room = Room.of(new Box(0, -40, 0, 40, -11, 30), 3, 2, Direction.SOUTH, 6, 4);
+        // The room's top is y -9: four blocks of cover need ground at y -5 or higher.
+        assertEquals(0, room.sink((x, z) -> 64, 4));
+        assertEquals(0, room.sink((x, z) -> -5, 4));
+        assertEquals(1, room.sink((x, z) -> -6, 4));
+        // A ravine over one corner of a wide room, far from the middle, counts.
+        assertEquals(9, room.sink((x, z) -> x > 40 && z < 0 ? -14 : 64, 4));
+        // The storage room's top is y -37: a dip over it alone is no matter until it gets that deep.
+        assertEquals(0, room.sink((x, z) -> z > 33 ? -30 : 64, 4));
+        assertEquals(2, room.sink((x, z) -> z > 33 ? -35 : 64, 4));
+        // Columns nobody knows about, outside the chunks loaded, don't count.
+        assertEquals(0, room.sink((x, z) -> x < 10 ? Room.UNKNOWN : 64, 4));
+        assertEquals(0, room.sink((x, z) -> x < -3 || x > 43 || z < -3 || z > 39 ? -60 : 64, 4), "columns beside the room don't count");
+    }
+
+    @Test
+    void blocksLeftAreCountedAShareOfColumnsAtATime() {
+        Room room = Room.of(new Box(0, 10, 0, 20, 19, 12), 3, 2, Direction.EAST, 6, 4);
+        GridSite site = new GridSite(40);
+        site.fill(new Box(2, 12, 2, 9, 15, 7), GridSite.Block.AIR);
+        Excavator dig = new Excavator(room, new BlockPos(40, 41, 5), false, site);
+        int all = dig.left(site), columns = room.bounds.sizeX() * room.bounds.sizeZ();
+        for (int pass = 0; pass < 3; pass++) {
+            int ticks = 0, counted;
+            while ((counted = dig.countLeft(site, Math.ceilDiv(columns, 20))) < 0) ticks++;
+            assertEquals(all, counted);
+            assertTrue(ticks < 20, "a pass took " + ticks + " ticks");
+        }
+    }
+
+    @Test
     void bandsAreMinedStandingOnTheOneBelow() {
         Room room = Room.of(new Box(0, 0, 0, 4, 9, 4), 0, 0, null, 0, 0);
         List<int[]> four = room.tiers(4);

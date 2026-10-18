@@ -100,10 +100,11 @@ public final class ChunkMinerFinderGameTest implements FabricClientGameTest {
             List<ChunkPos> good = context.computeOnClient(client -> scanner.goodChunks().stream().map(GoodChunk::chunk).toList());
             require(good.contains(found.chunk()), "The miner dug under " + found.chunk() + ", which ChunkFinder doesn't call good: " + good);
             int cx = found.chunk().getMiddleBlockX(), cz = found.chunk().getMiddleBlockZ();
-            require(room.schematic.minY() == FLOOR_Y, "The room's floor is at y " + room.schematic.minY() + ", not " + FLOOR_Y);
+            // Lower only where the ground over some column of the room is too thin at the floor height.
+            require(room.schematic.minY() <= FLOOR_Y, "The room's floor is at y " + room.schematic.minY() + ", over " + FLOOR_Y);
             require(Math.abs(room.schematic.centerX() - cx) <= 1 && Math.abs(room.schematic.centerZ() - cz) <= 1,
                     "The room " + room.schematic + " is not in the middle of the good chunk at " + cx + " " + cz);
-            require(place.originSet && place.originY == FLOOR_Y, "SchematicBuilder's origin was not set to the room");
+            require(place.originSet && place.originY == room.schematic.minY(), "SchematicBuilder's origin was not set to the room");
             int steps = context.computeOnClient(client -> miner.excavator().stepsLeft());
             context.waitFor(client -> miner.excavator() == null || miner.excavator().stepsLeft() < steps - 5, 20 * 90);
             context.takeScreenshot(TestScreenshotOptions.of("donut-miner-good-chunk").withSize(1280, 800));

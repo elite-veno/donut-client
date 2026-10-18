@@ -2,6 +2,7 @@ package dev.donut.client.miner;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.IntBinaryOperator;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 
@@ -72,6 +73,29 @@ public final class Room {
         int x = pos.getX(), z = pos.getZ();
         for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) if (column(x + dx, z + dz)) return true;
         return false;
+    }
+
+    /** What {@link #sink} is told for a column whose ground isn't known, such as one in a chunk not loaded. */
+    public static final int UNKNOWN = Integer.MIN_VALUE;
+
+    /**
+     * How many blocks the room has to go down for {@code cover} blocks of ground, its top one included, to stay over
+     * every column of it, or 0 when they do. Each column is measured against the room's own top there, so a low storage
+     * room may go under a dip that the main room could not.
+     *
+     * @param ground a column's highest ground block, or {@link #UNKNOWN}
+     */
+    public int sink(IntBinaryOperator ground, int cover) {
+        int sink = 0;
+        for (int x = bounds.minX(); x <= bounds.maxX(); x++) {
+            for (int z = bounds.minZ(); z <= bounds.maxZ(); z++) {
+                int top = main.column(x, z) ? main.maxY() : storage != null && storage.column(x, z) ? storage.maxY() : Integer.MIN_VALUE;
+                if (top == Integer.MIN_VALUE) continue;
+                int g = ground.applyAsInt(x, z);
+                if (g != UNKNOWN) sink = Math.max(sink, top + cover - g);
+            }
+        }
+        return sink;
     }
 
     /** Blocks in the room, all of them, air included. */

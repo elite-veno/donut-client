@@ -259,6 +259,29 @@ final class ExcavatorTest {
         }
     }
 
+    @Test
+    void digsBigFlatAndTallRooms() {
+        // Builds as players bring them, not only small test boxes: a wide farm, a long flat base, a tall narrow tower.
+        Box[] schematics = {new Box(0, -20, 0, 30, -9, 30), new Box(0, -10, 0, 47, -5, 19), new Box(0, -30, 0, 8, 17, 8)};
+        for (Box schematic : schematics) {
+            for (ToolShape area : new ToolShape[] {null, ToolShape.area(1)}) {
+                Room room = Room.of(schematic, 3, 2, Direction.SOUTH, 6, 4);
+                BlockPos start = new BlockPos(room.main.maxX() + 20, GROUND + 1, (int) room.main.centerZ());
+                Sim sim = new Sim(new GridSite(GROUND), room, start, area, area == null, schematic.sizeX());
+                sim.limit = (int) (room.volume() * 2) + 40_000;
+                String what = "room " + room.main + (area == null ? ", pickaxe" : ", area pickaxe");
+                try {
+                    sim.run();
+                    sim.assertDug();
+                } catch (AssertionError e) {
+                    throw new AssertionError(what + ": " + e.getMessage(), e);
+                }
+                System.out.printf("%s: %d actions, planner %.2f ms a step on average, %.1f ms at most%n", what, sim.actions,
+                        sim.planned / 1e6 / Math.max(1, sim.actions), sim.slowest / 1e6);
+            }
+        }
+    }
+
     /** A player carrying out the excavator's actions. */
     private static final class Sim {
         final GridSite site;
@@ -278,7 +301,9 @@ final class ExcavatorTest {
         /** Every staircase planned: one climbing back up from a cave under the room comes through its floor. */
         final Set<BlockPos> stairs = new HashSet<>();
         BlockPos feet;
-        int areaSwings, actions;
+        int areaSwings, actions, limit = 40_000;
+        /** Nanoseconds the excavator spent choosing, in all and at most for one action. */
+        long planned, slowest;
 
         Sim(GridSite site, Room room, BlockPos start, ToolShape area, boolean single, long seed) {
             this.site = site;
@@ -299,8 +324,12 @@ final class ExcavatorTest {
         }
 
         void run() {
-            for (; actions < 40_000; actions++) {
+            for (; actions < limit; actions++) {
+                long before = System.nanoTime();
                 Excavator.Action action = dig.next(site, reach(), new Excavator.Tools(area, single));
+                long took = System.nanoTime() - before;
+                planned += took;
+                slowest = Math.max(slowest, took);
                 recent.add(feet.toShortString() + " " + dig.phase() + ": " + action);
                 List<BlockPos> path = dig.path();
                 for (int i = 1; i < path.size(); i++) stairs.addAll(Staircase.clears(path.get(i - 1), path.get(i)));
@@ -355,7 +384,7 @@ final class ExcavatorTest {
                 }
                 site.set(cell, GridSite.Block.AIR);
             }
-            settleGravel();
+            settleGravel(cells);
             dig.broke(swing.target());
             int fell = 0;
             while (!site.is(feet.below(), Site.SOLID)) {
@@ -365,22 +394,20 @@ final class ExcavatorTest {
             assertTrue(fell <= 1, "fell " + fell + " blocks at " + feet);
         }
 
-        /** Gravel over air falls until it lands; on the player it would hurt. */
-        void settleGravel() {
-            boolean moved = true;
-            while (moved) {
-                moved = false;
-                Box b = room.bounds;
-                for (int x = b.minX() - 2; x <= b.maxX() + 2; x++) {
-                    for (int z = b.minZ() - 2; z <= b.maxZ() + 2; z++) {
-                        for (int y = b.minY(); y <= b.maxY() + 4; y++) {
-                            BlockPos pos = new BlockPos(x, y, z);
-                            if (site.get(pos) != GridSite.Block.GRAVEL || site.get(pos.below()) != GridSite.Block.AIR) continue;
-                            assertFalse(pos.below().equals(feet.above()) || pos.below().equals(feet.above(2)), "gravel fell on the player at " + pos);
-                            site.set(pos, GridSite.Block.AIR);
-                            site.set(pos.below(), GridSite.Block.GRAVEL);
-                            moved = true;
-                        }
+        /** Gravel over air falls until it lands; on the player it would hurt. Only gravel over a broken block can fall. */
+        void settleGravel(List<BlockPos> broken) {
+            int top = room.bounds.maxY() + 4;
+            for (BlockPos cell : broken) {
+                boolean moved = true;
+                while (moved) {
+                    moved = false;
+                    for (int y = cell.getY() + 1; y <= top; y++) {
+                        BlockPos pos = new BlockPos(cell.getX(), y, cell.getZ());
+                        if (site.get(pos) != GridSite.Block.GRAVEL || site.get(pos.below()) != GridSite.Block.AIR) continue;
+                        assertFalse(pos.below().equals(feet.above()) || pos.below().equals(feet.above(2)), "gravel fell on the player at " + pos);
+                        site.set(pos, GridSite.Block.AIR);
+                        site.set(pos.below(), GridSite.Block.GRAVEL);
+                        moved = true;
                     }
                 }
             }

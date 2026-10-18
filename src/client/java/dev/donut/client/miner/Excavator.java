@@ -80,6 +80,8 @@ public final class Excavator {
     private final Map<BlockPos, Integer> tries = new HashMap<>();
     /** Places stood on from which nothing could be dug, until something near them breaks. */
     private final Set<BlockPos> triedSpots = new HashSet<>();
+    /** Where {@link #countLeft} is in its pass over the room's columns, and what it has counted so far. */
+    private int countAt, counted;
 
     /** Plans the way in from {@code start}, past the water and lava {@code site} shows; null knows nothing of them. */
     public Excavator(Room room, BlockPos start, boolean area, Site site) {
@@ -269,6 +271,29 @@ public final class Excavator {
             }
         }
         return left;
+    }
+
+    /**
+     * {@link #left} a share of the room's columns at a time, so counting a big room doesn't hold up a tick: the count
+     * once a pass over every column ends, else -1.
+     */
+    public int countLeft(Site site, int columns) {
+        Box b = room.bounds;
+        for (int i = 0; i < columns; i++) {
+            int x = b.minX() + countAt / b.sizeZ(), z = b.minZ() + countAt % b.sizeZ();
+            if (room.column(x, z)) {
+                for (int y = b.minY(); y <= b.maxY(); y++) {
+                    if (room.contains(x, y, z) && (site.flags(x, y, z) & Site.DIG) != 0) counted++;
+                }
+            }
+            if (++countAt == b.sizeX() * b.sizeZ()) {
+                int left = counted;
+                countAt = 0;
+                counted = 0;
+                return left;
+            }
+        }
+        return -1;
     }
 
     /** A block too slow to break with the tools at hand: it is left. */

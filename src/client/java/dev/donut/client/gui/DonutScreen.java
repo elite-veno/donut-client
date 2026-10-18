@@ -692,7 +692,7 @@ public final class DonutScreen extends Screen {
             c.toggle("goodChunks", "Dig good chunks", "Wait for ChunkFinder's best good chunk and dig under its middle; off digs at the schematic's origin",
                     () -> s.goodChunks, () -> s.goodChunks = !s.goodChunks);
             if (s.goodChunks) {
-                c.slider("floorY", "Floor height", "The schematic's lowest layer goes at this height; the block under it stays as the floor",
+                c.slider("floorY", "Floor height", "The schematic's lowest layer goes at this height, or lower where the ground over its room would be thinner than 4 blocks; the block under it stays as the floor",
                         () -> s.floorY, v -> s.floorY = (int) Math.round(v), -60, 120, 1, v -> "y " + Math.round(v));
             } else {
                 var place = config.schematic;

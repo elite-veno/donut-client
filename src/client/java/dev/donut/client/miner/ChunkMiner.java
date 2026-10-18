@@ -4,6 +4,7 @@ import dev.donut.client.config.ClientConfig;
 import dev.donut.client.config.MinerSettings;
 import dev.donut.client.config.SchematicSettings;
 import dev.donut.client.finder.FinderSummary;
+import dev.donut.client.finder.LoadedChunks;
 import dev.donut.client.rtp.AutoRtpController;
 import dev.donut.client.schematic.PlacementSolver;
 import dev.donut.client.schematic.Schematic;
@@ -25,8 +26,10 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.SectionPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundEvents;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
@@ -39,6 +42,7 @@ import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -62,11 +66,13 @@ import org.slf4j.LoggerFactory;
  */
 public final class ChunkMiner {
     private static final Logger LOGGER = LoggerFactory.getLogger("Donut/Miner");
-    /** How often the blocks left are counted again, in ticks. */
+    /** How often the blocks left are counted again, in ticks: a share of the room's columns each tick. */
     private static final int COUNT_TICKS = 20;
     private static final int FOOD_PAUSE = 6;
     /** A block taking longer than this to break, in ticks, is left. */
     private static final int SLOWEST_BLOCK = 20 * 20;
+    /** Blocks of ground, the top one included, kept over a good chunk's room, so it doesn't open to the sky. */
+    private static final int COVER = 4;
     private static ChunkMiner instance;
     private static Supplier<List<Target>> goodChunks = List::of;
     /** Switches ChunkFinder on if it is off, saying whether it had to. */
@@ -232,8 +238,10 @@ public final class ChunkMiner {
         if (hurt && settings().stopWhenHurt) { finish(client, "stopped: you took damage.", true); return; }
         if (player.isInLava()) { finish(client, "stopped: you are in lava.", true); return; }
         LevelSite site = new LevelSite(client.level, player);
-        if (tick % COUNT_TICKS == 0) {
-            left = dig.left(site);
+        Box b = room.bounds;
+        int counted = dig.countLeft(site, Math.ceilDiv(b.sizeX() * b.sizeZ(), COUNT_TICKS));
+        if (counted >= 0) {
+            left = counted;
             updatePreview();
         }
         if (check != null && tick >= check.at()) learn(client, site);
@@ -346,15 +354,26 @@ public final class ChunkMiner {
         SchematicSettings place = config.schematic;
         Box at0 = placed(schematic, BlockPos.ZERO, place);
         MinerSettings s = settings();
+        BlockPos feet = feet(player);
         Target found = null;
         BlockPos origin = null;
+        int sunk = 0;
         for (Target candidate : goodChunks.get()) {
             if (passedOver.contains(candidate.chunk())) continue;
             int x = candidate.chunk().getMiddleBlockX(), z = candidate.chunk().getMiddleBlockZ();
             BlockPos at = new BlockPos(x - (int) Math.floor(at0.centerX()), s.floorY - at0.minY(), z - (int) Math.floor(at0.centerZ()));
-            Room trial = Room.of(placed(schematic, at, place), s.sideRoom, s.headroom, null, 0, 0);
-            String why = trial.topY + 3 >= candidate.surfaceY() ? "its room would reach the ground at y " + candidate.surfaceY()
-                    : deepDark(client.level, trial);
+            Room trial = room(placed(schematic, at, place), feet);
+            // The ground over every column of the room, not only the chunk's middle: a wide room reaches past hills
+            // into valleys and under rivers, and a tall one may not fit under the ground at the floor height at all.
+            int sink = trial.sink((gx, gz) -> ground(client.level, gx, gz), COVER);
+            boolean tooDeep = s.floorY - sink < MinerSettings.MIN_FLOOR_Y;
+            if (sink > 0 && !tooDeep) {
+                at = at.below(sink);
+                trial = room(placed(schematic, at, place), feet);
+            }
+            String dark = deepDark(client.level, trial);
+            String why = sink > 0 && tooDeep ? "its room would reach the ground unless its floor went down to y " + (s.floorY - sink)
+                    : dark.isEmpty() || sink > 0 ? dark : dark + "; set the floor higher";
             if (why.isEmpty()) {
                 // An underground lake or lava pool in the room would leave a lot undug.
                 int fluids = fluids(new LevelSite(client.level, player), trial.bounds);
@@ -367,6 +386,7 @@ public final class ChunkMiner {
             }
             found = candidate;
             origin = at;
+            sunk = sink;
             break;
         }
         if (found == null) {
@@ -389,7 +409,44 @@ public final class ChunkMiner {
             message(client, "turned Auto RTP off to dig the good chunk.", ChatFormatting.GRAY);
         }
         message(client, "found a good chunk at " + x + " " + z + " (ground at y " + found.surfaceY() + ").", ChatFormatting.GREEN);
+        if (sunk > 0) {
+            message(client, "puts the floor at y " + (s.floorY - sunk) + ", " + sunk + " under Floor height, to keep " + COVER
+                    + " blocks of ground over all of the room.", ChatFormatting.GRAY);
+        }
         plan(client, player, schematic, origin);
+    }
+
+    /** The room for a schematic's box, with the storage room on the side the settings say, as dug from {@code feet}. */
+    private Room room(Box box, BlockPos feet) {
+        MinerSettings s = settings();
+        Room plain = Room.of(box, s.sideRoom, s.headroom, null, 0, 0);
+        Direction storage = switch (s.storageSide) {
+            case 1 -> Direction.NORTH;
+            case 2 -> Direction.EAST;
+            case 3 -> Direction.SOUTH;
+            case 4 -> Direction.WEST;
+            // Beside where the staircase comes in, as a base's entrance hall; south when starting inside it.
+            case 5 -> plain.column(feet.getX(), feet.getZ()) ? Direction.SOUTH : Room.facing(plain.main, feet);
+            default -> null;
+        };
+        return Room.of(box, s.sideRoom, s.headroom, storage, s.storageDepth, s.storageHeight);
+    }
+
+    /**
+     * A loaded column's highest ground block, or {@link Room#UNKNOWN}: the top of the seabed under water, and the ground
+     * under trees and plants, which the heightmap counts.
+     */
+    private static int ground(ClientLevel level, int x, int z) {
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(x, 0, z);
+        if (!LoadedChunks.has(level, pos)) return Room.UNKNOWN;
+        int y = level.getChunk(SectionPos.blockToSectionCoord(x), SectionPos.blockToSectionCoord(z)).getHeight(Heightmap.Types.MOTION_BLOCKING, x, z);
+        for (; y > level.getMinY(); y--) {
+            BlockState state = level.getBlockState(pos.setY(y));
+            boolean over = !state.getFluidState().isEmpty() || state.is(BlockTags.LEAVES) || state.is(BlockTags.LOGS)
+                    || state.getCollisionShape(level, pos).isEmpty();
+            if (!over) break;
+        }
+        return y;
     }
 
     /** The schematic's whole box, air included, placed at {@code origin} as the builder places it. */
@@ -401,23 +458,12 @@ public final class ChunkMiner {
     }
 
     private boolean plan(Minecraft client, LocalPlayer player, Schematic schematic, BlockPos origin) {
-        MinerSettings s = settings();
         Box box = placed(schematic, origin, config.schematic);
         BlockPos feet = feet(player);
-        Room plain = Room.of(box, s.sideRoom, s.headroom, null, 0, 0);
-        Direction storage = switch (s.storageSide) {
-            case 1 -> Direction.NORTH;
-            case 2 -> Direction.EAST;
-            case 3 -> Direction.SOUTH;
-            case 4 -> Direction.WEST;
-            // Beside where the staircase comes in, as a base's entrance hall; south when starting inside it.
-            case 5 -> plain.column(feet.getX(), feet.getZ()) ? Direction.SOUTH : Room.facing(plain.main, feet);
-            default -> null;
-        };
-        room = Room.of(box, s.sideRoom, s.headroom, storage, s.storageDepth, s.storageHeight);
+        room = room(box, feet);
         String deepDark = deepDark(client.level, room);
         if (!deepDark.isEmpty()) {
-            finish(client, "stopped: " + deepDark + ".", true);
+            finish(client, "stopped: " + deepDark + "; put the schematic higher.", true);
             return false;
         }
         Excavator.Tools tools = tools(player);
@@ -467,18 +513,24 @@ public final class ChunkMiner {
         return fluids;
     }
 
-    /** Why the room can't go here, or empty: in the deep dark, digging sets off shriekers, which call the Warden. */
+    /**
+     * Why the room can't go here, or empty: in the deep dark, digging sets off shriekers, which call the Warden. Biomes
+     * come in 4-block cells, so a look every fourth block across the room, edges included, finds any patch of it.
+     */
     private static String deepDark(ClientLevel level, Room room) {
         Box b = room.bounds;
-        int[] xs = {b.minX(), (b.minX() + b.maxX()) / 2, b.maxX()}, zs = {b.minZ(), (b.minZ() + b.maxZ()) / 2, b.maxZ()};
-        for (int x : xs) {
-            for (int z : zs) {
-                for (int y : new int[] {b.minY(), b.maxY()}) {
-                    if (level.getBiome(new BlockPos(x, y, z)).is(Biomes.DEEP_DARK)) {
-                        return "the room would be in the deep dark at " + x + " " + y + " " + z + ", where digging calls the Warden; set the floor higher";
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        for (int x = b.minX(); ; x = Math.min(x + 4, b.maxX())) {
+            for (int z = b.minZ(); ; z = Math.min(z + 4, b.maxZ())) {
+                for (int y = b.minY(); ; y = Math.min(y + 4, b.maxY())) {
+                    if (room.contains(x, y, z) && level.getBiome(pos.set(x, y, z)).is(Biomes.DEEP_DARK)) {
+                        return "the room would be in the deep dark at " + x + " " + y + " " + z + ", where digging calls the Warden";
                     }
+                    if (y == b.maxY()) break;
                 }
+                if (z == b.maxZ()) break;
             }
+            if (x == b.maxX()) break;
         }
         return "";
     }
