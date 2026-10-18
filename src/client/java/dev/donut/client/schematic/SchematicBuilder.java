@@ -393,6 +393,8 @@ public final class SchematicBuilder {
     private boolean escapeWalk;
     /** Walks made to bring each of those into view, by position. */
     private final Map<Long, Integer> escapeWalks = new HashMap<>();
+    /** Walks made to take back a helper block of an earlier walk, out of them (see {@link #walkToSpareHelper}), by position. */
+    private final Map<Long, Integer> reclaimWalks = new HashMap<>();
     /** Since when one of those has stood in the build's own water, holding the layers above (see BuildPlan.hold), or -1. */
     private long holdSince = -1;
     /** Whether the way out {@link #wayOut} keeps clear climbs over cells the build fills later. */
@@ -928,6 +930,7 @@ public final class SchematicBuilder {
         escapeHelpers.clear();
         escapeWalk = false;
         escapeWalks.clear();
+        reclaimWalks.clear();
         holdSince = -1;
         repairing = -1;
         helperFetchTick = -100_000;
@@ -1469,6 +1472,7 @@ public final class SchematicBuilder {
         if (settings().walk && walkToRepair(client, player)) return;
         if (settings().walk && planWalk(client, player, candidates, materials, layerNumber, lift)) return;
         if (settings().walk && planPit(client, player, candidates, materials, layerNumber, lift)) return;
+        if (settings().walk && walkToSpareHelper(client, player)) return;
         if (settings().walk && breakOut(player)) return;
         if (sealing && !lift) {
             // Every block left in reach of a walk would shut in another: let them go in after all.
@@ -2792,6 +2796,7 @@ public final class SchematicBuilder {
      */
     private boolean removeUsedHelper(Minecraft client, LocalPlayer player) {
         double reach = player.blockInteractionRange() - 0.25;
+        boolean runOut = helpersRunOut(player);
         for (Iterator<Map.Entry<Long, Helper>> it = helpers.entrySet().iterator(); it.hasNext(); ) {
             Map.Entry<Long, Helper> entry = it.next();
             BlockPos at = BlockPos.of(entry.getKey());
@@ -2817,12 +2822,95 @@ public final class SchematicBuilder {
                 startBreak(at);
                 return true;
             }
+            if (serves < 0 && runOut && reclaimable(player, at, reach)) {
+                if (debug()) LOGGER.info("Short of helper blocks: taking back the one an earlier walk put down at {}", at.toShortString());
+                startBreak(at);
+                return true;
+            }
             // A block placed against it that only waits for its water is done with it.
             if (serves < 0 || plan.update(client.level, serves) == BuildPlan.Status.PENDING && !plan.soaking(serves)) continue;
             if (!missedMining(player, at) && inView(player, player.getEyePosition(), at, reach) && safeToBreak(player, at)) {
                 startBreak(at);
                 return true;
             }
+        }
+        return false;
+    }
+
+    /**
+     * Whether helper blocks have run short, with none left in a shulker box to take out: then those walks climbed or
+     * bridged on, which otherwise stand until the end, are taken back on the way. On a big build every walk leaves a few,
+     * and without this the build ends up with hundreds standing and none to climb or hold a block up with.
+     */
+    private boolean helpersRunOut(LocalPlayer player) {
+        if (player.hasInfiniteMaterials()) return false;
+        helperItem(player);
+        if (helperItems.isEmpty() || helpersLoose(player) >= 64) return false;
+        Materials materials = Materials.of(player.getInventory());
+        Map<Item, Integer> needs = plan.needs();
+        for (Item item : helperItems) if (!needs.containsKey(item) && materials.boxed(item) > 0) return false;
+        return true;
+    }
+
+    /**
+     * Whether the helper block at {@code at}, put down by a walk outside the build, can come back now: the top of its
+     * column, not underfoot, in view, nothing beside it that needs it to stand, and a way on for the player without it.
+     */
+    private boolean reclaimable(LocalPlayer player, BlockPos at, double reach) {
+        Level level = player.level();
+        if (helpers.containsKey(at.above().asLong()) || tick - escapeChecked < 20 || Navigator.standingAt(level, player).floor().equals(at)
+                || missedMining(player, at) || !inView(player, player.getEyePosition(), at, reach) || !safeToBreak(player, at)) return false;
+        for (Direction side : Direction.values()) {
+            BlockPos next = at.relative(side);
+            BlockState there = level.getBlockState(next);
+            if (there.isAir() || there.getBlock() instanceof LiquidBlock || helpers.containsKey(next.asLong())) continue;
+            // Sand on it falls, and lichen, a torch or a rail on it breaks off, as in safeToBreak.
+            if (there.getBlock() instanceof FallingBlock) {
+                if (side == Direction.UP) return false;
+                continue;
+            }
+            if (there.isCollisionShapeFullBlock(level, next) || standsAlone(there)) continue;
+            if (side != Direction.UP && restsOnFloor(there)) continue;
+            return false;
+        }
+        Overlay without = new Overlay(level, Map.of(at.asLong(), Blocks.AIR.defaultBlockState()));
+        escapeChecked = tick;
+        return exitFrom(player, without, Navigator.standingAt(without, player), null) != null;
+    }
+
+    /**
+     * Out of helper blocks with none left in a box, and nothing else to do: a walk to where one an earlier walk put down
+     * is in view, for {@link #removeUsedHelper} to take back, the nearest first, each at most twice. False when there is
+     * none to go to.
+     */
+    private boolean walkToSpareHelper(Minecraft client, LocalPlayer player) {
+        if (!helpersRunOut(player)) return false;
+        Level level = player.level();
+        double reach = player.blockInteractionRange() - 0.25;
+        List<BlockPos> spare = new ArrayList<>();
+        for (Map.Entry<Long, Helper> entry : helpers.entrySet()) {
+            BlockPos at = BlockPos.of(entry.getKey());
+            if (entry.getValue().serves() >= 0 || plan.indexOf(at) >= 0 || escapeHelpers.contains(entry.getKey())
+                    || helpers.containsKey(at.above().asLong()) || reclaimWalks.getOrDefault(entry.getKey(), 0) >= 2) continue;
+            if (level.getBlockState(at).getBlock() != entry.getValue().block()) continue;
+            spare.add(at);
+        }
+        if (spare.isEmpty()) return false;
+        spare.sort(Comparator.comparingDouble(at -> at.distToCenterSqr(player.position())));
+        Navigator.Node start = Navigator.standingAt(level, player);
+        long started = System.nanoTime();
+        for (BlockPos at : spare) {
+            if (System.nanoTime() - started > 40_000_000L) break;
+            reclaimWalks.merge(at.asLong(), 1, Integer::sum);
+            // Never from on top of its own column: from there it doesn't come away.
+            Navigator.Path path = navigator(player, false).limit(6000).find(start, node ->
+                    node.x() == at.getX() && node.z() == at.getZ() && node.feet() > at.getY() ? 0 : viewScore(player, node.eye(), at, reach));
+            if (path == null || path.nodes().size() < 2 || dropsIntoTrap(player, path)) continue;
+            releaseKeys(client);
+            walker.start(path.nodes(), Vec3.atCenterOf(at));
+            show("Out of helper blocks: taking back those earlier walks put down", false);
+            if (debug()) LOGGER.info("Out of helper blocks: walking {} steps to take back the one at {}", path.nodes().size() - 1, at.toShortString());
+            return true;
         }
         return false;
     }

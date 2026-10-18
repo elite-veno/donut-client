@@ -157,7 +157,9 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                 context.waitTicks(10);
             }
             giveInShulkers(server, bill);
-            server.runCommand("give @a minecraft:dirt 448");
+            // DONUT_SCHEMATIC_DIRT: fewer helper blocks than the default 448, to see the builder take back those of earlier walks.
+            String dirtText = System.getenv("DONUT_SCHEMATIC_DIRT");
+            server.runCommand("give @a minecraft:dirt " + (dirtText == null || dirtText.isBlank() ? 448 : Integer.parseInt(dirtText.trim())));
             server.runCommand("give @a minecraft:diamond_pickaxe");
             server.runCommand("give @a minecraft:diamond_shovel");
             context.waitTicks(10);
