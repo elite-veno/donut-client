@@ -306,7 +306,10 @@ public final class Navigator {
         // player crosses a gap a block wide, or gets from a pillar onto a build beside it. Only straight out from a full
         // block, over a spot with nothing to stand on at the feet's height.
         BlockPos under = from.floor();
-        if (Math.abs(from.feet() - (from.y() + 1)) < 0.01 && level.getBlockState(under).isCollisionShapeFullBlock(level, under)) {
+        // One block across, not a way on through the air: a bridge goes on from solid ground only, which also keeps a
+        // search from spreading over every empty spot at that height.
+        if (from.move() != Move.BRIDGE && Math.abs(from.feet() - (from.y() + 1)) < 0.01
+                && level.getBlockState(under).isCollisionShapeFullBlock(level, under)) {
             for (int[] d : DIRECTIONS) {
                 if (d[0] != 0 && d[1] != 0) continue;
                 int nx = from.x() + d[0], nz = from.z() + d[1];

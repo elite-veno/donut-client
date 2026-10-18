@@ -181,7 +181,7 @@ public final class PlacementSolver {
         AABB full = new AABB(0, 0, 0, 1, 1, 1);
         for (Direction side : Direction.values()) {
             BlockPos helper = pos.relative(side);
-            if (!allowed.test(helper)) continue;
+            if (!allowed.test(helper) || !standsAgainst(level, helper, pos)) continue;
             Direction face = side.getOpposite();
             for (float[] look : looks(target)) {
                 Vec3 point = facePoint(helper, full, face, 0.5, 0.5);
@@ -206,6 +206,18 @@ public final class PlacementSolver {
             }
         }
         return null;
+    }
+
+    /**
+     * Whether a helper block at {@code helper} can go in itself: something beside it, other than the spot {@code pos} it
+     * is for, to click. One in the air helps nothing, as nothing places it.
+     */
+    private static boolean standsAgainst(Level level, BlockPos helper, BlockPos pos) {
+        for (Direction side : Direction.values()) {
+            BlockPos beside = helper.relative(side);
+            if (!beside.equals(pos) && !level.getBlockState(beside).canBeReplaced()) return true;
+        }
+        return false;
     }
 
     /** A click on a block that isn't there yet: the spot in front of its face is where the block goes. */
