@@ -249,6 +249,8 @@ public final class SchematicBuilder {
     private final Map<Integer, BlockPos> helperSpot = new HashMap<>();
     /** Helper blocks that couldn't be reached to take away. */
     private final List<BlockPos> helpersLeft = new ArrayList<>();
+    /** Whether the helper blocks left during the build were given another try once every block was in. */
+    private boolean leftRetried;
     private String helperList = "";
     private Set<Item> helperItems = Set.of();
     /** A helper block being broken, and for how long. */
@@ -497,6 +499,7 @@ public final class SchematicBuilder {
         helpers.clear();
         helperSpot.clear();
         helpersLeft.clear();
+        leftRetried = false;
         dug.clear();
         refillWalks.clear();
         plan = null;
@@ -693,6 +696,7 @@ public final class SchematicBuilder {
         helpers.clear();
         helperSpot.clear();
         helpersLeft.clear();
+        leftRetried = false;
         dug.clear();
         refillWalks.clear();
         dugLeft.clear();
@@ -1837,6 +1841,15 @@ public final class SchematicBuilder {
      */
     private boolean cleanUp(Minecraft client, LocalPlayer player) {
         if (refill(client, player, true)) return true;
+        if (!leftRetried) {
+            // Those left during the build, out of reach then or slow to break, get another try now the build is done.
+            leftRetried = true;
+            for (BlockPos pos : helpersLeft) {
+                Block block = client.level.getBlockState(pos).getBlock();
+                if (helperItems.contains(block.asItem())) helpers.putIfAbsent(pos.asLong(), new Helper(-1, block));
+            }
+            helpersLeft.clear();
+        }
         helpers.entrySet().removeIf(e -> client.level.getBlockState(BlockPos.of(e.getKey())).getBlock() != e.getValue().block());
         if (helpers.isEmpty()) return false;
         BlockPos top = helpers.keySet().stream().map(BlockPos::of).max(Comparator.comparingInt(BlockPos::getY)).orElseThrow();
@@ -1846,9 +1859,13 @@ public final class SchematicBuilder {
             return true;
         }
         if (settings().walk) {
-            Navigator.Path path = navigator(player, false).find(Navigator.standingAt(player.level(), player),
+            // Climbing too: the top of a tall pillar is only in reach from up beside it, and one left there leaves every
+            // block under it to be broken from below, the top standing in the air. Each block climbed on is a helper
+            // block too, and comes down under the player's feet after it.
+            Navigator.Path path = navigator(player, true).find(Navigator.standingAt(player.level(), player),
                     node -> inView(player, node.eye(), top, reach) ? 1 : 0);
             if (path != null && path.nodes().size() > 1) {
+                if (!climbReady(client, player, path)) return true;
                 walker.start(path.nodes());
                 show("Taking the helper blocks away", false);
                 return true;
