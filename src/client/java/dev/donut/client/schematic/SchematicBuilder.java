@@ -1150,7 +1150,7 @@ public final class SchematicBuilder {
         BlockPos pos = plan.pos(i);
         if (plan.target(i).getCollisionShape(player.level(), pos).isEmpty()) return true;
         // Out already: on top of the layer, or off the build.
-        if (player.getY() >= layerY + 1 - 1e-3 || !plan.bounds.inflate(1).contains(player.position())) return true;
+        if (player.getY() >= layerY + 1 - 1e-3 || offBuild(player.position())) return true;
         // The way out there is now, worked out once a tick. A block anywhere off it, near or as far as reach goes,
         // leaves it open; one on it may close the last way out, and the search is made again with it in place.
         if (exitTick != tick) {
@@ -1203,11 +1203,19 @@ public final class SchematicBuilder {
      * every place the search reaches goes into {@code reached}, when given.
      */
     private Navigator.Path exitFrom(LocalPlayer player, BlockGetter view, Navigator.Node start, Set<Long> reached) {
-        AABB outside = plan.bounds.inflate(1);
         return navigator(player, view, true).limit(3000).find(start, node -> {
             if (reached != null) reached.add(node.key());
-            return node.feet() >= layerY + 1 - 1e-3 || !outside.contains(node.standing()) ? 1 : 0;
+            return node.feet() >= layerY + 1 - 1e-3 || offBuild(node.standing()) ? 1 : 0;
         });
+    }
+
+    /**
+     * Whether a spot is off the build: beside it, a block or more clear of its sides, at any height. In a pit dug under
+     * the build a player is lower than its bottom, yet not out: the way out is a climb, which blocks above can close.
+     */
+    private boolean offBuild(Vec3 at) {
+        AABB b = plan.bounds;
+        return at.x < b.minX - 1 || at.x >= b.maxX + 1 || at.z < b.minZ - 1 || at.z >= b.maxZ + 1;
     }
 
     /** Whether a walk drops into a place with no way back out; if so, every place shut in with it goes into {@link #traps}. */
