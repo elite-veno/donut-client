@@ -118,6 +118,26 @@ class NavigatorTest {
     }
 
     @Test
+    void aGapABlockWideIsBridged() {
+        // Two ledges two blocks over the ground, a block apart: across the gap a block goes down and is stepped on, rather
+        // than down to the ground and up again by a climb of two.
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        for (int x : new int[] {0, 1, 3, 4}) {
+            blocks.put(new BlockPos(x, 65, 0), Blocks.STONE.defaultBlockState());
+            blocks.put(new BlockPos(x, 66, 0), Blocks.STONE.defaultBlockState());
+        }
+        BlockGetter level = world(blocks);
+        Navigator.Node start = new Navigator.Node(1, 66, 0, 67, Navigator.Move.START);
+        Navigator.Goal across = node -> node.x() == 3 && node.z() == 0 && node.feet() == 67 ? 1 : 0;
+        Navigator.Path path = new Navigator(level, AREA, cell -> true, key -> false).find(start, across);
+        assertNotNull(path);
+        assertEquals(Navigator.Move.BRIDGE, path.nodes().get(1).move());
+        assertEquals(2, path.nodes().get(1).x());
+        assertEquals(67, path.nodes().get(1).feet(), 1e-6);
+        assertNull(new Navigator(level, AREA, cell -> true, key -> false).pillars(0).find(start, across), "no block to bridge with");
+    }
+
+    @Test
     void aStepThatFailedIsWalkedAround() {
         BlockGetter level = world(Map.of());
         Navigator.Node start = new Navigator.Node(0, 64, 0, 65, Navigator.Move.START);

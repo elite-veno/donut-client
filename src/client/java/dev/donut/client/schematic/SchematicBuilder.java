@@ -1730,7 +1730,7 @@ public final class SchematicBuilder {
      * off after; true when nothing more can be moved in, and the walk goes as far as they last.
      */
     private boolean climbReady(Minecraft client, LocalPlayer player, Navigator.Path path) {
-        long climbs = path.nodes().stream().filter(node -> node.move() == Navigator.Move.PILLAR).count();
+        long climbs = path.nodes().stream().filter(node -> node.move() == Navigator.Move.PILLAR || node.move() == Navigator.Move.BRIDGE).count();
         if (climbs == 0 || player.hasInfiniteMaterials()) return true;
         Inventory inventory = player.getInventory();
         int hotbar = 0, from = -1;
@@ -2364,7 +2364,7 @@ public final class SchematicBuilder {
     }
 
     private void walk(Minecraft client, LocalPlayer player) {
-        if (player.isShiftKeyDown()) setCrouch(client, false);
+        if (player.isShiftKeyDown() && !walker.bridging()) setCrouch(client, false);
         Walker.State state = walker.tick(client, player, new Walker.Climb() {
             @Override
             public boolean ready(BlockPos cell) {
@@ -2377,6 +2377,12 @@ public final class SchematicBuilder {
 
             @Override
             public boolean placeBelow(BlockPos cell) { return climbPlace(client, player, cell); }
+
+            @Override
+            public void crouch(boolean on) { setCrouch(client, on); }
+
+            @Override
+            public boolean placeBeside(BlockPos support, Direction face) { return bridgePlace(client, player, support, face); }
         });
         if (state == Walker.State.ARRIVED) {
             walkFailures = 0;
@@ -2424,6 +2430,24 @@ public final class SchematicBuilder {
         } else {
             helpers.put(cell.asLong(), new Helper(-1, Block.byItem(item)));
         }
+        return true;
+    }
+
+    /**
+     * Puts a helper block against {@code face} of {@code support}, the block underfoot at the edge of a bridging step,
+     * where the crosshair is: crouched, so a chest or the like there isn't opened. False while the crosshair isn't on it.
+     */
+    private boolean bridgePlace(Minecraft client, LocalPlayer player, BlockPos support, Direction face) {
+        Item item = helperItem(player);
+        if (item == null || !player.getMainHandItem().is(item)) return false;
+        BlockHitResult hit = crosshair(player);
+        if (hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(support) || hit.getDirection() != face) return false;
+        InteractionResult result = client.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
+        if (result instanceof InteractionResult.Success success && success.swingSource() == InteractionResult.SwingSource.CLIENT) {
+            player.swing(InteractionHand.MAIN_HAND);
+        }
+        helpers.put(support.relative(face).asLong(), new Helper(-1, Block.byItem(item)));
+        if (debug()) LOGGER.info("Bridging: a helper block against the {} side of {}", face, support.toShortString());
         return true;
     }
 

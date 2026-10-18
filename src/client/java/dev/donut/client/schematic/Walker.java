@@ -6,6 +6,7 @@ import java.util.Locale;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
 import java.util.concurrent.ThreadLocalRandom;
 import net.minecraft.world.phys.Vec3;
@@ -25,6 +26,12 @@ final class Walker {
 
         /** Places the helper block into the cell the feet just left, with the look the player has; false when it can't. */
         boolean placeBelow(BlockPos cell);
+
+        /** Crouches, or stands up again: crouched, the player can't walk off an edge. */
+        void crouch(boolean on);
+
+        /** Places the helper block against {@code face} of {@code support}, where the crosshair is; false while it isn't. */
+        boolean placeBeside(BlockPos support, Direction face);
     }
 
     /** Ticks without getting closer before the walk counts as stuck. */
@@ -78,6 +85,9 @@ final class Walker {
     private int stuck, climbTicks, climbTries, jumpTicks, placedAt;
     private double closest;
     private boolean placedClimb;
+    /** Whether this walk crouched for a bridging step, how many ticks it has been at it, and when it last clicked. */
+    private boolean bridgeCrouch;
+    private int bridgeTicks, bridgeClicked;
     /** The pitch a climbing step looks down with. */
     private float climbLook;
     private String failure = "";
@@ -110,6 +120,8 @@ final class Walker {
         }
         hesitate = random.nextInt(100) < hesitateChance ? 3 + random.nextInt(8) : 0;
         sidestep = null;
+        bridgeCrouch = false;
+        bridgeTicks = 0;
         strafeHold = 0;
         trail.clear();
         index = 1;
@@ -155,6 +167,9 @@ final class Walker {
             return State.WALKING;
         }
         if (to.move() == Navigator.Move.PILLAR) return climb(client, player, from, to, climb);
+        if (to.move() == Navigator.Move.BRIDGE && player.level().getBlockState(to.floor()).canBeReplaced()) {
+            return bridge(client, player, from, to, climb);
+        }
         if (sidestep == null) sidestep = sidesteps(player);
         boolean last = index == path.size() - 1;
         // On open ground a walk passes a little off the middle of each block, a line of its own, and ends a little off
@@ -172,6 +187,11 @@ final class Walker {
         boolean there = last ? player.onGround() && Math.abs(at.y - to.feet()) < 0.6
                 : (player.onGround() ? Math.abs(at.y - to.feet()) < 0.6 : at.y >= to.feet() - 0.05 && at.y - to.feet() < 0.45);
         if (there && distance < (last ? (player.onGround() && slippery(player) ? 0.4 : 0.25) : 0.45)) {
+            if (bridgeCrouch) {
+                // On the block put down: standing up again.
+                climb.crouch(false);
+                bridgeCrouch = false;
+            }
             index++;
             stuck = 0;
             closest = Double.MAX_VALUE;
@@ -292,6 +312,51 @@ final class Walker {
         client.options.keyJump.setDown(jump);
         return State.WALKING;
     }
+
+    /**
+     * A bridging step: crouched, out over the edge as far as a crouch lets the body lean, looking down at the side of
+     * the block underfoot, the helper block goes in against it, into the spot the step stands on. The step itself is
+     * then walked, still crouched.
+     */
+    private State bridge(Minecraft client, LocalPlayer player, Navigator.Node from, Navigator.Node to, Climb climb) {
+        client.options.keySprint.setDown(false);
+        client.options.keyJump.setDown(false);
+        if (!bridgeCrouch) {
+            climb.crouch(true);
+            bridgeCrouch = true;
+            bridgeTicks = 0;
+            bridgeClicked = -10;
+        }
+        if (++bridgeTicks > 200) return fail(client, "couldn't put a block down to step across to " + to);
+        int dx = to.x() - from.x(), dz = to.z() - from.z();
+        BlockPos support = from.floor();
+        Direction face = Direction.getApproximateNearest(dx, 0, dz);
+        // The upper half of that side, just under the edge.
+        Vec3 point = Vec3.atCenterOf(support).add(dx * 0.5, 0.3, dz * 0.5);
+        float[] look = PlacementSolver.look(player.getEyePosition(), point);
+        head.turn(player, look[0], look[1]);
+        if (!player.isShiftKeyDown()) {
+            // Crouched first: then the edge holds the player.
+            release(client);
+            return State.WALKING;
+        }
+        // The side is only in view from out past its plane, as far as a crouch lets the body lean, almost 0.3; and in
+        // line with the step, so the block goes where the step stands.
+        double past = dx != 0 ? (player.getX() - (from.x() + 0.5 + dx * 0.5)) * dx : (player.getZ() - (from.z() + 0.5 + dz * 0.5)) * dz;
+        double across = dx != 0 ? from.z() + 0.5 - player.getZ() : from.x() + 0.5 - player.getX();
+        if (past < 0.12 || Math.abs(across) > 0.2) {
+            strafe(client, player, dx != 0 ? dx : across, dz != 0 ? dz : across, true);
+            return State.WALKING;
+        }
+        release(client);
+        if (!climb.ready(to.floor())) return fail(client, "no block to step across on in the hotbar, holding " + player.getMainHandItem());
+        // A click every few ticks, once the crosshair is on the side: the server may take a moment to show the block.
+        if (bridgeTicks - bridgeClicked >= 4 && climb.placeBeside(support, face)) bridgeClicked = bridgeTicks;
+        return State.WALKING;
+    }
+
+    /** Whether the walk is crouched for a bridging step, which the crouch must not be let go of. */
+    boolean bridging() { return path != null && bridgeCrouch; }
 
     /** Stands still over the spot, looks down at it, jumps, and at the top has the block placed where the feet were. */
     private State climb(Minecraft client, LocalPlayer player, Navigator.Node from, Navigator.Node to, Climb climb) {

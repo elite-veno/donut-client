@@ -35,7 +35,7 @@ public final class Navigator {
     private static final double BODY = 1.8;
     private static final int[][] DIRECTIONS = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
 
-    public enum Move { START, WALK, JUMP, DROP, PILLAR }
+    public enum Move { START, WALK, JUMP, DROP, PILLAR, BRIDGE }
 
     /** A place to stand: on the block at x, y, z, with the feet at {@code feet}. */
     public record Node(int x, int y, int z, double feet, Move move) {
@@ -213,7 +213,7 @@ public final class Navigator {
             }
             int climbs = climbed.get(key);
             for (Node next : neighbors(node)) {
-                int used = climbs + (next.move() == Move.PILLAR ? 1 : 0);
+                int used = climbs + (next.move() == Move.PILLAR || next.move() == Move.BRIDGE ? 1 : 0);
                 if (used > pillars) continue;
                 double step = entry[0] + stepCost(node, next);
                 Double previous = cost.get(next.key());
@@ -238,6 +238,7 @@ public final class Navigator {
             case JUMP -> 2;
             case DROP -> 1.5 + (from.feet() - to.feet()) * 0.5;
             case PILLAR -> 6;
+            case BRIDGE -> 8;
             case START -> 0;
         };
         // Standing where a block still has to go blocks it: allowed on the way, avoided as a place to stop.
@@ -300,6 +301,22 @@ public final class Navigator {
                 && seeThrough(from.x(), from.z(), cell.getY(), cell.getY() + 2)) {
             Node next = new Node(cell.getX(), cell.getY(), cell.getZ(), from.feet() + 1, Move.PILLAR);
             if (badSteps.isEmpty() || !badSteps.contains(stepKey(from, next))) out.add(next);
+        }
+        // Bridging: crouched at the edge, a block put against the side of the one underfoot, and a step onto it, as a
+        // player crosses a gap a block wide, or gets from a pillar onto a build beside it. Only straight out from a full
+        // block, over a spot with nothing to stand on at the feet's height.
+        BlockPos under = from.floor();
+        if (Math.abs(from.feet() - (from.y() + 1)) < 0.01 && level.getBlockState(under).isCollisionShapeFullBlock(level, under)) {
+            for (int[] d : DIRECTIONS) {
+                if (d[0] != 0 && d[1] != 0) continue;
+                int nx = from.x() + d[0], nz = from.z() + d[1];
+                if (nx < area.minX || nx >= area.maxX || nz < area.minZ || nz >= area.maxZ) continue;
+                BlockPos floor = new BlockPos(nx, from.y(), nz);
+                if (!level.getBlockState(floor).canBeReplaced() || !pillarAllowed.test(floor)) continue;
+                if (!clear(nx, nz, from.feet(), from.feet() + BODY, Integer.MIN_VALUE)) continue;
+                Node next = new Node(nx, from.y(), nz, from.feet(), Move.BRIDGE);
+                if (badSteps.isEmpty() || !badSteps.contains(stepKey(from, next))) out.add(next);
+            }
         }
         return out;
     }
