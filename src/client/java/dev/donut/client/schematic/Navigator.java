@@ -12,6 +12,7 @@ import java.util.function.Predicate;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.util.Mth;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.Blocks;
@@ -168,6 +169,31 @@ public final class Navigator {
                     return new Node(x, cell.getY(), z, feet, Move.START);
                 }
             }
+        }
+        // Over an edge, the middle above a gap, held up by the rim of the block beside: crouched at the edge of a shaft,
+        // say. Standing on that block, not on whatever is at the bottom of the gap.
+        if (player.onGround()) {
+            Node rim = null;
+            double most = 0;
+            for (int cx = Mth.floor(body.minX); cx <= Mth.floor(body.maxX - 1e-7); cx++) {
+                for (int cz = Mth.floor(body.minZ); cz <= Mth.floor(body.maxZ - 1e-7); cz++) {
+                    if (cx == x && cz == z) continue;
+                    for (int dy = 0; dy >= -1; dy--) {
+                        BlockPos cell = BlockPos.containing(cx + 0.5, feet - 0.05 + dy, cz + 0.5);
+                        for (AABB box : level.getBlockState(cell).getCollisionShape(level, cell).toAabbs()) {
+                            AABB at = box.move(cell);
+                            if (Math.abs(at.maxY - feet) >= 0.1) continue;
+                            double under = Math.max(0, Math.min(at.maxX, body.maxX) - Math.max(at.minX, body.minX))
+                                    * Math.max(0, Math.min(at.maxZ, body.maxZ) - Math.max(at.minZ, body.minZ));
+                            if (under > most) {
+                                most = under;
+                                rim = new Node(cx, cell.getY(), cz, feet, Move.START);
+                            }
+                        }
+                    }
+                }
+            }
+            if (rim != null) return rim;
         }
         // In the air: where the player comes down, on the first block below.
         for (int dy = 1; dy <= 6; dy++) {
