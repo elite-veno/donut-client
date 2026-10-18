@@ -3,6 +3,7 @@ package dev.donut.client.schematic;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
@@ -246,7 +247,8 @@ public final class Navigator {
                 }
             }
             int climbs = climbed.get(key);
-            for (Node next : neighbors(node)) {
+            // The helper blocks the way here puts down stand in the way of the steps after it.
+            for (Node next : neighbors(node, climbs == 0 ? null : placedAlong(node, parent))) {
                 int used = climbs + (next.move() == Move.PILLAR || next.move() == Move.BRIDGE ? 1 : 0);
                 if (used > pillars) continue;
                 double step = entry[0] + stepCost(node, next);
@@ -287,7 +289,29 @@ public final class Navigator {
         return cost;
     }
 
-    private List<Node> neighbors(Node from) {
+    /** The blocks the way to {@code node} puts down, climbing and bridging, by position. */
+    private static Set<Long> placedAlong(Node node, Map<Long, Node> parent) {
+        Set<Long> placed = new HashSet<>();
+        for (Node at = node; at != null; at = parent.get(at.key())) {
+            if (at.move() == Move.PILLAR || at.move() == Move.BRIDGE) placed.add(at.floor().asLong());
+        }
+        return placed;
+    }
+
+    /** Whether one of the {@code placed} blocks is in the column at x, z between the heights {@code from} and {@code to}. */
+    private static boolean crosses(Set<Long> placed, int x, int z, double from, double to) {
+        if (placed == null) return false;
+        for (int y = (int) Math.floor(from + 0.001); y <= (int) Math.floor(to - 0.001); y++) {
+            if (placed.contains(BlockPos.asLong(x, y, z))) return true;
+        }
+        return false;
+    }
+
+    /**
+     * The places one step from {@code from}. With {@code placed}, the blocks put down on the way to it so far: they are
+     * there by the time the step is walked, though not yet in the level, so a step through one is no step.
+     */
+    private List<Node> neighbors(Node from, Set<Long> placed) {
         List<Node> out = new ArrayList<>(10);
         for (int[] d : DIRECTIONS) {
             int nx = from.x() + d[0], nz = from.z() + d[1];
@@ -306,10 +330,13 @@ public final class Navigator {
                 double top = Math.max(feet, from.feet() + Math.max(over, 0)) + BODY;
                 // The way across: the new spot's column is clear from its feet to the head at the higher of the two;
                 // a jump needs the head room above the old spot too, and a diagonal both corners clear.
-                if (!clear(nx, nz, feet, top, ny)) continue;
-                if (over > STEP && !clear(from.x(), from.z(), from.feet(), from.feet() + over + BODY, from.y())) continue;
+                if (!clear(nx, nz, feet, top, ny) || crosses(placed, nx, nz, feet, top)) continue;
+                if (over > STEP && (!clear(from.x(), from.z(), from.feet(), from.feet() + over + BODY, from.y())
+                        || crosses(placed, from.x(), from.z(), from.feet(), from.feet() + over + BODY))) continue;
                 if (diagonal && (!clear(from.x() + d[0], from.z(), Math.max(feet, from.feet()), top, Integer.MIN_VALUE)
-                        || !clear(from.x(), from.z() + d[1], Math.max(feet, from.feet()), top, Integer.MIN_VALUE))) continue;
+                        || !clear(from.x(), from.z() + d[1], Math.max(feet, from.feet()), top, Integer.MIN_VALUE)
+                        || crosses(placed, from.x() + d[0], from.z(), Math.max(feet, from.feet()), top)
+                        || crosses(placed, from.x(), from.z() + d[1], Math.max(feet, from.feet()), top))) continue;
                 if (diagonal && (over > STEP || rise < -STEP)) continue;
                 // Cutting a corner, the body passes over both corner cells: a walk turns as it goes and can drift out over
                 // one, so each needs ground at about the height of the step, or the step goes around by the sides.
@@ -332,6 +359,7 @@ public final class Navigator {
         if (Math.abs(from.feet() - cell.getY()) < 0.01 && cell.getY() + 1 < area.maxY && from.feet() + 1 <= climbCeiling
                 && pillarAllowed.test(cell)
                 && clear(from.x(), from.z(), from.feet() + 1, from.feet() + 1 + BODY, Integer.MIN_VALUE)
+                && !crosses(placed, from.x(), from.z(), from.feet() + 1, from.feet() + 1 + BODY)
                 && seeThrough(from.x(), from.z(), cell.getY(), cell.getY() + 2)) {
             Node next = new Node(cell.getX(), cell.getY(), cell.getZ(), from.feet() + 1, Move.PILLAR);
             if (badSteps.isEmpty() || !badSteps.contains(stepKey(from, next))) out.add(next);
@@ -349,8 +377,8 @@ public final class Navigator {
                 int nx = from.x() + d[0], nz = from.z() + d[1];
                 if (nx < area.minX || nx >= area.maxX || nz < area.minZ || nz >= area.maxZ) continue;
                 BlockPos floor = new BlockPos(nx, from.y(), nz);
-                if (!level.getBlockState(floor).canBeReplaced() || !pillarAllowed.test(floor)) continue;
-                if (!clear(nx, nz, from.feet(), from.feet() + BODY, Integer.MIN_VALUE)) continue;
+                if (!level.getBlockState(floor).canBeReplaced() || !pillarAllowed.test(floor) || placed != null && placed.contains(floor.asLong())) continue;
+                if (!clear(nx, nz, from.feet(), from.feet() + BODY, Integer.MIN_VALUE) || crosses(placed, nx, nz, from.feet(), from.feet() + BODY)) continue;
                 Node next = new Node(nx, from.y(), nz, from.feet(), Move.BRIDGE);
                 if (badSteps.isEmpty() || !badSteps.contains(stepKey(from, next))) out.add(next);
             }

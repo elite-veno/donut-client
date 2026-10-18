@@ -201,4 +201,24 @@ class NavigatorTest {
     private static boolean narrow(BlockState state) {
         return Navigator.narrowTop(state.getCollisionShape(world(Map.of()), BlockPos.ZERO));
     }
+
+    @Test
+    void aStepNeverGoesThroughABlockTheSameWalkPutDownBefore() {
+        // A pillar too tall to drop from, a bridge block out to a lower one, then down to the ground under that bridge
+        // block: straight down from the lower pillar the body would pass through it.
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        for (int y = 65; y <= 68; y++) blocks.put(new BlockPos(0, y, 0), Blocks.STONE.defaultBlockState());
+        for (int y = 65; y <= 67; y++) blocks.put(new BlockPos(2, y, 0), Blocks.STONE.defaultBlockState());
+        Navigator.Node start = new Navigator.Node(0, 68, 0, 69, Navigator.Move.START);
+        Navigator navigator = new Navigator(world(blocks), AREA, cell -> true, key -> false).pillars(4);
+        Navigator.Path path = navigator.find(start, node -> node.x() == 1 && node.z() == 0 && Math.abs(node.feet() - 65) < 1e-6 ? 1 : 0);
+        assertNotNull(path);
+        assertTrue(path.nodes().stream().anyMatch(node -> node.move() == Navigator.Move.BRIDGE && node.x() == 1 && node.y() == 68),
+                "out to the lower pillar over a bridge block at 1, 68, 0");
+        for (int k = 1; k < path.nodes().size(); k++) {
+            Navigator.Node from = path.nodes().get(k - 1), to = path.nodes().get(k);
+            assertFalse(to.x() == 1 && to.z() == 0 && from.x() == 2 && from.z() == 0 && from.feet() > 66,
+                    "not straight down from the lower pillar, through the bridge block: " + path.nodes());
+        }
+    }
 }
