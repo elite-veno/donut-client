@@ -94,8 +94,6 @@ public final class SchematicBuilder {
     private static final int RESTOCK_FAILURES = 3;
     /** Ticks a look rests on its spot before the click, so the server has the head turned the same way. */
     private static final int REST_TICKS = 2;
-    /** The most the camera turns in a tick. */
-    private static final float TURN_MAX = 40;
     /** How many of the nearest blocks a walk checks a real look for at each place it considers. */
     private static final int VERIFY = 3;
     private static SchematicBuilder instance;
@@ -168,7 +166,12 @@ public final class SchematicBuilder {
     /** Whether the builder holds the crouch key. */
     private boolean crouchHeld;
     /** Walks the player to where blocks are in reach; it never flies. */
-    private final Walker walker = new Walker();
+    /** Turns the view smoothly, for aiming, walking and looking about alike. */
+    private final Head head = new Head();
+    private final Walker walker = new Walker(head);
+    /** When the next break starts, and while on one, when it ends and where the player glances next and when. */
+    private long breakAt = -1, breakEnds = -1, nextGlance;
+    private float glanceYaw, glancePitch;
     private int walkFailures;
     /** Places tried and found useless since the last block went in, so the next walk goes somewhere else. */
     private final Set<Long> uselessSpots = new HashSet<>();
@@ -496,8 +499,57 @@ public final class SchematicBuilder {
             fire(client, player);
             return;
         }
+        if (takingBreak(client, player)) return;
         if (System.nanoTime() - nextAction < 0) return;
         decide(client, player);
+    }
+
+    /**
+     * Now and then, between one block and the next, a break: the player stands a while and looks about, as a player
+     * does, before building on. True while on one.
+     */
+    private boolean takingBreak(Minecraft client, LocalPlayer player) {
+        SchematicSettings s = settings();
+        long now = System.nanoTime();
+        if (!s.breaks) {
+            breakAt = breakEnds = -1;
+            return false;
+        }
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        if (breakEnds > 0) {
+            if (now - breakEnds >= 0) {
+                breakEnds = -1;
+                breakAt = -1;
+                nextAction = now + 300_000_000L;
+                show("Back to building", false);
+                return false;
+            }
+            if (now - nextGlance >= 0) {
+                // A look somewhere else every few seconds, now and then back at the build.
+                glanceYaw = player.getYRot() + (random.nextBoolean() ? 1 : -1) * (15 + random.nextFloat() * 70);
+                glancePitch = -15 + random.nextFloat() * 50;
+                nextGlance = now + (long) ((1.2 + random.nextDouble() * 3.5) * 1e9);
+            }
+            head.turn(player, glanceYaw, glancePitch);
+            show("Taking a short break (" + (breakEnds - now + 999_999_999L) / 1_000_000_000L + " s)", false);
+            return true;
+        }
+        if (breakAt < 0) {
+            // Every few minutes, a third either way of the setting.
+            double minutes = s.breakEvery * (0.67 + random.nextDouble() * 0.66);
+            breakAt = now + (long) (minutes * 60e9);
+            return false;
+        }
+        if (now - breakAt < 0 || !player.onGround() || player.isInWater()) return false;
+        double seconds = s.breakLength * (0.2 + random.nextDouble() * 0.8);
+        breakEnds = now + (long) (seconds * 1e9);
+        nextGlance = now + (long) (random.nextDouble() * 1.5e9);
+        glanceYaw = player.getYRot();
+        glancePitch = player.getXRot();
+        releaseKeys(client);
+        if (player.isShiftKeyDown()) setCrouch(client, false);
+        if (debug()) LOGGER.info("A break of {} s", Math.round(seconds));
+        return true;
     }
 
     private boolean begin(Minecraft client, LocalPlayer player) {
@@ -1241,24 +1293,11 @@ public final class SchematicBuilder {
      * mouse does; true once it has rested there for a couple of ticks.
      */
     private boolean looked(LocalPlayer player, float yaw, float pitch) {
-        float dyaw = Mth.wrapDegrees(yaw - player.getYRot()), dpitch = pitch - player.getXRot();
-        if (Math.abs(dyaw) > 0.4f || Math.abs(dpitch) > 0.4f) {
+        if (!head.turn(player, yaw, pitch)) {
             restingTicks = 0;
-            float ease = 0.55f + ThreadLocalRandom.current().nextFloat() * 0.25f;
-            player.setYRot(player.getYRot() + step(dyaw, ease));
-            player.setXRot(Mth.clamp(player.getXRot() + step(dpitch, ease), -90, 90));
             return false;
         }
-        player.setYRot(player.getYRot() + dyaw);
-        player.setXRot(pitch);
         return ++restingTicks > REST_TICKS;
-    }
-
-    private static float step(float delta, float ease) {
-        float step = delta * ease;
-        float least = Math.min(Math.abs(delta), 2f);
-        if (Math.abs(step) < least) step = Math.copySign(least, delta);
-        return Mth.clamp(step, -TURN_MAX, TURN_MAX);
     }
 
     /** What the crosshair is on: the same trace the game makes for a click. */
@@ -1682,6 +1721,7 @@ public final class SchematicBuilder {
         List<Navigator.Node> sample = new ArrayList<>();
         Map<Long, Boolean> wetCells = new HashMap<>();
         List<BlockPos> poured = recentPours();
+        long leaning = ThreadLocalRandom.current().nextLong();
         Navigator.Goal goal = node -> {
             seen[0]++;
             if (uselessSpots.contains(node.key()) || traps.contains(node.key())) return 0;
@@ -1720,11 +1760,14 @@ public final class SchematicBuilder {
                 seen[2]++;
                 good += chained(player, node, reach, placeable, pool, budget);
             }
-            return good == 0 ? 0 : good * 2 + Math.min(inReach.size(), 24) * 0.25;
+            if (good == 0) return 0;
+            // A little leaning toward some places over others, its own each walk: not always the very same spot.
+            double lean = 0.88 + 0.24 * Navigator.unit(node.key() ^ leaning);
+            return (good * 2 + Math.min(inReach.size(), 24) * 0.25) * lean;
         };
         // Standing more than a couple of blocks over the layer sees nothing more of it.
         double ceiling = layerY + 2.5;
-        Navigator.Path path = navigator(player, true).climbUpTo(ceiling).find(start, goal);
+        Navigator.Path path = navigator(player, true).climbUpTo(ceiling).vary(leaning).find(start, goal);
         if (path == null) {
             long now = System.nanoTime();
             if (debug() && (near.getFirst() != lastExplained || now - explainedAt > 10_000_000_000L)) {
@@ -1750,13 +1793,13 @@ public final class SchematicBuilder {
         if (path.nodes().size() == 1) {
             // A real look should reach a block from here, yet none went in: look further.
             uselessSpots.add(start.key());
-            path = navigator(player, true).climbUpTo(ceiling).find(start, goal);
+            path = navigator(player, true).climbUpTo(ceiling).vary(leaning).find(start, goal);
             if (path == null || path.nodes().size() == 1) return false;
         }
         // A drop into a place with no way back up would end the build there: those places are left out, and the
         // search goes on for another.
         for (int tries = 0; dropsIntoTrap(player, path); tries++) {
-            path = tries < 2 ? navigator(player, true).climbUpTo(ceiling).find(start, goal) : null;
+            path = tries < 2 ? navigator(player, true).climbUpTo(ceiling).vary(leaning).find(start, goal) : null;
             if (path == null || path.nodes().size() == 1) return false;
         }
         if (!climbReady(client, player, path)) return true;
@@ -2087,7 +2130,7 @@ public final class SchematicBuilder {
     /** A small step toward a spot close by, turning to it as a player does. */
     private void stepToward(Minecraft client, LocalPlayer player, double dx, double dz) {
         float want = (float) Math.toDegrees(Math.atan2(-dx, dz));
-        player.setYRot(player.getYRot() + Mth.clamp(Mth.wrapDegrees(want - player.getYRot()), -TURN_MAX, TURN_MAX));
+        head.turnYaw(player, want);
         client.options.keyUp.setDown(Math.abs(Mth.wrapDegrees(want - player.getYRot())) < 30);
         walking = true;
     }
@@ -2734,8 +2777,8 @@ public final class SchematicBuilder {
             return;
         }
         float want = (float) Math.toDegrees(Math.atan2(-dx, dz));
-        player.setYRot(player.getYRot() + Mth.clamp(Mth.wrapDegrees(want - player.getYRot()), -TURN_MAX, TURN_MAX));
-        client.options.keyUp.setDown(true);
+        head.turnYaw(player, want);
+        client.options.keyUp.setDown(Math.abs(Mth.wrapDegrees(want - player.getYRot())) < 45);
         walking = true;
     }
 

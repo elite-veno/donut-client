@@ -72,6 +72,8 @@ public final class Navigator {
     private final Predicate<BlockPos> pillarAllowed;
     /** Spots best not stood in, such as blocks still to be placed: they cost more, so another way is taken if there is one. */
     private final LongPredicate avoid;
+    /** A search's own small leanings between ways that cost about the same; 0 for none. */
+    private long leaning;
     /** Steps that failed when walked, by {@link #stepKey}: the search takes another way. */
     private Set<Long> badSteps = Set.of();
     /** Feet heights already worked out in this search, NaN where nothing can be stood on. */
@@ -100,6 +102,24 @@ public final class Navigator {
     public Navigator avoidSteps(Set<Long> steps) {
         badSteps = steps;
         return this;
+    }
+
+    /**
+     * Gives each step a small cost of its own, picked by {@code seed}: of ways that cost about the same, a different one
+     * is taken each search, as a player doesn't walk the very same line every time.
+     */
+    public Navigator vary(long seed) {
+        leaning = seed;
+        return this;
+    }
+
+    /** A number between 0 and 1 picked by {@code seed}, the same for the same seed. */
+    public static double unit(long seed) {
+        long z = seed + 0x9E3779B97F4A7C15L;
+        z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+        z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+        z ^= z >>> 31;
+        return (z >>> 11) * 0x1.0p-53;
     }
 
     /** A step from one place to stand to the next, as one number. */
@@ -210,6 +230,7 @@ public final class Navigator {
         // Water slows the player down: dry ground is taken where there is some. Ice carries them past where they stop.
         if (!level.getFluidState(feet).isEmpty() || !level.getFluidState(feet.above()).isEmpty()) cost += 2;
         if (level.getBlockState(to.floor()).getBlock().getFriction() > 0.7f) cost += 2;
+        if (leaning != 0) cost += 0.45 * unit(to.key() ^ leaning);
         // A narrow top holds the player, but a little drift drops them off it: wider ground is taken where there is some.
         if (narrow(to.x(), to.y(), to.z())) cost += 3;
         return cost;

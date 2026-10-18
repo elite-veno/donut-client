@@ -139,6 +139,8 @@ public final class SchematicBuilderGameTest implements FabricClientGameTest {
                 settings.mirror = 0;
                 settings.setMaxDelay(MAX_DELAY);
                 settings.setMinDelay(MIN_DELAY);
+                // Breaks are for building in front of others; the test times the building itself.
+                settings.breaks = false;
                 settings.useShulkers = true;
                 settings.walk = true;
                 settings.helperBlocks = "dirt";

@@ -27,16 +27,19 @@ final class Walker {
 
     /** Ticks without getting closer before the walk counts as stuck. */
     private static final int STUCK_TICKS = 30;
-    /** How far the yaw turns in a tick, at most: a player turns, not snaps. */
-    private static final float TURN = 40;
-    /** How far the pitch turns in a tick, at most. */
-    private static final float TILT = 22;
+    /** How far off the middle of a block on open ground a walk may pass, in blocks: each walk takes its own line. */
+    private static final double WANDER = 0.14;
     /** How near the middle of the block a climb starts from, in blocks: the new block lands under the feet from there. */
     private static final double CENTRED = 0.25;
     /** Facing further than this from the next step, the player turns on the spot before walking on. */
     private static final float TURN_FIRST = 35;
 
+    private final Head head;
     private List<Navigator.Node> path;
+    /** Where in each block of the path the walk passes, off its middle, as {x, z} for each step. */
+    private double[][] offsets;
+    /** Ticks still to stand before setting off, as a player looks before walking. */
+    private int hesitate;
     private int index;
     private int stuck, climbTicks, climbTries, jumpTicks, placedAt;
     private double closest;
@@ -47,8 +50,16 @@ final class Walker {
     /** The step being walked when the walk failed, from and to; null when it failed otherwise. */
     private Navigator.Node[] failedStep;
 
+    Walker(Head head) { this.head = head; }
+
     void start(List<Navigator.Node> path) {
         this.path = path;
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        offsets = new double[path.size()][];
+        for (int i = 0; i < path.size(); i++) {
+            offsets[i] = new double[] {(random.nextDouble() * 2 - 1) * WANDER, (random.nextDouble() * 2 - 1) * WANDER};
+        }
+        hesitate = random.nextInt(5) == 0 ? 4 + random.nextInt(18) : 0;
         index = 1;
         stuck = climbTicks = climbTries = jumpTicks = placedAt = 0;
         closest = Double.MAX_VALUE;
@@ -73,10 +84,22 @@ final class Walker {
         Navigator.Node from = path.get(index - 1), to = path.get(index);
         Vec3 at = player.position();
         if (at.y < Math.min(from.feet(), to.feet()) - 1.5) return fail(client, "fell below the path");
+        if (hesitate > 0) {
+            hesitate--;
+            release(client);
+            return State.WALKING;
+        }
         if (to.move() == Navigator.Move.PILLAR) return climb(client, player, from, to, climb);
-        double dx = to.x() + 0.5 - at.x, dz = to.z() + 0.5 - at.z;
-        double distance = Math.sqrt(dx * dx + dz * dz);
         boolean last = index == path.size() - 1;
+        // On open ground a walk passes a little off the middle of each block, a line of its own; the last step, a
+        // climb, and anything near an edge or on a narrow top keep to the middle.
+        double offX = 0, offZ = 0;
+        if (!last && to.move() == Navigator.Move.WALK && open(player, to)) {
+            offX = offsets[index][0];
+            offZ = offsets[index][1];
+        }
+        double dx = to.x() + 0.5 + offX - at.x, dz = to.z() + 0.5 + offZ - at.z;
+        double distance = Math.sqrt(dx * dx + dz * dz);
         // The last step ends standing; one on the way also counts passed over mid-hop, close above where it stands.
         boolean there = last ? player.onGround() && Math.abs(at.y - to.feet()) < 0.6
                 : (player.onGround() ? Math.abs(at.y - to.feet()) < 0.6 : at.y >= to.feet() - 0.05 && at.y - to.feet() < 0.45);
@@ -181,32 +204,41 @@ final class Walker {
         return State.WALKING;
     }
 
+    /** Whether the place to stand has full, sturdy ground under it and on all four sides at its height: no edge near. */
+    private static boolean open(LocalPlayer player, Navigator.Node node) {
+        var level = player.level();
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                if (dx != 0 && dz != 0) continue;
+                BlockPos floor = new BlockPos(node.x() + dx, node.y(), node.z() + dz);
+                if (!level.getBlockState(floor).isFaceSturdy(level, floor, net.minecraft.core.Direction.UP)) return false;
+                if (Math.abs(floor.getY() + 1 - node.feet()) > 0.01) return false;
+            }
+        }
+        return true;
+    }
+
     /** Whether the player stands on ice or something as slippery, which carries them on after they let go. */
     private static boolean slippery(LocalPlayer player) {
         BlockPos below = BlockPos.containing(player.getX(), player.getY() - 0.05, player.getZ());
         return player.level().getBlockState(below).getBlock().getFriction() > 0.7f;
     }
 
-    private static void turnToward(LocalPlayer player, double dx, double dz) { turnToward(player, dx, dz, true); }
+    private void turnToward(LocalPlayer player, double dx, double dz) { turnToward(player, dx, dz, true); }
 
-    /** Turns toward a step; {@code lookAhead} also brings a look at the ground back up, which a climb keeps. */
-    private static void turnToward(LocalPlayer player, double dx, double dz, boolean lookAhead) {
+    /** Turns toward a step, smoothly; {@code lookAhead} also brings a look at the ground back up, which a climb keeps. */
+    private void turnToward(LocalPlayer player, double dx, double dz, boolean lookAhead) {
         if (dx * dx + dz * dz < 1e-4) return;
         float want = (float) Math.toDegrees(Math.atan2(-dx, dz));
-        float now = player.getYRot();
-        float change = Mth.clamp(Mth.wrapDegrees(want - now), -TURN, TURN);
-        player.setYRot(now + change);
-        player.setYHeadRot(now + change);
-        // Looking ahead again after a climb looked down, a little each tick.
-        if (lookAhead && Math.abs(player.getXRot()) > 35) tilt(player, Math.signum(player.getXRot()) * 25);
+        float pitch = player.getXRot();
+        // Looking ahead again after a climb or a click looked down.
+        if (lookAhead && Math.abs(pitch) > 35) pitch = Math.signum(pitch) * 25;
+        head.turn(player, want, pitch);
     }
 
-    /** Turns the pitch toward {@code want}, quickly at first and slowing as it closes in. */
-    private static void tilt(LocalPlayer player, float want) {
-        float delta = want - player.getXRot();
-        float step = Math.abs(delta) < 1.5f ? delta : Mth.clamp(delta * 0.5f, -TILT, TILT);
-        if (Math.abs(step) < 1.5f && Math.abs(delta) >= 1.5f) step = Math.copySign(1.5f, delta);
-        player.setXRot(Mth.clamp(player.getXRot() + step, -90, 90));
+    /** Turns the pitch toward {@code want}, smoothly, the yaw staying where it is. */
+    private void tilt(LocalPlayer player, float want) {
+        head.turn(player, player.getYRot(), want);
     }
 
     private State fail(Minecraft client, String why) {

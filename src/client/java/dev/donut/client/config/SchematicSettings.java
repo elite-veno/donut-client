@@ -20,6 +20,12 @@ public final class SchematicSettings {
     /** Each block waits a random time between these two, in seconds. */
     public double minDelay = 0.65;
     public double maxDelay = 2.3;
+    /** Now and then a break: the player stands a while and looks about before building on. */
+    public boolean breaks = true;
+    /** About how often a break comes, in minutes: each wait is a third shorter or longer, at random. */
+    public double breakEvery = 4;
+    /** The longest break, in seconds: each lasts between a fifth of it and all of it. */
+    public double breakLength = 25;
     /** Take missing blocks out of shulker boxes carried in the inventory: place one, empty what is needed, break it. */
     public boolean useShulkers = true;
     /** Within each layer, redstone components go after the plain blocks, and pistons, observers and dispensers last. */
@@ -47,6 +53,8 @@ public final class SchematicSettings {
         minDelay = Double.isFinite(minDelay) ? Math.clamp(minDelay, MIN_DELAY, MAX_DELAY) : 0.65;
         maxDelay = Double.isFinite(maxDelay) ? Math.clamp(maxDelay, MIN_DELAY, MAX_DELAY) : 2.3;
         if (maxDelay < minDelay) maxDelay = minDelay;
+        breakEvery = Double.isFinite(breakEvery) ? Math.clamp(breakEvery, 1, 30) : 4;
+        breakLength = Double.isFinite(breakLength) ? Math.clamp(breakLength, 5, 120) : 25;
     }
 
     /** Sets the shortest delay; a longest delay below it moves up with it. */
