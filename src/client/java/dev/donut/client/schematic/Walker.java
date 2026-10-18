@@ -190,6 +190,19 @@ final class Walker {
         head.boost(offNow > turnFirst && player.onGround() && !wading && distance >= 0.5 ? TURN_ROUND : 1);
         turnToward(player, dx, dz);
         head.boost(1);
+        // A step up is jumped onto squarely: off to the side across the way, the body catches on whatever stands beside the
+        // step, a wall or the next step up, and never gets on. A jump goes along an axis, never slanting: across it, the
+        // player steps into line first.
+        if (to.move() == Navigator.Move.JUMP && player.onGround() && !wading && distance < 1.6) {
+            boolean alongX = to.x() != from.x();
+            double cross = alongX ? to.z() + 0.5 - at.z : to.x() + 0.5 - at.x;
+            if (Math.abs(cross) > 0.15) {
+                strafe(client, player, alongX ? 0 : cross, alongX ? cross : 0, true);
+                client.options.keyJump.setDown(false);
+                client.options.keySprint.setDown(false);
+                return State.WALKING;
+            }
+        }
         // In the air, and over a step down or up, the keys push toward the spot whichever way the player faces: a calm turn
         // would go on pushing the old way, past a ledge a block wide, where a little air control steers onto it. Close
         // over the spot, nothing is held, and the player comes down on it.
@@ -343,10 +356,14 @@ final class Walker {
      */
     private static void strafe(Minecraft client, LocalPlayer player, double dx, double dz, boolean go) {
         float angle = Mth.wrapDegrees((float) Math.toDegrees(Math.atan2(-dx, dz)) - player.getYRot());
-        client.options.keyUp.setDown(go && Math.abs(angle) <= 67.5f);
-        client.options.keyDown.setDown(go && Math.abs(angle) >= 112.5f);
-        client.options.keyRight.setDown(go && angle >= 22.5f && angle <= 157.5f);
-        client.options.keyLeft.setDown(go && angle <= -22.5f && angle >= -157.5f);
+        // The keys go eight ways, 45 degrees apart. A way between two is kept on average by taking each of them in turn,
+        // the nearer more often: a way 10 degrees off forward would otherwise be walked straight forward, and drift.
+        float lower = (float) Math.floor(angle / 45) * 45;
+        float way = ThreadLocalRandom.current().nextFloat() * 45 < angle - lower ? lower + 45 : lower;
+        client.options.keyUp.setDown(go && Math.abs(way) <= 67.5f);
+        client.options.keyDown.setDown(go && Math.abs(way) >= 112.5f);
+        client.options.keyRight.setDown(go && way >= 22.5f && way <= 157.5f);
+        client.options.keyLeft.setDown(go && way <= -22.5f && way >= -157.5f);
     }
 
     /** Whether the place to stand has full, sturdy ground under it and on all four sides at its height: no edge near. */
