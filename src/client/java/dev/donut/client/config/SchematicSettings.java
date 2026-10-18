@@ -35,6 +35,8 @@ public final class SchematicSettings {
     public int settle = 1;
     /** After taking another item in hand, the longest moment before using it, in seconds; each is a third to all of it. */
     public double itemSwitch = 0.2;
+    /** After a block mined breaks, attack stays held while the view turns to the next one, as a player clearing a row does. */
+    public boolean holdAttack = true;
     /** Of every hundred longer turns to a block, about how many land a little off and correct, as a hand does. */
     public int aimCorrections = 30;
     /** Of every hundred walks, about how many start with a moment of standing still. */

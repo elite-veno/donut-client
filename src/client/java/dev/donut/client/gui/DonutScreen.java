@@ -637,6 +637,8 @@ public final class DonutScreen extends Screen {
                     () -> s.settle, v -> s.settle = (int) Math.round(v), 1, 6, 1, v -> Math.round(v) + (Math.round(v) == 1 ? " tick" : " ticks"));
             c.slider("itemSwitch", "Item switch", "After taking another item in hand, the longest moment before using it; each is a third of it to all of it",
                     () -> s.itemSwitch, v -> s.itemSwitch = v, 0.05, 0.5, 0.01, v -> Math.round(v * 1000) + " ms");
+            c.toggle("holdAttack", "Hold attack", "After a block it mines breaks, the button stays down while it turns to the next, as when clearing a row",
+                    () -> s.holdAttack, () -> s.holdAttack = !s.holdAttack);
             c.slider("aimCorrections", "Aim corrections", "How many longer turns in a hundred land a little off the block and correct, as a hand does",
                     () -> s.aimCorrections, v -> s.aimCorrections = (int) Math.round(v), 0, 80, 1, v -> Math.round(v) + "%");
             c.toggle("breaks", "Breaks", "Stops now and then for a while and looks about, as a player does",

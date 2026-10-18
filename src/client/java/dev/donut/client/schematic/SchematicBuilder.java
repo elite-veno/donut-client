@@ -3,6 +3,7 @@ package dev.donut.client.schematic;
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.config.SchematicSettings;
 import dev.donut.client.finder.FinderSummary;
+import dev.donut.client.mixin.MultiPlayerGameModeAccess;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -189,6 +190,12 @@ public final class SchematicBuilder {
      * carries it off into the farm.
      */
     private long brokeAt = -1000;
+    /**
+     * Whether attack is still held from the block just broken: on through the turn to the next, the hand swinging at
+     * what the crosshair passes, as long as vanilla's delay before the next block runs; and the last tick it was used.
+     */
+    private boolean attackHeld;
+    private long attackTick = -1;
     private static final int DROPS_SETTLE = 10;
     private int buildSlot = -1;
 
@@ -673,6 +680,7 @@ public final class SchematicBuilder {
         swapFrom = -1;
         swapOpening = false;
         handsAt = System.nanoTime();
+        attackHeld = false;
         walker.stop(client);
         releaseKeys(client);
         breaking = null;
@@ -766,6 +774,7 @@ public final class SchematicBuilder {
         }
         if (!plan.swept()) { show("Reading the build site", false); return; }
         if (!shortageReported) reportShortage(client, player);
+        holdAttack(client, player);
         if (breaking != null) {
             breakTick(client, player);
             return;
@@ -3460,6 +3469,7 @@ public final class SchematicBuilder {
             breaking = null;
             repairing = -1;
             brokeAt = tick;
+            attackHeld = settings().holdAttack;
             paceAfterHands(quick());
             return;
         }
@@ -3536,9 +3546,35 @@ public final class SchematicBuilder {
             return false;
         }
         mineMisses = 0;
-        if (!handReady(player)) return true;
+        if (!handReady(player) || attackTick == tick) return true;
+        attackHeld = false;
+        attackTick = tick;
         if (client.gameMode.continueDestroyBlock(pos, hit.getDirection())) player.swing(InteractionHand.MAIN_HAND);
         return true;
+    }
+
+    /**
+     * Attack held on from a block just broken, as vanilla does with the button down: each tick the crosshair is on a
+     * block, vanilla's delay before the next block counts down and the hand swings, so after a turn to the next helper
+     * mining starts as soon as the look rests there instead of swinging at it for the delay first. Let go once the delay
+     * is over, before it could start on whatever the crosshair crosses, and for anything but mining the next block.
+     */
+    private void holdAttack(Minecraft client, LocalPlayer player) {
+        if (!attackHeld) return;
+        if (!settings().holdAttack || aim != null || walker.active() || pit != null || player.isUsingItem()
+                || ((MultiPlayerGameModeAccess) client.gameMode).donut$destroyDelay() <= 0) {
+            attackHeld = false;
+            return;
+        }
+        if (attackTick == tick) return;
+        BlockHitResult hit = crosshair(player);
+        // On nothing, vanilla's held button counts nothing down either.
+        if (hit.getType() != HitResult.Type.BLOCK || client.level.getBlockState(hit.getBlockPos()).isAir()) return;
+        attackTick = tick;
+        if (client.gameMode.continueDestroyBlock(hit.getBlockPos(), hit.getDirection())) {
+            client.level.addBreakingBlockEffect(hit.getBlockPos(), hit.getDirection());
+            player.swing(InteractionHand.MAIN_HAND);
+        }
     }
 
     // Walking ------------------------------------------------------------------------------------------------------

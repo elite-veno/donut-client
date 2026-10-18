@@ -4,6 +4,6 @@
   "compatibilityLevel": "JAVA_25",
   "client": ["CameraMixin", "MouseHandlerMixin", "MinecraftMixin", "GameRendererMixin", "ScreenEffectRendererMixin", "EntityRenderDispatcherMixin",
     "ClientLevelMixin", "BaseSpawnerAccessor", "LightTextureMixin", "FogRendererMixin", "SectionCompilerMixin", "BlockMixin", "BlockStateBaseMixin", "GameRendererAccess", "FluidRendererMixin",
-    "BlockItemAccess"],
+    "BlockItemAccess", "MultiPlayerGameModeAccess"],
   "injectors": { "defaultRequire": 1 }
 }
