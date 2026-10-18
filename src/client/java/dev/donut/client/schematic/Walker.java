@@ -31,6 +31,8 @@ final class Walker {
     private static final float TURN = 40;
     /** How far the pitch turns in a tick, at most. */
     private static final float TILT = 22;
+    /** How near the middle of the block a climb starts from, in blocks: the new block lands under the feet from there. */
+    private static final double CENTRED = 0.25;
     /** Facing further than this from the next step, the player turns on the spot before walking on. */
     private static final float TURN_FIRST = 35;
 
@@ -147,10 +149,12 @@ final class Walker {
             return State.WALKING;
         }
         double dx = from.x() + 0.5 - player.getX(), dz = from.z() + 0.5 - player.getZ();
-        if (dx * dx + dz * dz > 0.04) {
-            // Over the middle of the block first, so the jump lands back on the new one.
+        if (dx * dx + dz * dz > CENTRED * CENTRED) {
+            // Over the middle of the block first, so the jump lands back on the new one: turned toward it, then a step,
+            // as walking while turning circles round the middle without coming within reach of it.
             turnToward(player, dx, dz, false);
-            client.options.keyUp.setDown(true);
+            float off = Math.abs(Mth.wrapDegrees((float) Math.toDegrees(Math.atan2(-dx, dz)) - player.getYRot()));
+            client.options.keyUp.setDown(off <= 20);
             client.options.keyJump.setDown(false);
             return State.WALKING;
         }
