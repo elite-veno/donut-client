@@ -16,7 +16,7 @@ import net.minecraft.util.Mth;
  * at a block on the nearest look that still clicks it as planned. An aim at a block now and then lands a little off first
  * and corrects.
  */
-final class Head {
+public final class Head {
     /**
      * The fastest a quarter turn goes, in degrees a tick, picked for each turn between these; a longer turn goes
      * quicker and a shorter one calmer, by the square root of how much longer or shorter.
@@ -107,14 +107,14 @@ final class Head {
      * One tick of turning toward {@code yaw} and {@code pitch}, straight there; true once the view rests on them, as
      * near as whole mouse steps go.
      */
-    boolean turn(LocalPlayer player, float yaw, float pitch) { return move(player, yaw, pitch, false, null); }
+    public boolean turn(LocalPlayer player, float yaw, float pitch) { return move(player, yaw, pitch, false, null); }
 
     /**
      * One tick of aiming at a spot to click, the target of {@link #turn}: some aims land a little off first and
      * correct, and a turn about may go the long way round. Not for turns while walking, which an overshoot would swing
      * off a narrow path. True once the view rests on the spot, as near as whole mouse steps go.
      */
-    boolean aim(LocalPlayer player, float yaw, float pitch) { return move(player, yaw, pitch, true, null); }
+    public boolean aim(LocalPlayer player, float yaw, float pitch) { return move(player, yaw, pitch, true, null); }
 
     /**
      * {@link #aim}, coming to rest on the look in whole mouse steps nearest the spot that passes {@code check}, and
@@ -154,7 +154,7 @@ final class Head {
     int offGrid() { return offGrid; }
 
     /** Turns from the next turn on at {@code pace} times the usual pace. */
-    void pace(float pace) { this.pace = pace; }
+    public void pace(float pace) { this.pace = pace; }
 
     /** From the next aim on, about {@code chance} of every hundred long enough land a little off and correct. */
     void misses(int chance) { this.missChance = chance; }

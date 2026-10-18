@@ -156,7 +156,7 @@ final class MinerPartsTest {
         s.sideRoom = 99;
         s.minDelay = 3;
         s.maxDelay = 1;
-        s.turnSpeed = Double.NaN;
+        s.turnPace = Double.NaN;
         s.pauseMin = 9;
         s.pauseMax = 2;
         s.storageSide = 9;
@@ -164,7 +164,7 @@ final class MinerPartsTest {
         assertEquals(MinerSettings.MIN_FLOOR_Y, s.floorY);
         assertEquals(12, s.sideRoom);
         assertEquals(3, s.maxDelay);
-        assertEquals(24, s.turnSpeed);
+        assertEquals(1, s.turnPace);
         assertEquals(9, s.pauseMax);
         assertEquals(5, s.storageSide);
         s.setMaxDelay(0.5);

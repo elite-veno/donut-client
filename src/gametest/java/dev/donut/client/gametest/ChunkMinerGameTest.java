@@ -53,7 +53,7 @@ public final class ChunkMinerGameTest implements FabricClientGameTest {
     private static final String FILE = "donut-miner-test.litematic";
     /** The schematic: 4 wide, 6 tall, 4 long. */
     private static final int SX = 4, SY = 6, SZ = 4;
-    private static final double TURN_SPEED = 30;
+    private static final double TURN_PACE = 1.1;
     /** The face each player last started breaking, for the stand-in area pickaxe. */
     private static final Map<UUID, Direction> FACES = new ConcurrentHashMap<>();
     private static volatile boolean areaPickaxe;
@@ -103,7 +103,7 @@ public final class ChunkMinerGameTest implements FabricClientGameTest {
                 minerSettings.pauseChance = 0.03;
                 minerSettings.setPauseMin(0.3);
                 minerSettings.setPauseMax(0.8);
-                minerSettings.turnSpeed = TURN_SPEED;
+                minerSettings.turnPace = TURN_PACE;
                 minerSettings.pauseForPlayers = 0;
                 minerSettings.fillGaps = true;
                 minerSettings.buildAfter = false;
@@ -195,8 +195,8 @@ public final class ChunkMinerGameTest implements FabricClientGameTest {
         if (!status.startsWith("Finished")) System.out.println("[miner test] to start the next run there: " + resume[0]);
         require(status.startsWith("Finished"), "The " + name + " dig did not finish: " + status);
         System.out.println("[miner test] " + name + " took " + ticks[0] + " ticks; fastest turn " + Math.round(fastest[0] * 10) / 10.0 + " degrees a tick");
-        // The fastest a turn may go, its wobble, and a mouse step of rounding.
-        require(fastest[0] <= TURN_SPEED * 1.15 + 1.5, "The camera turned " + fastest[0] + " degrees in a tick");
+        // Head's fastest at this pace (a peak of 18 for the longest turns, 1.5 times for those), its unevenness, a mouse step.
+        require(fastest[0] <= 18 * 1.5 * TURN_PACE * 1.06 + 1.5, "The camera turned " + fastest[0] + " degrees in a tick");
         check(server, room, List.copyOf(approach.getFirst()), name);
     }
 

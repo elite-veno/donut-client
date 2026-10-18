@@ -36,8 +36,8 @@ public final class MinerSettings {
     /** Each block waits a random time between these two, in seconds, after the one before breaks; the game adds a quarter second. */
     public double minDelay = 0.05;
     public double maxDelay = 0.35;
-    /** The fastest the camera turns, in degrees a tick; it eases in and out, and never jumps. */
-    public double turnSpeed = 24;
+    /** How quickly the camera turns, as a share of a player's usual pace, by the builder's eased turns: never a jump. */
+    public double turnPace = 1;
     /** How far from a face's middle the aim may land, as a share of the face (0 always the middle). */
     public double aimSpread = 0.6;
     /** The camera drifts this many degrees at most while a block breaks, as a hand does. */
@@ -62,7 +62,7 @@ public final class MinerSettings {
         minDelay = finite(minDelay, 0.05, MIN_DELAY, MAX_DELAY);
         maxDelay = finite(maxDelay, 0.35, MIN_DELAY, MAX_DELAY);
         if (maxDelay < minDelay) maxDelay = minDelay;
-        turnSpeed = finite(turnSpeed, 24, 4, 90);
+        turnPace = finite(turnPace, 1, 0.8, 2);
         aimSpread = finite(aimSpread, 0.6, 0, 0.9);
         handShake = finite(handShake, 0.35, 0, 2);
         pauseChance = finite(pauseChance, 0.04, 0, 0.5);

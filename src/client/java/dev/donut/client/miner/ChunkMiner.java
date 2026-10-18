@@ -6,6 +6,7 @@ import dev.donut.client.config.SchematicSettings;
 import dev.donut.client.finder.FinderSummary;
 import dev.donut.client.finder.LoadedChunks;
 import dev.donut.client.rtp.AutoRtpController;
+import dev.donut.client.schematic.Head;
 import dev.donut.client.schematic.PlacementSolver;
 import dev.donut.client.schematic.Schematic;
 import dev.donut.client.schematic.SchematicBuilder;
@@ -107,6 +108,7 @@ public final class ChunkMiner {
     /** This turn's speed, a little different each time. */
     private double turnFactor = 1;
     private int turnTicks;
+    private final Head head = new Head();
     private final List<Vec3> waypoints = new ArrayList<>();
     private int walkTicks, stuckTicks, walkFailures;
     private BlockPos walkTarget;
@@ -768,21 +770,11 @@ public final class ChunkMiner {
      * steps, with a little wobble; true once it is there.
      */
     private boolean turn(Minecraft client, LocalPlayer player, float yaw, float pitch, double scale) {
-        double dy = Mth.wrapDegrees(yaw - player.getYRot()), dp = pitch - player.getXRot();
-        double distance = Math.hypot(dy, dp);
-        double mouse = mouseStep(client);
-        if (distance <= Math.max(0.35, mouse * 1.5)) return true;
         turnTicks++;
-        double fastest = settings().turnSpeed * turnFactor * scale;
-        double easeIn = Math.min(1, 0.3 + turnTicks * 0.2);
-        double easeOut = Math.max(0.5, distance * (0.32 + random.nextDouble() * 0.16));
-        double step = Math.min(fastest * easeIn, easeOut);
-        double k = step / distance;
-        double wobble = Math.min(0.5, step * 0.05);
-        double my = dy * k + (random.nextDouble() * 2 - 1) * wobble, mp = dp * k + (random.nextDouble() * 2 - 1) * wobble;
-        player.setYRot((float) (player.getYRot() + quantize(my, mouse)));
-        player.setXRot(Mth.clamp((float) (player.getXRot() + quantize(mp, mouse)), -90, 90));
-        return Math.hypot(Mth.wrapDegrees(yaw - player.getYRot()), pitch - player.getXRot()) <= Math.max(0.35, mouse * 1.5);
+        // The builder's hand: eased in and out by its curve, whole mouse steps, never faster than a player turns.
+        head.pace((float) Math.clamp(settings().turnPace * turnFactor * scale, 0.8, 2));
+        // An aim may land a little off and correct; a turn while walking or glancing goes straight there.
+        return scale >= 1 ? head.aim(player, yaw, pitch) : head.turn(player, yaw, pitch);
     }
 
     /** How far one mouse count turns the camera with the player's sensitivity, as Minecraft's mouse handler works it out. */

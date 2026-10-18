@@ -740,8 +740,8 @@ public final class DonutScreen extends Screen {
                     () -> s.minDelay, s::setMinDelay, 0, 5, 0.05, v -> String.format(Locale.ROOT, "%.2f s", v));
             c.slider("maxDelay", "Longest delay", "Set both the same for a fixed delay", () -> s.maxDelay, s::setMaxDelay,
                     0, 5, 0.05, v -> String.format(Locale.ROOT, "%.2f s", v));
-            c.slider("turnSpeed", "Turn speed", "The fastest the camera turns; it eases in and out, by whole mouse steps, and never snaps",
-                    () -> s.turnSpeed, v -> s.turnSpeed = v, 4, 90, 1, v -> Math.round(v) + "°/tick");
+            c.slider("turnPace", "Turn speed", "How quickly the view turns: 1x is a player's usual pace, always a smooth turn, by whole mouse steps",
+                    () -> s.turnPace, v -> s.turnPace = v, 0.8, 2, 0.05, v -> String.format(Locale.ROOT, "%.2fx", v));
             c.toggle("vary", "Vary order", "Not always the very best next block, so no two rooms are dug the same way",
                     () -> s.varyOrder, () -> s.varyOrder = !s.varyOrder);
             c.more(m -> {
