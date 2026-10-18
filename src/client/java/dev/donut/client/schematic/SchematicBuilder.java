@@ -241,6 +241,12 @@ public final class SchematicBuilder {
      * up each tick's planning time before a walk is worked out, and the next tick would start over with the same ones.
      */
     private final Map<Integer, PlacementSolver.Problem> noClickHere = new HashMap<>();
+    /**
+     * Blocks that need a helper block put down first, which from where the player stands wouldn't go in against it even
+     * then, found as {@link #noClickHere} is: their helper waits until no block in reach goes in without one, as a block
+     * put in beside first often holds the next by its side, and then no helper is needed at all.
+     */
+    private final Set<Integer> helperLater = new HashSet<>();
     /** The cells the way out from where the player stands passes through, worked out at tick {@code exitTick}; null for none. */
     private Set<Long> exitCells;
     private long exitTick = -1;
@@ -904,7 +910,7 @@ public final class SchematicBuilder {
         carriedFrom.clear();
         pours.clear();
         missedHere.clear();
-        noClickHere.clear();
+        forgetNoClicks();
         pickupTried.clear();
         pickupSweep = false;
         sweptLayer = Integer.MIN_VALUE;
@@ -1207,6 +1213,7 @@ public final class SchematicBuilder {
         PlacementSolver.Problem seen = null;
         int nearest = -1;
         boolean sealing = false;
+        List<Integer> helpersHeld = new ArrayList<>();
         // Water held back a moment after a block broke, for its drop to show up: the builder waits rather than walks off.
         boolean settling = false;
         // Still sliding to rest after a walk, the player moves a little each tick: what has no click stays known until they
@@ -1214,7 +1221,7 @@ public final class SchematicBuilder {
         boolean sliding = player.getDeltaMovement().horizontalDistanceSqr() > 1e-5;
         double drift = noClickFrom == null ? Double.POSITIVE_INFINITY : player.position().distanceToSqr(noClickFrom);
         if (drift > (sliding ? NO_CLICK_SLIDE * NO_CLICK_SLIDE : 1e-6) || player.isShiftKeyDown() != noClickCrouch || tick - noClickTick > 40) {
-            noClickHere.clear();
+            forgetNoClicks();
             noClickFrom = player.position();
             noClickCrouch = player.isShiftKeyDown();
             noClickTick = tick;
@@ -1247,6 +1254,10 @@ public final class SchematicBuilder {
             PlacementSolver.Problem known = noClickHere.get(i);
             if (known != null) {
                 if (seen == null || known == PlacementSolver.Problem.IN_THE_WAY) seen = known;
+                continue;
+            }
+            if (helperLater.contains(i)) {
+                helpersHeld.add(i);
                 continue;
             }
             if (System.nanoTime() - started > PLAN_NANOS) return;
@@ -1402,6 +1413,13 @@ public final class SchematicBuilder {
             if (result.click() == null) {
                 BlockPos helper = helperSpot.get(i);
                 if (result.problem() == PlacementSolver.Problem.NO_SUPPORT && helper != null) {
+                    // A helper the block then goes in against from here goes down now. One it wouldn't waits until nothing
+                    // else in reach goes in: a block put in beside it first may hold it, and no helper is needed at all.
+                    if (!goesInAgainst(player, i, helper, item, reach)) {
+                        helperLater.add(i);
+                        helpersHeld.add(i);
+                        continue;
+                    }
                     if (placeHelper(client, player, i, helper, layerNumber)) return;
                     if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
                     noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH);
@@ -1430,6 +1448,14 @@ public final class SchematicBuilder {
             }
             startAim(client, player, new Aim(Act.PLACE, i, result.click(), item, pos, current, layerNumber));
             return;
+        }
+        // Nothing in reach goes in without a helper: the helpers held back go down as before, in order.
+        for (int i : helpersHeld) {
+            BlockPos helper = helperSpot.get(i);
+            if (helper != null && placeHelper(client, player, i, helper, layerNumber)) return;
+            if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
+            noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH);
+            if (System.nanoTime() - started > PLAN_NANOS) return;
         }
         if (settling) {
             nextAction = System.nanoTime() + 100_000_000L;
@@ -2415,7 +2441,7 @@ public final class SchematicBuilder {
     private void clicked(Aim planned, BlockHitResult hit) {
         int i = planned.index(), layerNumber = planned.layerNumber();
         uselessSpots.clear();
-        noClickHere.clear();
+        forgetNoClicks();
         walkFailures = 0;
         String layer = "Layer " + layerNumber + " of " + plan.layers().size() + " (y " + layerY + "): ";
         switch (planned.act()) {
@@ -2725,6 +2751,21 @@ public final class SchematicBuilder {
         // With no other place to stand, a walk may climb through cells the build fills later: those blocks wait until the
         // player is out.
         return escaping && (plan.status(i) == BuildPlan.Status.PENDING || view instanceof Overlay overlay && overlay.changes(cell));
+    }
+
+    /** Forgets what has no click from where the player stands, and the helper blocks held back with it. */
+    private void forgetNoClicks() {
+        noClickHere.clear();
+        helperLater.clear();
+    }
+
+    /** Whether block {@code i} goes in from where the player stands once a helper block is at {@code helper}. */
+    private boolean goesInAgainst(LocalPlayer player, int i, BlockPos helper, Item item, double reach) {
+        Item helperItem = helperItem(player);
+        if (helperItem == null) return false;
+        Overlay view = new Overlay(player.level(), Map.of(helper.asLong(), Block.byItem(helperItem).defaultBlockState()));
+        return PlacementSolver.fromSpot(player, view, player.position(), plan.pos(i), plan.target(i), new ItemStack(item), reach,
+                at -> unclickable(at, i)) != null;
     }
 
     /** Puts down the helper block that block {@code i} is placed against; false when it can't from here. */
@@ -3102,7 +3143,7 @@ public final class SchematicBuilder {
             dropEscapeHelper(breaking.asLong());
             pours.put(breaking.asLong(), tick);
             // With the helper gone, a look may reach a block it was in front of, and a way out may open.
-            noClickHere.clear();
+            forgetNoClicks();
             shutIn.clear();
             traps.clear();
             breaking = null;
