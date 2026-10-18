@@ -1686,7 +1686,8 @@ public final class SchematicBuilder {
                 continue;
             }
             if (helpers.containsKey(at.above().asLong())) continue;
-            if (inView(player, player.getEyePosition(), at, reach)) return false;
+            // In view, and the water it holds back, if any, can't reach the player: removeUsedHelper takes it from here.
+            if (inView(player, player.getEyePosition(), at, reach) && safeToBreak(player, at)) return false;
             if (escapeWalks.getOrDefault(key, 0) >= 3) {
                 it.remove();
                 continue;
@@ -1695,8 +1696,12 @@ public final class SchematicBuilder {
             // places see it, and only just. Never from on top of the column, nor from back down in the pocket: from there it
             // can't be broken, and the walk out would only be made again.
             Navigator.Node start = Navigator.standingAt(level, player);
+            // Nor from where the water it holds back would run to once it is gone (see safeToBreak), as with one put into the
+            // build's own water: from there it is never taken away.
+            boolean holdsWater = holdsBackWater(level, at);
             Navigator.Path path = navigator(player, true).find(start, node -> pocketPlaces.contains(node.key())
-                    || node.x() == at.getX() && node.z() == at.getZ() && node.feet() >= at.getY() ? 0 : viewScore(player, node.eye(), at, reach));
+                    || node.x() == at.getX() && node.z() == at.getZ() && node.feet() >= at.getY()
+                    || holdsWater && floods(level, at, node.standing()) ? 0 : viewScore(player, node.eye(), at, reach));
             if (path == null || dropsIntoTrap(player, path)) {
                 it.remove();
                 continue;
