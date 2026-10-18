@@ -67,6 +67,7 @@ import net.minecraft.world.level.block.FenceGateBlock;
 import net.minecraft.world.level.block.HopperBlock;
 import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.Mirror;
+import net.minecraft.world.level.block.MultifaceBlock;
 import net.minecraft.world.level.block.RedStoneWireBlock;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
@@ -1071,6 +1072,10 @@ public final class SchematicBuilder {
             int j = plan.indexOf(at);
             if (j < 0 || plan.kind(j) != BlockRules.Kind.PLACE || plan.status(j) != BuildPlan.Status.PENDING) continue;
             if (!level.getBlockState(at).canBeReplaced()) continue;
+            // A glow lichen, vine or vein that grows on this block's side can't be shut in by it: that face of it needs
+            // this block in first, and is clicked onto it.
+            BlockState grows = plan.target(j);
+            if (grows.getBlock() instanceof MultifaceBlock && MultifaceBlock.hasFace(grows, side.getOpposite())) continue;
             byte support = support(player, j, started);
             if (support == 0) return 0;
             if (support != 1 || helperSpot.containsKey(j)) continue;
