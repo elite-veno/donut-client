@@ -266,6 +266,11 @@ public final class SchematicBuilder {
     private static final double NEAR_COLUMN = 4;
     /** Walks to beside each helper column so far, by its top: twice at most, so two columns can't send the player to and fro. */
     private final Map<Long, Integer> nearWalks = new HashMap<>();
+    /** The helper block the last cleanup climb was for, and where it set off from; null for none. */
+    private BlockPos cleanupTarget;
+    private long cleanupStart;
+    /** Cleanup climbs that ended with their block still out of reach, by block and start: not tried again from there. */
+    private final Set<Long> cleanupFailed = new HashSet<>();
     private long cleanupFrom = Long.MIN_VALUE;
     private String helperList = "";
     private Set<Item> helperItems = Set.of();
@@ -519,6 +524,8 @@ public final class SchematicBuilder {
         cleanupSkipped.clear();
         cleanupBridges = 0;
         nearWalks.clear();
+        cleanupTarget = null;
+        cleanupFailed.clear();
         dug.clear();
         refillWalks.clear();
         plan = null;
@@ -719,6 +726,8 @@ public final class SchematicBuilder {
         cleanupSkipped.clear();
         cleanupBridges = 0;
         nearWalks.clear();
+        cleanupTarget = null;
+        cleanupFailed.clear();
         dug.clear();
         refillWalks.clear();
         dugLeft.clear();
@@ -1914,6 +1923,21 @@ public final class SchematicBuilder {
         List<BlockPos> tops = new ArrayList<>();
         for (long key : helpers.keySet()) if (!helpers.containsKey(BlockPos.offset(key, Direction.UP))) tops.add(BlockPos.of(key));
         tops.sort(Comparator.comparingInt((BlockPos pos) -> pos.getY()).reversed());
+        // Just climbed for one: that one first, before the blocks climbed on to reach it, whose going would take the
+        // player back down out of its reach. Still out of view, that climb from there isn't tried again.
+        if (cleanupTarget != null) {
+            BlockPos target = cleanupTarget;
+            cleanupTarget = null;
+            if (tops.contains(target)) {
+                if (inView(player, player.getEyePosition(), target, reach) && safeToBreak(player, target)) {
+                    startBreak(target);
+                    return true;
+                }
+                cleanupFailed.add(target.asLong() * 31 + cleanupStart);
+                if (debug()) LOGGER.info("Cleanup: the helper block at {} is still out of reach after the climb for it, from {}",
+                        target.toShortString(), here);
+            }
+        }
         for (BlockPos top : tops) {
             if (!inView(player, player.getEyePosition(), top, reach) || !safeToBreak(player, top)) continue;
             startBreak(top);
@@ -1921,7 +1945,7 @@ public final class SchematicBuilder {
         }
         if (settings().walk) {
             for (BlockPos top : tops) {
-                if (cleanupSkipped.contains(top.asLong())) continue;
+                if (cleanupSkipped.contains(top.asLong()) || cleanupFailed.contains(top.asLong() * 31 + here.key())) continue;
                 // Climbing too: the top of a tall pillar is only in reach from up beside it. Each block climbed on is a
                 // helper block too, and comes down under the player's feet after it.
                 // A bridge only a few times, to get back across a gap the build bridged: each puts down one more block
@@ -1930,12 +1954,16 @@ public final class SchematicBuilder {
                 // of places to try long before it gets there. Close by, the climb.
                 double awayX = top.getX() + 0.5 - player.getX(), awayZ = top.getZ() + 0.5 - player.getZ();
                 Navigator.Path path = null;
+                boolean toColumn = false;
                 if (awayX * awayX + awayZ * awayZ > NEAR_COLUMN * NEAR_COLUMN && nearWalks.getOrDefault(top.asLong(), 0) < 2) {
                     path = navigator(player, false).limit(20_000).find(here, node -> {
                         double dx = top.getX() - node.x(), dz = top.getZ() - node.z();
                         return dx * dx + dz * dz <= 4 ? 1 : 0;
                     });
-                    if (path != null && path.nodes().size() > 1) nearWalks.merge(top.asLong(), 1, Integer::sum);
+                    if (path != null && path.nodes().size() > 1) {
+                        nearWalks.merge(top.asLong(), 1, Integer::sum);
+                        toColumn = true;
+                    }
                 }
                 if (path == null) {
                     Navigator navigator = navigator(player, true).limit(6000);
@@ -1949,6 +1977,10 @@ public final class SchematicBuilder {
                     if (debug()) LOGGER.info("Cleanup: walking {} steps, {} of them climbing, to take away the helper block at {}",
                             path.nodes().size() - 1, path.nodes().stream().filter(node -> node.move() == Navigator.Move.PILLAR).count(),
                             top.toShortString());
+                    if (!toColumn) {
+                        cleanupTarget = top;
+                        cleanupStart = here.key();
+                    }
                     walker.start(path.nodes());
                     show("Taking the helper blocks away", false);
                     return true;
