@@ -67,6 +67,8 @@ public final class Navigator {
     private double climbCeiling = Double.POSITIVE_INFINITY;
     /** The most climbing steps one way may take: each puts down a helper block, and the player carries so many. */
     private int pillars = Integer.MAX_VALUE;
+    /** Whether a way may bridge a gap with a helper block; see {@link #noBridges}. */
+    private boolean bridges = true;
     /** Which places the goal scores are a firm find; see {@link #firmWhen}. */
     private LongPredicate firm = key -> true;
     /** How much further a search goes, in cost, past the cheapest firm place found, and past the cheapest place at all. */
@@ -103,6 +105,12 @@ public final class Navigator {
      */
     public Navigator firmWhen(LongPredicate firm) {
         this.firm = firm;
+        return this;
+    }
+
+    /** Never bridges a gap: each block a bridge puts down is one more to take away, as cleanup can't afford. */
+    public Navigator noBridges() {
+        bridges = false;
         return this;
     }
 
@@ -308,7 +316,7 @@ public final class Navigator {
         BlockPos under = from.floor();
         // One block across, not a way on through the air: a bridge goes on from solid ground only, which also keeps a
         // search from spreading over every empty spot at that height.
-        if (from.move() != Move.BRIDGE && Math.abs(from.feet() - (from.y() + 1)) < 0.01
+        if (bridges && from.move() != Move.BRIDGE && Math.abs(from.feet() - (from.y() + 1)) < 0.01
                 && level.getBlockState(under).isCollisionShapeFullBlock(level, under)) {
             for (int[] d : DIRECTIONS) {
                 if (d[0] != 0 && d[1] != 0) continue;

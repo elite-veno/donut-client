@@ -1911,9 +1911,14 @@ public final class SchematicBuilder {
                 if (cleanupSkipped.contains(top.asLong())) continue;
                 // Climbing too: the top of a tall pillar is only in reach from up beside it. Each block climbed on is a
                 // helper block too, and comes down under the player's feet after it.
-                Navigator.Path path = navigator(player, true).limit(6000).find(here, node -> inView(player, node.eye(), top, reach) ? 1 : 0);
+                // Never a bridge: the block it puts down would be one more to take away, and the next walk might bridge again.
+                Navigator.Path path = navigator(player, true).noBridges().limit(6000)
+                        .find(here, node -> inView(player, node.eye(), top, reach) ? 1 : 0);
                 if (path != null && path.nodes().size() > 1) {
                     if (!climbReady(client, player, path)) return true;
+                    if (debug()) LOGGER.info("Cleanup: walking {} steps, {} of them climbing, to take away the helper block at {}",
+                            path.nodes().size() - 1, path.nodes().stream().filter(node -> node.move() == Navigator.Move.PILLAR).count(),
+                            top.toShortString());
                     walker.start(path.nodes());
                     show("Taking the helper blocks away", false);
                     return true;
