@@ -107,6 +107,17 @@ class NavigatorTest {
     }
 
     @Test
+    void aPoorPlaceFoundFirstDoesNotEndTheSearchForAFirmOne() {
+        BlockGetter level = world(Map.of());
+        Navigator.Node start = new Navigator.Node(-7, 64, 0, 65, Navigator.Move.START);
+        // A poor place a step away, and a far better one fourteen steps away, past where a search stops after a find.
+        Navigator.Goal goal = node -> node.z() != 0 ? 0 : node.x() == -6 ? 1 : node.x() == 7 ? 10 : 0;
+        long far = BlockPos.asLong(7, 64, 0);
+        assertEquals(-6, navigator(level).find(start, goal).end().x(), "every place firm: the search ends soon after the first");
+        assertEquals(7, navigator(level).firmWhen(key -> key == far).find(start, goal).end().x());
+    }
+
+    @Test
     void aStepThatFailedIsWalkedAround() {
         BlockGetter level = world(Map.of());
         Navigator.Node start = new Navigator.Node(0, 64, 0, 65, Navigator.Move.START);

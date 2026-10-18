@@ -67,6 +67,10 @@ public final class Navigator {
     private double climbCeiling = Double.POSITIVE_INFINITY;
     /** The most climbing steps one way may take: each puts down a helper block, and the player carries so many. */
     private int pillars = Integer.MAX_VALUE;
+    /** Which places the goal scores are a firm find; see {@link #firmWhen}. */
+    private LongPredicate firm = key -> true;
+    /** How much further a search goes, in cost, past the cheapest firm place found, and past the cheapest place at all. */
+    private static final double FURTHER = 8, WIDER = 20;
     private final AABB area;
     /** Where a climbing block may go; false for every spot without helper blocks. */
     private final Predicate<BlockPos> pillarAllowed;
@@ -89,6 +93,16 @@ public final class Navigator {
     /** Climbs no higher than feet at {@code feet}. */
     public Navigator climbUpTo(double feet) {
         climbCeiling = feet;
+        return this;
+    }
+
+    /**
+     * Which places the goal scores are a firm find, by key. Past the cheapest firm place, the search goes on
+     * {@link #FURTHER} for a better one; past a place that is only a poor find, it goes on {@link #WIDER}, for a firm one
+     * a climb or two away. Every place is firm unless this is set.
+     */
+    public Navigator firmWhen(LongPredicate firm) {
+        this.firm = firm;
         return this;
     }
 
@@ -175,18 +189,20 @@ public final class Navigator {
         open.add(new double[] {0, start.x(), start.y(), start.z()});
         Node best = null;
         double bestValue = Double.NEGATIVE_INFINITY, bestCost = Double.POSITIVE_INFINITY, found = Double.POSITIVE_INFINITY;
+        double foundAny = Double.POSITIVE_INFINITY;
         int expanded = 0;
         while (!open.isEmpty() && expanded < limit) {
             double[] entry = open.poll();
             long key = BlockPos.asLong((int) entry[1], (int) entry[2], (int) entry[3]);
             Double known = cost.get(key);
             if (known == null || entry[0] > known + 1e-9) continue;
-            if (entry[0] > found + 8) break;
+            if (entry[0] > Math.min(found + FURTHER, foundAny + WIDER)) break;
             Node node = nodes.get(key);
             expanded++;
             double score = goal.score(node);
             if (score > 0) {
-                found = Math.min(found, entry[0]);
+                foundAny = Math.min(foundAny, entry[0]);
+                if (firm.test(key)) found = Math.min(found, entry[0]);
                 // Each block reached is worth a few steps.
                 double value = score * 3 - entry[0];
                 if (value > bestValue) {

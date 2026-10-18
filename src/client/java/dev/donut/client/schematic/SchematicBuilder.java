@@ -2122,6 +2122,9 @@ public final class SchematicBuilder {
         int[] budget = {CHAIN_LOOKS};
         Navigator.Node start = Navigator.standingAt(level, player);
         Map<Long, Integer> verified = new HashMap<>();
+        // Places with a look that holds wherever the walk stops: the search looks well past places that have only shaky
+        // ones, to a climb or two, for one of these.
+        Set<Long> firm = new HashSet<>();
         int[] seen = new int[3];
         List<Navigator.Node> sample = new ArrayList<>();
         Map<Long, Boolean> wetCells = new HashMap<>();
@@ -2162,6 +2165,7 @@ public final class SchematicBuilder {
                     // A look that only works from the very middle of the block counts for little: the walk comes to rest
                     // a little off it, and from there the look misses, and the walk was for nothing.
                     good += ok == 2 ? 1 : 0.25;
+                    if (ok == 2) firm.add(node.key());
                     placeable.add(i);
                 }
             }
@@ -2177,7 +2181,7 @@ public final class SchematicBuilder {
         };
         // Standing more than a couple of blocks over the layer sees nothing more of it.
         double ceiling = layerY + 2.5;
-        Navigator.Path path = navigator(player, true).climbUpTo(ceiling).vary(leaning).find(start, goal);
+        Navigator.Path path = navigator(player, true).climbUpTo(ceiling).vary(leaning).firmWhen(firm::contains).find(start, goal);
         if (path == null) {
             long now = System.nanoTime();
             if (debug() && (near.getFirst() != lastExplained || now - explainedAt > 10_000_000_000L)) {
@@ -2203,13 +2207,13 @@ public final class SchematicBuilder {
         if (path.nodes().size() == 1) {
             // A real look should reach a block from here, yet none went in: look further.
             uselessSpots.add(start.key());
-            path = navigator(player, true).climbUpTo(ceiling).vary(leaning).find(start, goal);
+            path = navigator(player, true).climbUpTo(ceiling).vary(leaning).firmWhen(firm::contains).find(start, goal);
             if (path == null || path.nodes().size() == 1) return false;
         }
         // A drop into a place with no way back up would end the build there: those places are left out, and the
         // search goes on for another.
         for (int tries = 0; dropsIntoTrap(player, path); tries++) {
-            path = tries < 2 ? navigator(player, true).climbUpTo(ceiling).vary(leaning).find(start, goal) : null;
+            path = tries < 2 ? navigator(player, true).climbUpTo(ceiling).vary(leaning).firmWhen(firm::contains).find(start, goal) : null;
             if (path == null || path.nodes().size() == 1) return false;
         }
         if (!climbReady(client, player, path)) return true;
