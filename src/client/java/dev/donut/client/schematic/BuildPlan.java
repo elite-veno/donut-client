@@ -78,6 +78,8 @@ public final class BuildPlan {
     private final boolean[] dryDone;
     private final boolean[] drained;
     private final boolean[] waterIn;
+    /** Spots holding a helper block in water the build has there, with the layer each counts in (see {@link #hold}). */
+    private final Map<Long, Integer> holds = new HashMap<>();
     public final AABB bounds;
     private int cursor;
     private Map<Item, Integer> needs = Map.of();
@@ -342,6 +344,40 @@ public final class BuildPlan {
             return BlockRules.placementMatches(current, target) ? Status.PENDING : Status.MISPLACED;
         }
         return current.canBeReplaced() ? Status.PENDING : Status.WRONG;
+    }
+
+    /**
+     * While a helper block stands in water the build has at {@code pos}, as one climbed on out of a flooded shaft: it counts
+     * as a block of the layer at that height still to go in, so that layer's water, and the water and layers above, wait
+     * until it is gone and can't close over it. False takes the hold away. A spot under every layer holds nothing.
+     */
+    public void hold(BlockPos pos, boolean on) {
+        long key = pos.asLong();
+        if (on == holds.containsKey(key)) return;
+        if (on) {
+            int layer = layers.headMap(pos.getY(), true).size() - 1;
+            if (layer < 0) return;
+            holds.put(key, layer);
+            dryLeft[layer]++;
+        } else {
+            dryLeft[holds.remove(key)]--;
+        }
+    }
+
+    /** Whether some spot is held (see {@link #hold}). */
+    public boolean holding() { return !holds.isEmpty(); }
+
+    /** The height of the lowest layer a held spot counts in, or {@link Integer#MAX_VALUE} with none held. */
+    public int heldLayerY() {
+        int lowest = Integer.MAX_VALUE;
+        for (long key : holds.keySet()) lowest = Math.min(lowest, layers.floorKey(BlockPos.getY(key)));
+        return lowest;
+    }
+
+    /** Takes every hold away. */
+    public void releaseHolds() {
+        for (int layer : holds.values()) dryLeft[layer]--;
+        holds.clear();
     }
 
     /** Gives up on block {@code i}: it counts as failed until it stands as the schematic has it. */

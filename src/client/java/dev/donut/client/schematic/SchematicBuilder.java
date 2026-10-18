@@ -344,6 +344,8 @@ public final class SchematicBuilder {
     private boolean escapeWalk;
     /** Walks made to bring each of those into view, by position. */
     private final Map<Long, Integer> escapeWalks = new HashMap<>();
+    /** Since when one of those has stood in the build's own water, holding the layers above (see BuildPlan.hold), or -1. */
+    private long holdSince = -1;
     /** Whether the way out {@link #wayOut} keeps clear climbs over cells the build fills later. */
     private boolean exitEscapes;
     /** How often each block was broken to go in again into water, and the tick it last was. */
@@ -818,6 +820,7 @@ public final class SchematicBuilder {
         escapeHelpers.clear();
         escapeWalk = false;
         escapeWalks.clear();
+        holdSince = -1;
         repairing = -1;
         helperFetchTick = -100_000;
         helpers.clear();
@@ -921,8 +924,40 @@ public final class SchematicBuilder {
         int[] layer = null;
         int layerNumber = 0, number = 0, group = 0;
         boolean lift = sealsLifted;
+        int heldY = plan.heldLayerY();
+        if (plan.holding()) {
+            if (holdSince < 0) holdSince = tick;
+            if (tick - holdSince > 2400) {
+                // Two minutes and still not taken away: the layers go on, and the helper waits for the cleanup.
+                if (debug()) LOGGER.info("Helper blocks in the build's water not taken away in time: the layers above go on");
+                plan.releaseHolds();
+                heldY = Integer.MAX_VALUE;
+            }
+        } else {
+            holdSince = -1;
+        }
+        int heldNumber = 0;
         for (Map.Entry<Integer, int[]> entry : plan.layers().entrySet()) {
             number++;
+            if (entry.getKey() > heldY) {
+                // A helper block stands in water the build has in a layer below, climbed on out of a flooded shaft: built
+                // over, it would stay there out of reach, holding the water back. That layer stays the one built until
+                // the helper is gone (see walkToEscapeHelper).
+                layer = plan.layers().get(heldY);
+                if (heldY != layerY) {
+                    sealsLifted = false;
+                    orderLifted = false;
+                    shutIn.clear();
+                    traps.clear();
+                    badSteps.clear();
+                    missedFrom.clear();
+                    carriedFrom.clear();
+                }
+                layerY = heldY;
+                layerNumber = heldNumber;
+                break;
+            }
+            if (entry.getKey() == heldY) heldNumber = number;
             int first = firstReady(player, entry.getValue(), lift, started);
             if (first == -1 && !lift) {
                 // Only blocks that would shut in a neighbor are left: one of them goes in after all.
@@ -960,6 +995,7 @@ public final class SchematicBuilder {
             return;
         }
         Vec3 eye = player.getEyePosition();
+        if (plan.holding() && layerY == plan.heldLayerY() && settings().walk && walkToEscapeHelper(client, player)) return;
         if (!brokeOut.isEmpty()) {
             // Out: on top of the layer or off the build, or anywhere the pocket didn't reach with a way on from there. A way
             // out found from inside, as soon as the block is gone, is no reason yet to put it back.
@@ -1683,13 +1719,19 @@ public final class SchematicBuilder {
             Helper helper = helpers.get(key);
             if (helper == null || level.getBlockState(at).getBlock() != helper.block()) {
                 it.remove();
+                plan.hold(at, false);
                 continue;
             }
             if (helpers.containsKey(at.above().asLong())) continue;
-            // In view, and the water it holds back, if any, can't reach the player: removeUsedHelper takes it from here.
-            if (inView(player, player.getEyePosition(), at, reach) && safeToBreak(player, at)) return false;
+            // In view, not underfoot, and the water it holds back, if any, can't reach the player: removeUsedHelper takes it
+            // from here. Standing on it, the player steps off first, rather than idle there until stepDown digs them back
+            // down where they climbed out of.
+            if (inView(player, player.getEyePosition(), at, reach) && safeToBreak(player, at)
+                    && !Navigator.standingAt(level, player).floor().equals(at)) return false;
             if (escapeWalks.getOrDefault(key, 0) >= 3) {
+                // Left for the cleanup: the layers above it go on.
                 it.remove();
+                plan.hold(at, false);
                 continue;
             }
             // Where it is in view from as far round the middle as a walk comes to rest, as down a narrow hole only a few
@@ -1704,6 +1746,7 @@ public final class SchematicBuilder {
                     || holdsWater && floods(level, at, node.standing()) ? 0 : viewScore(player, node.eye(), at, reach));
             if (path == null || dropsIntoTrap(player, path)) {
                 it.remove();
+                plan.hold(at, false);
                 continue;
             }
             // Here already, only a little off where it is in view: tried again from wherever the build takes the player.
@@ -1732,6 +1775,23 @@ public final class SchematicBuilder {
             }
         }
         return score;
+    }
+
+    /**
+     * Notes a helper block put down on a way out of where the player was shut in; one in water the build has there holds
+     * the layers above until it is gone (see BuildPlan.hold).
+     */
+    private void addEscapeHelper(BlockPos cell) {
+        escapeHelpers.add(cell.asLong());
+        int i = plan.indexOf(cell);
+        BlockState target = i < 0 ? null : plan.target(i);
+        if (target != null && target.getBlock() instanceof LiquidBlock && target.getFluidState().is(FluidTags.WATER)) plan.hold(cell, true);
+    }
+
+    /** Forgets a helper block of a way out, gone or left for the cleanup, and the hold it had. */
+    private void dropEscapeHelper(long key) {
+        escapeHelpers.remove(key);
+        plan.hold(BlockPos.of(key), false);
     }
 
     /** Roughly how many ticks breaking the block takes with the best tool carried, for picking the quickest. */
@@ -2386,7 +2446,7 @@ public final class SchematicBuilder {
             BlockPos at = BlockPos.of(entry.getKey());
             if (client.level.getBlockState(at).getBlock() != entry.getValue().block()) {
                 it.remove();
-                escapeHelpers.remove(entry.getKey());
+                dropEscapeHelper(entry.getKey());
                 continue;
             }
             int serves = entry.getValue().serves();
@@ -2729,7 +2789,7 @@ public final class SchematicBuilder {
         BlockState state = client.level.getBlockState(breaking);
         if (state.isAir() || state.canBeReplaced()) {
             helpers.remove(breaking.asLong());
-            escapeHelpers.remove(breaking.asLong());
+            dropEscapeHelper(breaking.asLong());
             pours.put(breaking.asLong(), tick);
             // With the helper gone, a look may reach a block it was in front of, and a way out may open.
             noClickHere.clear();
@@ -2760,7 +2820,7 @@ public final class SchematicBuilder {
                     breakTicks, progress);
             helpersLeft.add(breaking);
             helpers.remove(breaking.asLong());
-            escapeHelpers.remove(breaking.asLong());
+            dropEscapeHelper(breaking.asLong());
         }
         breaking = null;
         repairing = -1;
@@ -3172,7 +3232,7 @@ public final class SchematicBuilder {
             if (item != was.getBlock().asItem()) refilledOther++;
         } else {
             helpers.put(cell.asLong(), new Helper(-1, Block.byItem(item)));
-            if (escapeWalk || !brokeOut.isEmpty()) escapeHelpers.add(cell.asLong());
+            if (escapeWalk || !brokeOut.isEmpty()) addEscapeHelper(cell);
         }
         return true;
     }
@@ -3202,7 +3262,7 @@ public final class SchematicBuilder {
             LOGGER.info("Bridging: the click on the {} side of {} gave {}", face, support.toShortString(), result);
         }
         helpers.put(support.relative(face).asLong(), new Helper(-1, Block.byItem(item)));
-        if (escapeWalk || !brokeOut.isEmpty()) escapeHelpers.add(support.relative(face).asLong());
+        if (escapeWalk || !brokeOut.isEmpty()) addEscapeHelper(support.relative(face));
         if (debug()) LOGGER.info("Bridging: a helper block against the {} side of {}", face, support.toShortString());
         return true;
     }

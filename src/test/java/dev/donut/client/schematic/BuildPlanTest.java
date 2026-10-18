@@ -142,4 +142,37 @@ class BuildPlanTest {
         assertFalse(plan.refilling(chest), "done once, it is a block to place like any other when it goes missing");
         assertTrue(plan.wetWaits(pool));
     }
+
+    @Test
+    void aHelperInTheBuildsOwnWaterHoldsTheWaterAndLayersAboveUntilItIsGone() {
+        Map<BlockPos, BlockState> blocks = new LinkedHashMap<>();
+        BlockPos floor = new BlockPos(0, 0, 0), pool = new BlockPos(1, 0, 0), wall = new BlockPos(3, 1, 0), above = new BlockPos(2, 1, 0);
+        BlockState stone = Blocks.STONE.defaultBlockState(), water = Blocks.WATER.defaultBlockState();
+        blocks.put(floor, stone);
+        blocks.put(pool, water);
+        blocks.put(wall, stone);
+        blocks.put(above, water);
+        BuildPlan plan = BuildPlan.of(blocks, true);
+        plan.update(plan.indexOf(floor), stone);
+        plan.update(plan.indexOf(wall), stone);
+        assertFalse(plan.wetWaits(plan.indexOf(above)), "every solid block is in");
+        assertFalse(plan.holding());
+
+        plan.hold(pool, true);
+        assertTrue(plan.holding());
+        assertEquals(0, plan.heldLayerY(), "held in the bottom layer");
+        assertTrue(plan.wetWaits(plan.indexOf(above)), "the water above waits for the helper in the pool to go");
+        plan.hold(pool, true);
+        plan.hold(pool, false);
+        assertFalse(plan.wetWaits(plan.indexOf(above)), "holding twice and letting go once lets go");
+        assertEquals(Integer.MAX_VALUE, plan.heldLayerY());
+
+        plan.hold(new BlockPos(1, -5, 0), true);
+        assertFalse(plan.holding(), "a spot under every layer holds nothing");
+        plan.hold(above, true);
+        plan.hold(pool, true);
+        plan.releaseHolds();
+        assertFalse(plan.holding());
+        assertFalse(plan.wetWaits(plan.indexOf(above)), "released, nothing waits");
+    }
 }
