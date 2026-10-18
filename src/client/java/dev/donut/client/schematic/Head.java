@@ -227,7 +227,7 @@ final class Head {
     }
 
     /** How far one mouse count turns the camera with the player's sensitivity, as Minecraft's mouse handler works it out. */
-    private static float mouseStep() {
+    static float mouseStep() {
         double f = Minecraft.getInstance().options.sensitivity().get() * 0.6 + 0.2;
         return (float) (f * f * f * 8.0 * 0.15);
     }

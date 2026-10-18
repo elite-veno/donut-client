@@ -151,6 +151,12 @@ public final class SchematicBuilder {
      * server; NaN before there is one.
      */
     private final float[] recentYaws = {Float.NaN, Float.NaN, Float.NaN};
+    /**
+     * For the debug log: the look at the start of the last tick, how many ticks since changed it, and how many of those
+     * by something other than whole mouse steps, which no mouse does.
+     */
+    private float lastYaw = Float.NaN, lastPitch;
+    private int lookChanges, offGridChanges;
     private int buildSlot = -1;
 
     private volatile String status = "Idle";
@@ -570,6 +576,7 @@ public final class SchematicBuilder {
             return;
         }
         recentYaws[(int) Math.floorMod(tick, (long) recentYaws.length)] = player.getYRot();
+        if (debug()) countLookChanges(player);
         if (!settings().enabled) {
             if (active) finish(client, "stopped.", false);
             return;
@@ -645,6 +652,31 @@ public final class SchematicBuilder {
         decide(client, player);
         // The turn toward the block picked starts on the tick it was picked.
         if (aim != null && !walker.active() && pit == null && breaking == null && swapFrom < 0 && restock == Restock.NONE) fire(client, player);
+    }
+
+    /**
+     * Counts the ticks the look changed in, and those it changed by other than whole mouse steps, for the debug log once
+     * a minute: anything that turns the view must do it as a mouse does.
+     */
+    private void countLookChanges(LocalPlayer player) {
+        float yaw = player.getYRot(), pitch = player.getXRot();
+        if (!Float.isNaN(lastYaw) && (yaw != lastYaw || pitch != lastPitch)) {
+            lookChanges++;
+            float step = Head.mouseStep();
+            // At the end of its range the pitch stops short of a whole step, as it does for a mouse.
+            boolean pitchClamped = Math.abs(pitch) >= 90 || Math.abs(lastPitch) >= 90;
+            if (!wholeSteps(yaw - lastYaw, step) || !pitchClamped && !wholeSteps(pitch - lastPitch, step)) offGridChanges++;
+        }
+        lastYaw = yaw;
+        lastPitch = pitch;
+        if (tick % 1200 == 0 && lookChanges > 0) {
+            LOGGER.info("Look changed in {} ticks, {} of them not by whole mouse steps", lookChanges, offGridChanges);
+        }
+    }
+
+    private static boolean wholeSteps(float degrees, float step) {
+        float steps = degrees / step;
+        return Math.abs(steps - Math.round(steps)) < 0.01f + Math.abs(steps) * 1e-5f;
     }
 
     /**
