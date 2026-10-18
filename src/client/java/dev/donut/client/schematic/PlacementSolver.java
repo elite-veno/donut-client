@@ -6,6 +6,7 @@ import java.util.Comparator;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.SplittableRandom;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 import java.util.function.Predicate;
@@ -47,6 +48,22 @@ public final class PlacementSolver {
     private static final double[] SPOTS = {0.5, 0.2, 0.8};
     /** How far, as a share of the face, a spot aimed at may be off one of those. */
     private static final double JITTER = 0.06;
+    /**
+     * How far a spot aimed at for real may be off one of those: up to half their spacing, so the clicks spread over the
+     * whole face instead of bunching on nine points. Plans keep to {@link #JITTER}, so where to stand stays the same.
+     */
+    private static volatile double spread = 0.15;
+    /**
+     * Picks for the clicks on a block itself (a repeater set, a box opened, a block mined) and for pours: which spot, a
+     * little off the grid, stays the same until the next decision, for a block mined is solved again each tick.
+     */
+    private static volatile long hand = ThreadLocalRandom.current().nextLong();
+
+    /** How far a real aim may be off the grid of spots, as a share of the face (see {@link #spread}). */
+    public static void spread(double share) { spread = Math.clamp(share, JITTER, 0.15); }
+
+    /** A new hand for the next decision: other spots on a block clicked itself, or poured against. */
+    public static void newHand() { hand = ThreadLocalRandom.current().nextLong(); }
     /** Looks tried to tell whether a block can go in at all: along the axes, between them, and steeply up and down. */
     private static final float[] YAWS = {0, 90, 180, -90, 45, 135, -135, -45};
     private static final float[] PITCHES = {0, 90, -90, 45, -45, 60, -60, 25, -25};
@@ -154,7 +171,7 @@ public final class PlacementSolver {
         if (target.getBlock() instanceof FallingBlock && FallingBlock.isFree(player.level().getBlockState(pos.below()))) return false;
         Level level = player.level();
         boolean partnerReady = partnerReady(level, pos, target);
-        List<Spot> spots = spots(view, pos, target, Vec3.atCenterOf(pos), Double.POSITIVE_INFINITY, unclickable, null, null);
+        List<Spot> spots = spots(view, pos, target, Vec3.atCenterOf(pos), Double.POSITIVE_INFINITY, unclickable, null, null, JITTER);
         for (boolean crouch : new boolean[] {false, true}) {
             for (float[] look : looks) {
                 Vec3 direction = Vec3.directionFromRotation(look[1], look[0]);
@@ -259,9 +276,12 @@ public final class PlacementSolver {
         for (Direction face : Direction.values()) {
             for (double a : SPOTS) {
                 for (double b : SPOTS) {
-                    Vec3 point = facePoint(pos, box, face, a, b);
-                    double distance = eye.distanceToSqr(point);
-                    if (distance > reach * reach || distance >= bestDistance || !facesEye(face, point, eye)) continue;
+                    long seed = seed(pos, face, a, b);
+                    Vec3 point = facePoint(pos, box, face, a + wobble(seed) * JITTER, b + wobble(seed + 1) * JITTER);
+                    double away = eye.distanceToSqr(point);
+                    // The nearest, give or take, as the spot itself: not the very same one from the same place each time.
+                    double distance = away * (0.8 + 0.2 * (wobble(seed + 2) + 1));
+                    if (away > reach * reach || distance >= bestDistance || !facesEye(face, point, eye)) continue;
                     float[] look = look(eye, point);
                     if (keep != null && Direction.fromYRot(look[0]) == keep.getOpposite()) continue;
                     BlockHitResult seen = seen(level, player, eye, point, face);
@@ -289,9 +309,11 @@ public final class PlacementSolver {
             if (box == null) continue;
             for (double a : SPOTS) {
                 for (double b : SPOTS) {
-                    Vec3 point = facePoint(clicked, box, face, a, b);
-                    double distance = eye.distanceToSqr(point);
-                    if (distance > reach * reach || distance >= bestDistance || !facesEye(face, point, eye)) continue;
+                    long seed = seed(clicked, face, a, b);
+                    Vec3 point = facePoint(clicked, box, face, a + wobble(seed) * JITTER, b + wobble(seed + 1) * JITTER);
+                    double away = eye.distanceToSqr(point);
+                    double distance = away * (0.8 + 0.2 * (wobble(seed + 2) + 1));
+                    if (away > reach * reach || distance >= bestDistance || !facesEye(face, point, eye)) continue;
                     Vec3 end = eye.add(point.subtract(eye).normalize().scale(reach));
                     BlockHitResult seen = level.clip(new ClipContext(eye, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
                     if (seen.getType() != HitResult.Type.BLOCK || !seen.getBlockPos().equals(clicked) || seen.getDirection() != face) continue;
@@ -330,11 +352,20 @@ public final class PlacementSolver {
      */
     private static Click look(LocalPlayer player, BlockGetter view, Vec3 eye, boolean crouch, BlockPos pos, BlockState target,
                               ItemStack stack, double reach, LongPredicate unclickable, Vec3 aim) {
+        double wide = aim == null ? JITTER : spread;
+        Click click = look(player, view, eye, crouch, pos, target, stack, reach, unclickable, aim, wide);
+        // Spread wide, a block whose only steady spots are close to the grid (a slab's half, a hinge) may find none.
+        if (click == null && wide > JITTER) click = look(player, view, eye, crouch, pos, target, stack, reach, unclickable, aim, JITTER);
+        return click;
+    }
+
+    private static Click look(LocalPlayer player, BlockGetter view, Vec3 eye, boolean crouch, BlockPos pos, BlockState target,
+                              ItemStack stack, double reach, LongPredicate unclickable, Vec3 aim, double jitter) {
         Level level = player.level();
         boolean partnerReady = partnerReady(level, pos, target);
         // The faces to click are those of the view: with blocks not placed yet put in, theirs count too.
         Click fallback = null, grazing = null;
-        for (Spot spot : spots(view, pos, target, eye, reach, unclickable, eye, aim)) {
+        for (Spot spot : spots(view, pos, target, eye, reach, unclickable, eye, aim, jitter)) {
             if (!spot.facesEye() || !allowed(view, spot, pos, crouch)) continue;
             Vec3 point = spot.hit().getLocation();
             BlockHitResult seen = seen(view, player, eye, point, spot.hit().getDirection());
@@ -430,7 +461,7 @@ public final class PlacementSolver {
         Level level = player.level();
         int all = 0, facing = 0, allowed = 0, inView = 0, placeable = 0;
         String last = "none";
-        for (Spot spot : spots(level, pos, target, eye, reach, unclickable, eye, null)) {
+        for (Spot spot : spots(level, pos, target, eye, reach, unclickable, eye, null, JITTER)) {
             all++;
             if (!spot.facesEye()) continue;
             facing++;
@@ -491,13 +522,13 @@ public final class PlacementSolver {
      * first, or, with {@code aim}, the way the eye looks, those the least turn away.
      */
     private static List<Spot> spots(BlockGetter level, BlockPos pos, BlockState target, Vec3 eye, double reach,
-                                    LongPredicate unclickable, Vec3 facing, Vec3 aim) {
+                                    LongPredicate unclickable, Vec3 facing, Vec3 aim, double jitter) {
         List<Spot> spots = new ArrayList<>();
         BlockState here = level.getBlockState(pos);
         boolean adding = BlockRules.sameBlock(here.getBlock(), target.getBlock());
         for (Direction side : Direction.values()) {
-            if (!unclickable.test(pos.relative(side).asLong())) addSpots(spots, level, pos.relative(side), side.getOpposite(), eye, reach, facing);
-            if (adding) addSpots(spots, level, pos, side, eye, reach, facing);
+            if (!unclickable.test(pos.relative(side).asLong())) addSpots(spots, level, pos.relative(side), side.getOpposite(), eye, reach, facing, jitter);
+            if (adding) addSpots(spots, level, pos, side, eye, reach, facing, jitter);
         }
         // Nearest first, give or take: a click doesn't aim at the very same spot, at the very same angle, each time. By
         // the turn, spots a few degrees apart are as near as each other, so the nearest of them isn't always the one.
@@ -515,7 +546,7 @@ public final class PlacementSolver {
     }
 
     private static void addSpots(List<Spot> spots, BlockGetter level, BlockPos clicked, Direction face, Vec3 eye, double reach,
-                                 Vec3 facing) {
+                                 Vec3 facing, double jitter) {
         BlockState state = level.getBlockState(clicked);
         if (state.isAir()) return;
         VoxelShape shape = state.getShape(level, clicked);
@@ -525,12 +556,20 @@ public final class PlacementSolver {
         for (double a : SPOTS) {
             for (double b : SPOTS) {
                 // A little off the same few spots each time, as a hand aims.
-                Vec3 point = facePoint(clicked, box, face, a + (random.nextDouble() * 2 - 1) * JITTER, b + (random.nextDouble() * 2 - 1) * JITTER);
+                Vec3 point = facePoint(clicked, box, face, a + (random.nextDouble() * 2 - 1) * jitter, b + (random.nextDouble() * 2 - 1) * jitter);
                 if (eye.distanceToSqr(point) > reach * reach) continue;
                 spots.add(new Spot(new BlockHitResult(point, face, clicked, false), facing == null || facesEye(face, point, facing)));
             }
         }
     }
+
+    /** The seed of one spot on a face for the current {@link #hand}. */
+    private static long seed(BlockPos pos, Direction face, double a, double b) {
+        return hand ^ pos.asLong() * 0x9E3779B97F4A7C15L ^ (face.ordinal() * 31L + Math.round(a * 10) * 7L + Math.round(b * 10)) * 0xBF58476D1CE4E5B9L;
+    }
+
+    /** A number from -1 to 1, the same for the same seed. */
+    private static double wobble(long seed) { return new SplittableRandom(seed).nextDouble() * 2 - 1; }
 
     /** A point on a face of the block's outline, {@code a} and {@code b} of the way across it. */
     private static Vec3 facePoint(BlockPos pos, AABB box, Direction face, double a, double b) {

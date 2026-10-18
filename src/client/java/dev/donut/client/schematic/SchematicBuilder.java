@@ -770,6 +770,7 @@ public final class SchematicBuilder {
         if (!planKey.equals(key())) preparePlan(client);
         plan.refresh(client.level, REFRESH_BUDGET);
         head.pace((float) settings().turnSpeed);
+        PlacementSolver.spread(settings().clickSpread);
         head.misses(settings().aimCorrections);
         walker.pace(settings().hesitate, settings().sprint);
         if (swapFrom >= 0) {
@@ -1079,6 +1080,8 @@ public final class SchematicBuilder {
 
     /** Picks the next block and lines up its click, or walks to where one can go in, or says what it waits for. */
     private void decide(Minecraft client, LocalPlayer player) {
+        // Each decision a fresh hand: the spots on a block clicked itself, or poured against, are other ones than last time.
+        PlacementSolver.newHand();
         ClientLevel level = client.level;
         long started = System.nanoTime();
         boolean creative = player.hasInfiniteMaterials();

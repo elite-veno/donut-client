@@ -39,6 +39,8 @@ public final class SchematicSettings {
     public boolean holdAttack = true;
     /** Of every hundred longer turns to a block, about how many land a little off and correct, as a hand does. */
     public int aimCorrections = 30;
+    /** How far a click may land off the middle and the thirds of a face, as a share of it: more is a looser hand. */
+    public double clickSpread = 0.15;
     /** Of every hundred walks, about how many start with a moment of standing still. */
     public int hesitate = 12;
     /** Longer walks over open ground are sprinted; near an edge never. */
@@ -77,6 +79,7 @@ public final class SchematicSettings {
         reaction = Double.isFinite(reaction) ? Math.clamp(reaction, 0, 0.5) : 0.12;
         settle = Math.clamp(settle, 1, 6);
         itemSwitch = Double.isFinite(itemSwitch) ? Math.clamp(itemSwitch, 0.05, 0.5) : 0.2;
+        clickSpread = Double.isFinite(clickSpread) ? Math.clamp(clickSpread, 0.06, 0.15) : 0.15;
         aimCorrections = Math.clamp(aimCorrections, 0, 80);
         hesitate = Math.clamp(hesitate, 0, 50);
     }

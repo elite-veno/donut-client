@@ -641,6 +641,8 @@ public final class DonutScreen extends Screen {
                     () -> s.holdAttack, () -> s.holdAttack = !s.holdAttack);
             c.slider("aimCorrections", "Aim corrections", "How many longer turns in a hundred land a little off the block and correct, as a hand does",
                     () -> s.aimCorrections, v -> s.aimCorrections = (int) Math.round(v), 0, 80, 1, v -> Math.round(v) + "%");
+            c.slider("clickSpread", "Click spread", "How far from the middle and the thirds of a face a click may land, as a share of it",
+                    () -> s.clickSpread, v -> s.clickSpread = v, 0.06, 0.15, 0.01, v -> Math.round(v * 100) + "%");
             c.toggle("breaks", "Breaks", "Stops now and then for a while and looks about, as a player does",
                     () -> s.breaks, () -> s.breaks = !s.breaks);
             if (s.breaks) {
