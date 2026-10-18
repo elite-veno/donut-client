@@ -92,7 +92,7 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
             });
             Map<Item, Integer> bill = context.computeOnClient(client -> builder.bill());
             giveInShulkers(server, bill);
-            server.runCommand("give @a minecraft:dirt 192");
+            server.runCommand("give @a minecraft:dirt 448");
             server.runCommand("give @a minecraft:diamond_pickaxe");
             server.runCommand("give @a minecraft:diamond_shovel");
             context.waitTicks(10);

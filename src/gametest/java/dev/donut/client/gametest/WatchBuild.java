@@ -207,7 +207,7 @@ public final class WatchBuild implements ClientModInitializer {
             commands.add(2, "fill " + x0 + " " + y + " " + z0 + " " + x1 + " " + Math.min(top, y + layers - 1) + " " + z1 + " minecraft:air");
         }
         commands.addAll(BuildCheck.shulkerGives(bill));
-        commands.addAll(List.of("give @a minecraft:dirt 192", "give @a minecraft:diamond_pickaxe", "give @a minecraft:diamond_shovel"));
+        commands.addAll(List.of("give @a minecraft:dirt 448", "give @a minecraft:diamond_pickaxe", "give @a minecraft:diamond_shovel"));
         server.execute(() -> {
             for (String command : commands) server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), command);
         });

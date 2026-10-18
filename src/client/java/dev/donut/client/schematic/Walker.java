@@ -158,7 +158,10 @@ final class Walker {
             client.options.keyJump.setDown(false);
             return State.WALKING;
         }
-        if (!climb.ready(cell)) return fail(client, "no block to climb on in the hotbar");
+        if (!climb.ready(cell)) {
+            return fail(client, "no block to climb on in the hotbar, holding " + player.getMainHandItem() + ", "
+                    + player.getInventory().getSelectedSlot() + " selected");
+        }
         // Looking straight down, give or take a degree or two, as a player pillaring does: once the jump lifts the feet
         // off the block, the crosshair rests on its top, where the helper block goes, whichever way the player faces.
         if (climbLook == 0) climbLook = 88 + ThreadLocalRandom.current().nextFloat() * 2;
