@@ -110,6 +110,8 @@ final class Walker {
     /** Whether this walk crouched for a bridging step, how many ticks it has been at it, and when it last clicked. */
     private boolean bridgeCrouch;
     private int bridgeTicks, bridgeClicked;
+    /** Ticks more the jump key stays down in the air after a jump, see {@link #jumpKey}. */
+    private int jumpHold;
     /** Whether this walk crouched for its last bit, onto a narrow top over a drop. */
     private boolean edgeCrouch;
     /** Walking steps, by {@link Navigator#stepKey}, that a walk fell off before: walked crouched, so the edge holds the player. */
@@ -292,7 +294,7 @@ final class Walker {
             head.follow(player, look[0], look[1], slack);
             boolean go = distance > (last ? 0.2 : 0.05) || player.getDeltaMovement().horizontalDistanceSqr() < 0.02 * 0.02 && distance > 0.12;
             strafe(client, player, dx, dz, go);
-            client.options.keyJump.setDown(false);
+            jumpKey(client, player, false);
             client.options.keySprint.setDown(false);
             return State.WALKING;
         }
@@ -311,7 +313,7 @@ final class Walker {
             double cross = alongX ? to.z() + 0.5 - at.z : to.x() + 0.5 - at.x;
             if (Math.abs(cross) > 0.15) {
                 strafe(client, player, alongX ? 0 : cross, alongX ? cross : 0, true);
-                client.options.keyJump.setDown(false);
+                jumpKey(client, player, false);
                 client.options.keySprint.setDown(false);
                 return State.WALKING;
             }
@@ -323,7 +325,7 @@ final class Walker {
         if (!wading && (!player.onGround() || landing)) {
             strafe(client, player, dx, dz, distance > (last ? 0.2 : 0.15));
             client.options.keySprint.setDown(false);
-            client.options.keyJump.setDown(player.onGround()
+            jumpKey(client, player, player.onGround()
                     && (to.move() == Navigator.Move.JUMP && to.feet() - at.y > 0.1 || to.feet() - at.y > Navigator.STEP));
             return State.WALKING;
         }
@@ -333,7 +335,7 @@ final class Walker {
         if (distance < 1.0 && aside > 20 && player.onGround() && !wading && to.move() == Navigator.Move.WALK) {
             boolean near = distance > (last ? 0.2 : 0.05) || player.getDeltaMovement().horizontalDistanceSqr() < 0.02 * 0.02 && distance > 0.12;
             strafe(client, player, dx, dz, near);
-            client.options.keyJump.setDown(false);
+            jumpKey(client, player, false);
             client.options.keySprint.setDown(false);
             return State.WALKING;
         }
@@ -347,7 +349,7 @@ final class Walker {
         // rather than turning on the spot first.
         if (openWay && off > 45 && player.onGround() && !wading && distance >= 0.5) {
             strafe(client, player, dx, dz, true);
-            client.options.keyJump.setDown(false);
+            jumpKey(client, player, false);
             client.options.keySprint.setDown(false);
             return State.WALKING;
         }
@@ -373,7 +375,7 @@ final class Walker {
                 && player.onGround() && distance < 1.3;
         // In water the feet are never on the ground: holding jump swims up and over the edge, as a player climbs out.
         if (player.isInWater() && to.feet() > at.y + 0.3 && distance < 1.6) jump = true;
-        client.options.keyJump.setDown(jump);
+        jumpKey(client, player, jump);
         return State.WALKING;
     }
 
@@ -384,7 +386,7 @@ final class Walker {
      */
     private State bridge(Minecraft client, LocalPlayer player, Navigator.Node from, Navigator.Node to, Climb climb) {
         client.options.keySprint.setDown(false);
-        client.options.keyJump.setDown(false);
+        jumpKey(client, player, false);
         if (!bridgeCrouch) {
             climb.crouch(true);
             bridgeCrouch = true;
@@ -440,7 +442,7 @@ final class Walker {
             placedClimb = false;
             climbTicks = jumpTicks = climbTries = 0;
             climbLook = 0;
-            client.options.keyJump.setDown(false);
+            jumpKey(client, player, false);
             return State.WALKING;
         }
         if (++climbTicks > 200) {
@@ -451,11 +453,11 @@ final class Walker {
                     jumpTicks > 0 ? "yes" : "no", climbTries, placedClimb ? "placed" : "not placed", player.getMainHandItem()));
         }
         if (placedClimb) {
-            client.options.keyJump.setDown(false);
+            jumpKey(client, player, false);
             return climbTicks - placedAt > 30 ? fail(client, "didn't land on the block climbed on") : State.WALKING;
         }
         if (!player.onGround()) {
-            client.options.keyJump.setDown(false);
+            jumpKey(client, player, false);
             // Only at the top of the jump this climb made: dropping in from a step before, the feet pass that height
             // too, before the climb has looked down or jumped. Then it waits to land.
             if (jumpTicks > 0 && player.getY() >= from.feet() + 1.02) {
@@ -471,7 +473,7 @@ final class Walker {
             // and nothing beside the column at head height, a hopper's rim or a slab, catches the head on the way up. A
             // step straight there, whichever way the player faces: walking while turning circles round the middle.
             strafe(client, player, dx, dz, true);
-            client.options.keyJump.setDown(false);
+            jumpKey(client, player, false);
             return State.WALKING;
         }
         if (!climb.ready(cell)) {
@@ -487,7 +489,7 @@ final class Walker {
             head.boost(TURN_ROUND);
             tilt(player, want);
             head.boost(1);
-            client.options.keyJump.setDown(false);
+            jumpKey(client, player, false);
             return State.WALKING;
         }
         // A jump that came down again without the block in place is tried a few times.
@@ -498,12 +500,12 @@ final class Walker {
         if (jumpTicks == 0) {
             // The block is taken in hand a moment before the jump that places it, not in the same breath.
             if (!climb.handReady()) {
-                client.options.keyJump.setDown(false);
+                jumpKey(client, player, false);
                 return State.WALKING;
             }
             jumpTicks = climbTicks;
         }
-        client.options.keyJump.setDown(true);
+        jumpKey(client, player, true);
         return State.WALKING;
     }
 
@@ -672,5 +674,24 @@ final class Walker {
         client.options.keyUp.setDown(false);
         client.options.keyJump.setDown(false);
         client.options.keySprint.setDown(false);
+    }
+
+    /**
+     * The jump key down or up, as a finger on space: a jump pressed on the ground stays down for 2-4 ticks in all, let go
+     * only once in the air, well before the landing, where a key still down would jump again. On the ground, up is up.
+     */
+    private void jumpKey(Minecraft client, LocalPlayer player, boolean down) {
+        if (down) {
+            if (!client.options.keyJump.isDown() && player.onGround()) jumpHold = 1 + ThreadLocalRandom.current().nextInt(3);
+            client.options.keyJump.setDown(true);
+            return;
+        }
+        // Not in water, where a key held swims up, nor on a ladder, where it climbs.
+        if (jumpHold > 0 && !player.onGround() && !player.isInWater() && !player.onClimbable() && client.options.keyJump.isDown()) {
+            jumpHold--;
+            return;
+        }
+        jumpHold = 0;
+        client.options.keyJump.setDown(false);
     }
 }
