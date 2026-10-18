@@ -3039,7 +3039,8 @@ public final class SchematicBuilder {
             PlacementSolver.Result result = PlacementSolver.find(player, candidate, boxState, shulker, player.blockInteractionRange(),
                     helpers::containsKey);
             // A click in the other stance does too: placing the box crouches or stands up for it first.
-            if (result.click() != null && (result.problem() == null || result.problem() == PlacementSolver.Problem.STANCE)) {
+            if (result.click() != null && (result.problem() == null || result.problem() == PlacementSolver.Problem.STANCE)
+                    && boxSeenFrom(player, player.getEyePosition(), candidate)) {
                 spot = candidate;
                 placeClick = result.click();
                 break;
@@ -3054,7 +3055,8 @@ public final class SchematicBuilder {
                     if (node.key() == start.key()) return 0;
                     List<BlockPos> spots = boxSpots(player, node.floor().above(), node.standing());
                     for (BlockPos at : spots.subList(0, Math.min(3, spots.size()))) {
-                        if (PlacementSolver.fromSpot(player, node.standing(), at, boxState, shulker, reach, helpers::containsKey) != null) return 1;
+                        if (PlacementSolver.fromSpot(player, node.standing(), at, boxState, shulker, reach, helpers::containsKey) != null
+                                && boxSeenFrom(player, node.eye(), at)) return 1;
                     }
                     return 0;
                 });
@@ -3124,6 +3126,36 @@ public final class SchematicBuilder {
         inside.sort(nearest);
         outside.addAll(inside);
         return outside;
+    }
+
+    /**
+     * Whether a box placed at {@code spot} would show a face to {@code eye} within reach, to open and break it by: a
+     * spot clicked through a gap can leave the box itself out of sight behind what stands around it.
+     */
+    private static boolean boxSeenFrom(LocalPlayer player, Vec3 eye, BlockPos spot) {
+        Level level = player.level();
+        double reach = player.blockInteractionRange() - 0.2;
+        for (Direction face : Direction.values()) {
+            Vec3 normal = Vec3.atLowerCornerOf(face.getUnitVec3i());
+            Vec3 middle = Vec3.atCenterOf(spot).add(normal.scale(0.5));
+            if (middle.subtract(eye).dot(normal) >= 0) continue;
+            for (double[] off : new double[][] {{0, 0}, {0.3, 0.3}, {-0.3, 0.3}, {0.3, -0.3}, {-0.3, -0.3}}) {
+                Vec3 point = middle.add(along(face, off[0], off[1]));
+                if (point.distanceTo(eye) > reach) continue;
+                BlockHitResult hit = level.clip(new ClipContext(eye, point, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
+                if (hit.getType() == HitResult.Type.MISS || hit.getLocation().distanceTo(eye) >= point.distanceTo(eye) - 1e-3) return true;
+            }
+        }
+        return false;
+    }
+
+    /** An offset of {@code a}, {@code b} across a face, along its two other axes. */
+    private static Vec3 along(Direction face, double a, double b) {
+        return switch (face.getAxis()) {
+            case X -> new Vec3(0, a, b);
+            case Y -> new Vec3(a, 0, b);
+            case Z -> new Vec3(a, b, 0);
+        };
     }
 
     /** Whether a spot beside {@code at} is open with nothing under it to stop a dropped item falling. */
