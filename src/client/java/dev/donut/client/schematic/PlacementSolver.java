@@ -294,9 +294,13 @@ public final class PlacementSolver {
             if (placed == null || !BlockRules.placementMatches(placed, target, partnerReady)) continue;
             Click click = new Click(seen, look[0], look[1], crouch);
             // A look on the edge between two facings, an observer looked at at 45 degrees say, flips with the least
-            // drift of the aim: one that keeps its facing a few degrees off either way is taken if there is one.
-            if (steady(player, pos, stack, seen, look, crouch, planned, target, partnerReady)) return click;
-            if (fallback == null) fallback = click;
+            // drift of the aim: one that keeps its facing a few degrees off either way is taken if there is one, else
+            // one that keeps it at least a little off. One right on the edge never: the server may make the other
+            // facing of it.
+            if (steady(player, pos, stack, seen, look, crouch, planned, target, partnerReady, STEADY, NUDGE)) return click;
+            if (fallback == null && steady(player, pos, stack, seen, look, crouch, planned, target, partnerReady, MARGIN, NUDGE / 2)) {
+                fallback = click;
+            }
         }
         return fallback;
     }
@@ -307,16 +311,26 @@ public final class PlacementSolver {
      * of the face the click lands on.
      */
     private static boolean steady(LocalPlayer player, BlockPos pos, ItemStack stack, BlockHitResult hit, float[] look, boolean crouch,
-                                  boolean planned, BlockState target, boolean partnerReady) {
-        for (float[] off : new float[][] {{STEADY, 0}, {-STEADY, 0}, {0, STEADY}, {0, -STEADY}}) {
-            BlockState placed = simulate(player, pos, stack, hit, look[0] + off[0], Math.clamp(look[1] + off[1], -90, 90), crouch, planned);
-            if (placed == null || !BlockRules.placementMatches(placed, target, partnerReady)) return false;
-        }
+                                  boolean planned, BlockState target, boolean partnerReady, float drift, double nudge) {
+        if (!keeps(player, pos, stack, hit, look, crouch, planned, target, partnerReady, drift)) return false;
         for (Direction along : Direction.values()) {
             if (along.getAxis() == hit.getDirection().getAxis()) continue;
-            Vec3 moved = hit.getLocation().add(along.getStepX() * NUDGE, along.getStepY() * NUDGE, along.getStepZ() * NUDGE);
+            Vec3 moved = hit.getLocation().add(along.getStepX() * nudge, along.getStepY() * nudge, along.getStepZ() * nudge);
             BlockHitResult nudged = new BlockHitResult(moved, hit.getDirection(), hit.getBlockPos(), hit.isInside());
             BlockState placed = simulate(player, pos, stack, nudged, look[0], look[1], crouch, planned);
+            if (placed == null || !BlockRules.placementMatches(placed, target, partnerReady)) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Whether the click places the same block with the look {@code drift} degrees off to either side and up or down: the
+     * look keeps that far from an edge between two facings.
+     */
+    static boolean keeps(LocalPlayer player, BlockPos pos, ItemStack stack, BlockHitResult hit, float[] look, boolean crouch,
+                         boolean planned, BlockState target, boolean partnerReady, float drift) {
+        for (float[] off : new float[][] {{drift, 0}, {-drift, 0}, {0, drift}, {0, -drift}}) {
+            BlockState placed = simulate(player, pos, stack, hit, look[0] + off[0], Math.clamp(look[1] + off[1], -90, 90), crouch, planned);
             if (placed == null || !BlockRules.placementMatches(placed, target, partnerReady)) return false;
         }
         return true;
@@ -327,6 +341,11 @@ public final class PlacementSolver {
 
     /** How far a look may drift, in degrees, and still give a steady click the same facing. */
     static final float STEADY = 4;
+    /**
+     * The least, in degrees, a look clicked with keeps from an edge between two facings: more than a hand's last mouse
+     * step, or a look the server has a hair otherwise, so what goes in is what was aimed for.
+     */
+    static final float MARGIN = 1.5f;
 
     /** For the log: how many spots around the block each check lets through, looked at from {@code eye}. */
     static String explain(LocalPlayer player, Vec3 eye, boolean crouch, BlockPos pos, BlockState target, ItemStack stack, double reach,

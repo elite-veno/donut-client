@@ -1452,18 +1452,30 @@ public final class SchematicBuilder {
         clicked(planned, hit);
     }
 
-    /** Whether clicking where the crosshair is, as the player looks and stands now, places the planned block. */
+    /**
+     * Whether clicking where the crosshair is, as the player looks and stands now, places the planned block, with the
+     * look a margin off any edge between two facings.
+     */
     private boolean placesTarget(LocalPlayer player, Aim planned, BlockHitResult hit) {
-        BlockState placed = PlacementSolver.simulate(player, planned.at(), new ItemStack(planned.item()), hit, player.getYRot(),
-                player.getXRot(), player.isShiftKeyDown(), false);
-        return placed != null && BlockRules.placementMatches(placed, plan.target(planned.index()));
+        float[] look = {player.getYRot(), player.getXRot()};
+        ItemStack stack = new ItemStack(planned.item());
+        BlockState target = plan.target(planned.index());
+        BlockState placed = PlacementSolver.simulate(player, planned.at(), stack, hit, look[0], look[1], player.isShiftKeyDown(), false);
+        return placed != null && BlockRules.placementMatches(placed, target)
+                && PlacementSolver.keeps(player, planned.at(), stack, hit, look, player.isShiftKeyDown(), false, target, false, PlacementSolver.MARGIN);
     }
 
-    /** Whether a look places the planned block just as the look it was worked out with does. */
+    /**
+     * Whether a look places the planned block just as the look it was worked out with does, a margin off any edge between
+     * two facings.
+     */
     private boolean sameResult(LocalPlayer player, Aim planned, float[] look) {
-        BlockState placed = PlacementSolver.simulate(player, planned.at(), new ItemStack(planned.item()), planned.click().hit(), look[0], look[1],
-                planned.click().crouch(), false);
-        return placed != null && BlockRules.placementMatches(placed, plan.target(planned.index()));
+        ItemStack stack = new ItemStack(planned.item());
+        BlockState target = plan.target(planned.index());
+        PlacementSolver.Click click = planned.click();
+        BlockState placed = PlacementSolver.simulate(player, planned.at(), stack, click.hit(), look[0], look[1], click.crouch(), false);
+        return placed != null && BlockRules.placementMatches(placed, target)
+                && PlacementSolver.keeps(player, planned.at(), stack, click.hit(), look, click.crouch(), false, target, false, PlacementSolver.MARGIN);
     }
 
     /** What follows a click: the next wait, and what the status line says. */
