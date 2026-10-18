@@ -56,6 +56,9 @@ final class Walker {
     private double[][] offsets;
     /** Ticks still to stand before setting off, as a player looks before walking. */
     private int hesitate;
+    /** The way the keys last went in {@link #strafe}, relative to the view, and for how many more ticks it is held. */
+    private float strafeWay;
+    private int strafeHold;
     /** What the player turns toward while coming to rest at the end, as the block the walk is for; null for nothing. */
     private Vec3 lookAt;
     /**
@@ -99,6 +102,7 @@ final class Walker {
         }
         hesitate = random.nextInt(100) < hesitateChance ? 3 + random.nextInt(8) : 0;
         sidestep = null;
+        strafeHold = 0;
         trail.clear();
         index = 1;
         stuck = climbTicks = climbTries = jumpTicks = placedAt = 0;
@@ -354,12 +358,19 @@ final class Walker {
      * Holds the movement keys that take the player toward {@code dx}, {@code dz} as they face now: forward, back, left
      * and right, two at once for a slant.
      */
-    private static void strafe(Minecraft client, LocalPlayer player, double dx, double dz, boolean go) {
+    private void strafe(Minecraft client, LocalPlayer player, double dx, double dz, boolean go) {
         float angle = Mth.wrapDegrees((float) Math.toDegrees(Math.atan2(-dx, dz)) - player.getYRot());
-        // The keys go eight ways, 45 degrees apart. A way between two is kept on average by taking each of them in turn,
-        // the nearer more often: a way 10 degrees off forward would otherwise be walked straight forward, and drift.
+        // The keys go eight ways, 45 degrees apart. A way between two is kept on average by going each of them in turn,
+        // the nearer more of the time, each for a few ticks as a finger holds a key: a way 10 degrees off forward would
+        // otherwise be walked straight forward, and drift.
         float lower = (float) Math.floor(angle / 45) * 45;
-        float way = ThreadLocalRandom.current().nextFloat() * 45 < angle - lower ? lower + 45 : lower;
+        boolean between = strafeWay == lower || strafeWay == lower + 45;
+        if (--strafeHold < 0 || !between) {
+            ThreadLocalRandom random = ThreadLocalRandom.current();
+            strafeWay = random.nextFloat() * 45 < angle - lower ? lower + 45 : lower;
+            strafeHold = 1 + random.nextInt(3);
+        }
+        float way = strafeWay;
         client.options.keyUp.setDown(go && Math.abs(way) <= 67.5f);
         client.options.keyDown.setDown(go && Math.abs(way) >= 112.5f);
         client.options.keyRight.setDown(go && way >= 22.5f && way <= 157.5f);
