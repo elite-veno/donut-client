@@ -65,6 +65,8 @@ public final class Navigator {
     private int limit = MAX_NODES;
     /** How high climbing may lift the feet: above that, a pillar gains nothing. */
     private double climbCeiling = Double.POSITIVE_INFINITY;
+    /** The most climbing steps one way may take: each puts down a helper block, and the player carries so many. */
+    private int pillars = Integer.MAX_VALUE;
     private final AABB area;
     /** Where a climbing block may go; false for every spot without helper blocks. */
     private final Predicate<BlockPos> pillarAllowed;
@@ -85,6 +87,12 @@ public final class Navigator {
     /** Climbs no higher than feet at {@code feet}. */
     public Navigator climbUpTo(double feet) {
         climbCeiling = feet;
+        return this;
+    }
+
+    /** Takes no more than {@code blocks} climbing steps along any one way: the helper blocks there are to climb with. */
+    public Navigator pillars(int blocks) {
+        pillars = blocks;
         return this;
     }
 
@@ -138,9 +146,12 @@ public final class Navigator {
         Map<Long, Double> cost = new HashMap<>();
         Map<Long, Node> parent = new HashMap<>();
         Map<Long, Node> nodes = new HashMap<>();
+        // The climbing steps along the cheapest way to each place found, which the helper blocks carried bound.
+        Map<Long, Integer> climbed = new HashMap<>();
         PriorityQueue<double[]> open = new PriorityQueue<>((a, b) -> Double.compare(a[0], b[0]));
         cost.put(start.key(), 0.0);
         nodes.put(start.key(), start);
+        climbed.put(start.key(), 0);
         open.add(new double[] {0, start.x(), start.y(), start.z()});
         Node best = null;
         double bestValue = Double.NEGATIVE_INFINITY, bestCost = Double.POSITIVE_INFINITY, found = Double.POSITIVE_INFINITY;
@@ -164,13 +175,17 @@ public final class Navigator {
                     bestCost = entry[0];
                 }
             }
+            int climbs = climbed.get(key);
             for (Node next : neighbors(node)) {
+                int used = climbs + (next.move() == Move.PILLAR ? 1 : 0);
+                if (used > pillars) continue;
                 double step = entry[0] + stepCost(node, next);
                 Double previous = cost.get(next.key());
                 if (previous != null && previous <= step) continue;
                 cost.put(next.key(), step);
                 parent.put(next.key(), node);
                 nodes.put(next.key(), next);
+                climbed.put(next.key(), used);
                 open.add(new double[] {step, next.x(), next.y(), next.z()});
             }
         }

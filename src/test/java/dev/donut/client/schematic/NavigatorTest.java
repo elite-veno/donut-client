@@ -95,6 +95,18 @@ class NavigatorTest {
     }
 
     @Test
+    void climbingTakesNoMoreStepsThanTheHelperBlocksCarried() {
+        BlockGetter level = world(Map.of());
+        Navigator.Node start = new Navigator.Node(0, 64, 0, 65, Navigator.Move.START);
+        Navigator.Goal up = node -> node.feet() >= 68 ? 1 : 0;
+        Navigator.Path path = new Navigator(level, AREA, cell -> true, key -> false).find(start, up);
+        assertNotNull(path);
+        assertEquals(3, path.nodes().stream().filter(node -> node.move() == Navigator.Move.PILLAR).count());
+        assertNull(new Navigator(level, AREA, cell -> true, key -> false).pillars(2).find(start, up), "two blocks climb two steps, not three");
+        assertNotNull(new Navigator(level, AREA, cell -> true, key -> false).pillars(3).find(start, up));
+    }
+
+    @Test
     void aStepThatFailedIsWalkedAround() {
         BlockGetter level = world(Map.of());
         Navigator.Node start = new Navigator.Node(0, 64, 0, 65, Navigator.Move.START);

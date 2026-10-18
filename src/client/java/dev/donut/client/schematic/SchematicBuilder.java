@@ -1441,6 +1441,55 @@ public final class SchematicBuilder {
         return null;
     }
 
+    /** Whether the stack is helper blocks: of the items {@link #helperItem} picks from, which the build doesn't need. */
+    private boolean isHelper(ItemStack stack) {
+        return !stack.isEmpty() && helperItems.contains(stack.getItem()) && (plan == null || !plan.needs().containsKey(stack.getItem()));
+    }
+
+    /**
+     * How many climbing steps one walk can take with the helper blocks carried: those in the hotbar, where each jump
+     * takes one from, and the biggest stack in the inventory, which {@link #climbReady} moves in for a long climb.
+     */
+    private int climbBudget(LocalPlayer player) {
+        if (player.hasInfiniteMaterials()) return Integer.MAX_VALUE;
+        Inventory inventory = player.getInventory();
+        int hotbar = 0, biggest = 0;
+        for (int slot = 0; slot < Materials.SLOTS; slot++) {
+            ItemStack stack = inventory.getItem(slot);
+            if (!isHelper(stack)) continue;
+            if (slot < Inventory.getSelectionSize()) hotbar += stack.getCount();
+            else biggest = Math.max(biggest, stack.getCount());
+        }
+        return hotbar + biggest;
+    }
+
+    /**
+     * Before a walk that climbs: a helper block in the hotbar for each climbing step, with the biggest stack in the
+     * inventory moved in, into a slot that holds none, where those there are too few. False while it is moved, to set
+     * off after; true when nothing more can be moved in, and the walk goes as far as they last.
+     */
+    private boolean climbReady(Minecraft client, LocalPlayer player, Navigator.Path path) {
+        long climbs = path.nodes().stream().filter(node -> node.move() == Navigator.Move.PILLAR).count();
+        if (climbs == 0 || player.hasInfiniteMaterials()) return true;
+        Inventory inventory = player.getInventory();
+        int hotbar = 0, from = -1;
+        for (int slot = 0; slot < Materials.SLOTS; slot++) {
+            ItemStack stack = inventory.getItem(slot);
+            if (!isHelper(stack)) continue;
+            if (slot < Inventory.getSelectionSize()) hotbar += stack.getCount();
+            else if (from < 0 || stack.getCount() > inventory.getItem(from).getCount()) from = slot;
+        }
+        if (hotbar >= climbs || from < 0) return true;
+        int to = emptyHotbarSlot(inventory);
+        if (to < 0) {
+            int least = buildSlot(inventory);
+            if (!isHelper(inventory.getItem(least))) to = least;
+        }
+        if (to < 0) return true;
+        startSwap(client, player, from, to);
+        return false;
+    }
+
     /** Whether a helper block may go here: an empty, dry spot the schematic leaves empty, or only has water run through. */
     private boolean helperAllowed(LocalPlayer player, BlockPos cell) { return helperAllowed(player, player.level(), cell); }
 
@@ -1594,7 +1643,7 @@ public final class SchematicBuilder {
                 && !BlockRules.interactive(view.getBlockState(cell.below()).getBlock()), key -> {
             int i = plan.indexOf(key);
             return i >= 0 && plan.status(i) == BuildPlan.Status.PENDING;
-        }).avoidSteps(badSteps);
+        }).avoidSteps(badSteps).pillars(helper == null ? 0 : climbBudget(player));
     }
 
     /**
@@ -1710,14 +1759,7 @@ public final class SchematicBuilder {
             path = tries < 2 ? navigator(player, true).climbUpTo(ceiling).find(start, goal) : null;
             if (path == null || path.nodes().size() == 1) return false;
         }
-        if (path.nodes().stream().anyMatch(node -> node.move() == Navigator.Move.PILLAR)) {
-            // The climb places helper blocks mid-jump, so they are in the hotbar before setting off.
-            Item helper = helperItem(player);
-            if (helper != null && !selectInHotbar(player, helper)) {
-                holdInHand(client, player, helper);
-                return true;
-            }
-        }
+        if (!climbReady(client, player, path)) return true;
         releaseKeys(client);
         walker.start(path.nodes());
         Navigator.Node end = path.end();
@@ -1901,6 +1943,7 @@ public final class SchematicBuilder {
                     Navigator.Path path = navigator(player, true).find(start, node -> node.x() == candidate.x() && node.z() == candidate.z()
                             && node.y() == candidate.top() ? 1 : 0);
                     if (path == null) continue;
+                    if (!climbReady(client, player, path)) return true;
                     if (debug()) LOGGER.info("Digging a pit {} deep at {} {} {} for {} at {}", depth, candidate.x(), candidate.top(),
                             candidate.z(), target, pos.toShortString());
                     pit = lastPit = candidate;
@@ -2094,6 +2137,7 @@ public final class SchematicBuilder {
                 Navigator.Path path = navigator(player, true).find(Navigator.standingAt(level, player), node -> PlacementSolver.fromSpot(player,
                         node.standing(), cell, state, new ItemStack(fill), reach, helpers::containsKey) != null ? 1 : 0);
                 if (path != null && path.nodes().size() > 1) {
+                    if (!climbReady(client, player, path)) return true;
                     releaseKeys(client);
                     walker.start(path.nodes());
                     show("Walking over to fill in the ground dug out", false);
