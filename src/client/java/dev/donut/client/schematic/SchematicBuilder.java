@@ -126,6 +126,14 @@ public final class SchematicBuilder {
     /** With fewer helper blocks than this left outside the boxes, more are taken out of one. */
     private static final int HELPERS_LOW = 16;
     /**
+     * With a stack of helper blocks on hand, dropped ones are fetched once this many lie together, or once one has lain
+     * {@link #PICKUP_WAIT} ticks: a walk for each as it falls costs what placing a few blocks does, and those that fall
+     * meanwhile, or that a walk for the build passes, come along.
+     */
+    private static final int PICKUP_HANDFUL = 8, PICKUP_WAIT = 600;
+    /** What ending a walk for the build where dropped helper blocks are picked up is worth, in blocks placed there. */
+    private static final double PICKUP_BONUS = 0.75;
+    /**
      * How many of the nearest blocks a walk checks a real look for at each place it considers: enough to tell a place
      * from which a handful go in from one from which a dozen do.
      */
@@ -445,6 +453,13 @@ public final class SchematicBuilder {
      * where it was; a block broken to go in again is, a few times.
      */
     private final Map<Integer, Integer> pickupTried = new HashMap<>();
+    /**
+     * Whether every dropped helper block in the build is gathered up before it goes on: before a layer's water goes in,
+     * which would carry them off into the farm, and once a layer is done. And the layer whose drops were gathered before
+     * its water.
+     */
+    private boolean pickupSweep;
+    private int sweptLayer = Integer.MIN_VALUE;
     /** Walks planned to a dropped box since it broke, a few at a time; and whether the player was asked to pick it up. */
     private int boxWalks;
     /** Walks to where the placed box can be seen, and rounds of trying to get at it, since this box was placed. */
@@ -868,6 +883,8 @@ public final class SchematicBuilder {
         missedHere.clear();
         noClickHere.clear();
         pickupTried.clear();
+        pickupSweep = false;
+        sweptLayer = Integer.MIN_VALUE;
         placedAt.clear();
         repairs.clear();
         repairDrops.clear();
@@ -1037,6 +1054,7 @@ public final class SchematicBuilder {
             layer = entry.getValue();
             group = byGroup ? BlockRules.group(plan.target(first)) : 0;
             if (entry.getKey() != layerY) {
+                pickupSweep = layerY != Integer.MIN_VALUE;
                 sealsLifted = false;
                 orderLifted = false;
                 shutIn.clear();
@@ -1184,6 +1202,12 @@ public final class SchematicBuilder {
                     continue;
                 }
                 if (edge) continue;
+                if (sweptLayer != layerY && settings().walk) {
+                    // Before the layer's first water: helper blocks lying in the build would be carried off by it.
+                    pickupSweep = true;
+                    if (pickUpHelpers(client, player)) return;
+                    sweptLayer = layerY;
+                }
                 if (player.isShiftKeyDown()) {
                     stance(client, false);
                     return;
@@ -2518,29 +2542,34 @@ public final class SchematicBuilder {
      * away, without climbing. False when there are plenty, or none to get to.
      */
     private boolean pickUpHelpers(Minecraft client, LocalPlayer player) {
-        if (player.hasInfiniteMaterials()) return false;
+        if (player.hasInfiniteMaterials()) return pickupSweep = false;
         helperItem(player);
         int loose = helpersLoose(player);
         boolean helpersFull = loose >= HELPER_STACKS * 64;
-        if (helpersFull && repairDrops.isEmpty()) return false;
+        if (helpersFull && repairDrops.isEmpty()) return pickupSweep = false;
         // With a stack or more left, a dropped helper block is worth a step or two, not a walk: one block back doesn't
-        // pay for the time. Really short of them, it is.
+        // pay for the time. Really short of them, it is, and so is each one near once a layer is done: none is left lying
+        // in the build, where a hopper or a water stream would carry it into the farm.
         boolean helpersShort = loose < 64;
-        List<ItemEntity> drops = player.level().getEntitiesOfClass(ItemEntity.class, player.getBoundingBox().inflate(8, 4, 8),
+        AABB area = pickupSweep ? plan.bounds.inflate(4) : player.getBoundingBox().inflate(8, 4, 8);
+        List<ItemEntity> drops = player.level().getEntitiesOfClass(ItemEntity.class, area,
                 item -> (!helpersFull && isHelper(item.getItem()) || repairDrops.contains(item.getItem().getItem()))
                         && pickupTried.getOrDefault(item.getId(), 0) < (repairDrops.contains(item.getItem().getItem()) ? 3 : 1));
         drops.sort(Comparator.comparingDouble(item -> item.distanceToSqr(player)));
         Navigator.Node start = Navigator.standingAt(player.level(), player);
         for (ItemEntity drop : drops) {
-            int most = helpersShort || repairDrops.contains(drop.getItem().getItem()) ? 12 : 3;
+            boolean anyway = helpersShort || pickupSweep || repairDrops.contains(drop.getItem().getItem());
+            int most = pickupSweep ? 30 : anyway ? 12 : 3;
             // Further off than that, it is left for now, for when the player passes by.
             if (drop.distanceTo(player) > most + 2) continue;
+            // A block or two just dropped waits a while: more fall near it, or a walk for the build passes them.
+            if (!anyway && drop.tickCount < PICKUP_WAIT && helpersAround(player, drop) < PICKUP_HANDFUL) continue;
             boolean needed = repairDrops.contains(drop.getItem().getItem());
             if (!needed) pickupTried.merge(drop.getId(), 1, Integer::sum);
             AABB item = drop.getBoundingBox();
             // Picked up within a block of the body sideways and half a block up or down, as vanilla does; planned from the
             // middle of the block half a block short of that sideways, as a walk comes to rest up to about that far off it.
-            Navigator.Path path = navigator(player, false).limit(1500).find(start, node -> new AABB(node.x() + 0.2, node.feet(),
+            Navigator.Path path = navigator(player, false).limit(pickupSweep ? 8000 : 1500).find(start, node -> new AABB(node.x() + 0.2, node.feet(),
                     node.z() + 0.2, node.x() + 0.8, node.feet() + 1.8, node.z() + 0.8).inflate(1 - PICKUP_SLACK, 0.5, 1 - PICKUP_SLACK)
                     .intersects(item) ? 1 : 0);
             if (path == null || path.nodes().size() < 2 || dropsIntoTrap(player, path)) continue;
@@ -2556,7 +2585,18 @@ public final class SchematicBuilder {
             if (debug()) LOGGER.info("Walking {} steps to pick up {} at {}", path.nodes().size() - 1, drop.getItem(), drop.position());
             return true;
         }
+        pickupSweep = false;
         return false;
+    }
+
+    /** How many dropped helper blocks lie together around {@code drop}, as one walk there picks them up. */
+    private int helpersAround(LocalPlayer player, ItemEntity drop) {
+        int count = 0;
+        for (ItemEntity item : player.level().getEntitiesOfClass(ItemEntity.class, drop.getBoundingBox().inflate(1.5, 1, 1.5),
+                item -> isHelper(item.getItem()))) {
+            count += item.getItem().getCount();
+        }
+        return count;
     }
 
     /** How far off the middle of a block a walk to pick something up may come to rest, sideways. */
@@ -3120,6 +3160,9 @@ public final class SchematicBuilder {
         long leaning = ThreadLocalRandom.current().nextLong();
         // The nearest block a real look reaches from each place to stand, to turn toward on arriving there.
         Map<Long, Integer> firstFrom = new HashMap<>();
+        // Dropped helper blocks: a walk that ends where they are picked up saves a walk for them later.
+        List<AABB> dropped = player.hasInfiniteMaterials() ? List.of() : player.level().getEntitiesOfClass(ItemEntity.class,
+                player.getBoundingBox().inflate(16, 6, 16), item -> isHelper(item.getItem())).stream().map(ItemEntity::getBoundingBox).toList();
         // For the log: what each place to stand is expected to place, the looks checked and the blocks in a row after them.
         Map<Long, String> expected = debug() ? new HashMap<>() : null;
         Map<Long, List<Integer>> expectedBlocks = debug() ? new HashMap<>() : null;
@@ -3174,6 +3217,17 @@ public final class SchematicBuilder {
                 }
             }
             if (good == 0) return 0;
+            if (!dropped.isEmpty()) {
+                // Picked up within a block of the body sideways and half a block up or down, as vanilla does, give or take where
+                // the walk comes to rest.
+                AABB pickup = body.inflate(1 - PICKUP_SLACK, 0.5, 1 - PICKUP_SLACK);
+                for (AABB item : dropped) {
+                    if (item.intersects(pickup)) {
+                        good += PICKUP_BONUS;
+                        break;
+                    }
+                }
+            }
             // A little leaning toward some places over others, its own each walk: not always the very same spot.
             double lean = 0.88 + 0.24 * Navigator.unit(node.key() ^ leaning);
             // Beside running water a walk that comes to rest a little off the middle is in the current: only when nothing
