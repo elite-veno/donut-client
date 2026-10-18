@@ -250,6 +250,9 @@ public final class SchematicBuilder {
     private long breakAt = -1, breakEnds = -1, nextGlance;
     private float glanceYaw, glancePitch;
     private int walkFailures;
+    /** For the debug log: the blocks the walk under way was planned for, and where it was to end. */
+    private final Set<Integer> walkExpects = new HashSet<>();
+    private Navigator.Node walkEnd;
     /** Places tried and found useless since the last block went in, so the next walk goes somewhere else. */
     private final Set<Long> uselessSpots = new HashSet<>();
     /** Steps that failed when walked, by {@link Navigator#stepKey}, this layer: walks go another way. */
@@ -1044,7 +1047,20 @@ public final class SchematicBuilder {
             }
             int index = i;
             PlacementSolver.Result result = PlacementSolver.find(player, pos, target, new ItemStack(item), reach, at -> unclickable(at, index));
-            if (result.click() == null && debug()) LOGGER.info("Can't place {} at {} yet: {}", target, pos.toShortString(), result.problem());
+            if (result.click() == null && debug()) {
+                LOGGER.info("Can't place {} at {} yet: {}", target, pos.toShortString(), result.problem());
+                if (walkExpects.remove(i) && walkEnd != null) {
+                    // The walk here was planned on a look at it: from the middle of where it was to end, and from where it did.
+                    LongPredicate notThere = at -> unclickable(at, index);
+                    double planned = player.blockInteractionRange() - 0.2;
+                    PlacementSolver.Click middle = PlacementSolver.fromSpot(player, walkEnd.standing(), pos, target, new ItemStack(item), planned, notThere);
+                    PlacementSolver.Click here = PlacementSolver.fromSpot(player, player.position(), pos, target, new ItemStack(item), reach, notThere);
+                    LOGGER.info("  expected from the walk to {} {} {}: from its middle {}, from the feet at {} ({} off it, {} between) {}",
+                            walkEnd.x(), walkEnd.feet(), walkEnd.z(), middle == null ? "no look" : "a look", player.position(),
+                            String.format(Locale.ROOT, "%.2f", player.position().subtract(walkEnd.standing()).horizontalDistance()),
+                            String.format(Locale.ROOT, "%.2f", player.getY() - walkEnd.feet()), here == null ? "no look" : "a look");
+                }
+            }
             if (result.click() == null) {
                 BlockPos helper = helperSpot.get(i);
                 if (result.problem() == PlacementSolver.Problem.NO_SUPPORT && helper != null) {
@@ -2482,6 +2498,7 @@ public final class SchematicBuilder {
         Map<Long, Integer> firstFrom = new HashMap<>();
         // For the log: what each place to stand is expected to place, the looks checked and the blocks in a row after them.
         Map<Long, String> expected = debug() ? new HashMap<>() : null;
+        Map<Long, List<Integer>> expectedBlocks = debug() ? new HashMap<>() : null;
         Navigator.Goal goal = node -> {
             seen[0]++;
             if (uselessSpots.contains(node.key()) || traps.contains(node.key()) || carriedFrom.contains(node.key())) return 0;
@@ -2529,6 +2546,7 @@ public final class SchematicBuilder {
                     StringBuilder text = new StringBuilder();
                     for (int i : placeable) text.append(text.isEmpty() ? "" : "; ").append(plan.pos(i).toShortString());
                     expected.put(node.key(), placeable.size() + " (" + text + ") +" + more + " in a row, " + inReach.size() + " in reach");
+                    expectedBlocks.put(node.key(), List.copyOf(placeable));
                 }
             }
             if (good == 0) return 0;
@@ -2582,8 +2600,12 @@ public final class SchematicBuilder {
         Integer first = firstFrom.get(end.key());
         walker.start(path.nodes(), first == null ? null : Vec3.atCenterOf(plan.pos(first)));
         show("Layer " + layerNumber + " of " + plan.layers().size() + ": walking to " + end.x() + " " + Math.round(end.feet()) + " " + end.z(), false);
-        if (debug()) LOGGER.info("Walking {} steps to {} {} {} for {}", path.nodes().size() - 1, end.x(), end.feet(), end.z(),
-                expected.get(end.key()));
+        if (debug()) {
+            LOGGER.info("Walking {} steps to {} {} {} for {}", path.nodes().size() - 1, end.x(), end.feet(), end.z(), expected.get(end.key()));
+            walkExpects.clear();
+            walkExpects.addAll(expectedBlocks.getOrDefault(end.key(), List.of()));
+            walkEnd = end;
+        }
         return true;
     }
 
