@@ -413,8 +413,13 @@ public final class SchematicBuilder {
     private final Map<Integer, Long> drainedAt = new HashMap<>();
     /** Ground dug out to stand lower, by position, with the block that was there; filled in again on the way out. */
     private final Map<Long, BlockState> dug = new LinkedHashMap<>();
-    /** Dug-out ground filled in with something else, for want of the block that was there; and spots never filled. */
-    private int refilledOther;
+    /**
+     * Dug-out ground filled in with something else, for want of the block that was there in hand, by position, with that
+     * block; and spots never filled. Once every block is in, those the inventory has the block for are put right.
+     */
+    private final Map<Long, BlockState> filledOther = new LinkedHashMap<>();
+    /** Walks made to put each of those right, by position. */
+    private final Map<Long, Integer> redoWalks = new HashMap<>();
     private final List<BlockPos> dugLeft = new ArrayList<>();
     /** Walks made during the build to fill in dug ground, by spot: one that still can't be filled from there is left for the end. */
     private final Map<Long, Integer> refillWalks = new HashMap<>();
@@ -958,7 +963,8 @@ public final class SchematicBuilder {
         dug.clear();
         refillWalks.clear();
         dugLeft.clear();
-        refilledOther = 0;
+        filledOther.clear();
+        redoWalks.clear();
         pit = lastPit = null;
         uselessPits.clear();
         pitTries.clear();
@@ -2503,7 +2509,7 @@ public final class SchematicBuilder {
             }
             case REFILL -> {
                 BlockState was = dug.remove(planned.at().asLong());
-                if (was != null && !planned.item().equals(was.getBlock().asItem())) refilledOther++;
+                if (was != null && !planned.item().equals(was.getBlock().asItem())) filledOther.put(planned.at().asLong(), was);
                 paceAfterClick(quick());
                 show("Filling in the ground dug out at " + planned.at().getX() + " " + planned.at().getY() + " " + planned.at().getZ(), false);
                 return;
@@ -3101,6 +3107,7 @@ public final class SchematicBuilder {
      */
     private boolean cleanUp(Minecraft client, LocalPlayer player) {
         if (refill(client, player, true)) return true;
+        if (redoFills(client, player)) return true;
         if (!leftRetried) {
             // Those left during the build, out of reach then or slow to break, get another try now the build is done.
             leftRetried = true;
@@ -3907,7 +3914,7 @@ public final class SchematicBuilder {
         if (was != null) {
             // The pit is filled in again on the way out, and stays filled.
             dug.remove(cell.asLong());
-            if (item != was.getBlock().asItem()) refilledOther++;
+            if (item != was.getBlock().asItem()) filledOther.put(cell.asLong(), was);
         } else {
             helpers.put(cell.asLong(), new Helper(-1, Block.byItem(item)));
             if (debug()) LOGGER.info("Climbing: a helper block at {}, {} helper blocks standing", cell.toShortString(), helpers.size());
@@ -4255,6 +4262,59 @@ public final class SchematicBuilder {
     }
 
     /**
+     * Once every block is in, ground dug out and filled in with another block, a helper block in hand on the climb out of
+     * a pit say, is put right where the inventory now has the block that was there: the other block is broken, the spot
+     * goes back on the list of ground dug out, and {@link #refill} fills it with the right one. Top first, where a face of
+     * it is in view, after a walk if need be (each at most twice). True while there is one to break or walk to.
+     */
+    private boolean redoFills(Minecraft client, LocalPlayer player) {
+        if (filledOther.isEmpty() || player.hasInfiniteMaterials()) return false;
+        Level level = player.level();
+        double reach = player.blockInteractionRange() - 0.25;
+        Materials materials = Materials.of(player.getInventory());
+        List<BlockPos> ready = new ArrayList<>();
+        for (Iterator<Map.Entry<Long, BlockState>> it = filledOther.entrySet().iterator(); it.hasNext(); ) {
+            Map.Entry<Long, BlockState> entry = it.next();
+            BlockPos cell = BlockPos.of(entry.getKey());
+            BlockState now = level.getBlockState(cell), was = entry.getValue();
+            if (now.getBlock() == was.getBlock() || now.canBeReplaced()) {
+                // Put right already, or open again and so on the list of ground dug out.
+                it.remove();
+                continue;
+            }
+            Item item = was.getBlock().asItem();
+            if (item == Items.AIR || materials.total(item) == 0 || filledOther.containsKey(cell.above().asLong())) continue;
+            if (!helperItems.contains(now.getBlock().asItem()) || now.getDestroySpeed(level, cell) < 0) continue;
+            ready.add(cell);
+        }
+        if (ready.isEmpty()) return false;
+        Vec3 eye = player.getEyePosition();
+        ready.sort(Comparator.comparingDouble(cell -> new AABB(cell).distanceToSqr(eye)));
+        for (BlockPos cell : ready) {
+            if (missedMining(player, cell) || !inView(player, eye, cell, reach) || !safeToBreak(player, cell)) continue;
+            if (debug()) LOGGER.info("Putting right the ground at {}: {} there, {} to go back", cell.toShortString(),
+                    level.getBlockState(cell).getBlock().getName().getString(), filledOther.get(cell.asLong()).getBlock().getName().getString());
+            dug.put(cell.asLong(), filledOther.remove(cell.asLong()));
+            startBreak(cell);
+            return true;
+        }
+        if (!settings().walk) return false;
+        Navigator.Node start = Navigator.standingAt(level, player);
+        for (BlockPos cell : ready) {
+            if (redoWalks.getOrDefault(cell.asLong(), 0) >= 2) continue;
+            redoWalks.merge(cell.asLong(), 1, Integer::sum);
+            Navigator.Path path = navigator(player, false).limit(6000).find(start, node ->
+                    node.x() == cell.getX() && node.z() == cell.getZ() && node.feet() > cell.getY() ? 0 : viewScore(player, node.eye(), cell, reach));
+            if (path == null || path.nodes().size() < 2 || dropsIntoTrap(player, path)) continue;
+            releaseKeys(client);
+            walker.start(path.nodes(), Vec3.atCenterOf(cell));
+            show("Putting right the ground dug out", false);
+            return true;
+        }
+        return false;
+    }
+
+    /**
      * Fills in ground dug out that the player has left, the bottom of each pit first, with what was there if the
      * inventory has it, else helper blocks. While building it only does so from where the player stands and keeps the
      * pit just dug for the block it was dug for; once every block is in ({@code finish}) it walks to what is left. True
@@ -4362,6 +4422,7 @@ public final class SchematicBuilder {
         if (wrong > 0) notes.add(wrong + (wrong == 1 ? " spot holds" : " spots hold") + " another block");
         if (failed > 0) notes.add(failed + (failed == 1 ? " block" : " blocks") + " the server didn't keep");
         if (misplaced > 0) notes.add(misplaced + (misplaced == 1 ? " block faces" : " blocks face") + " another way");
+        int refilledOther = filledOther.size();
         if (refilledOther > 0) {
             notes.add(refilledOther + (refilledOther == 1 ? " block" : " blocks") + " of ground dug out filled in with "
                     + (helperItem(Minecraft.getInstance().player) == null ? "helper blocks" : name(helperItem(Minecraft.getInstance().player))));
