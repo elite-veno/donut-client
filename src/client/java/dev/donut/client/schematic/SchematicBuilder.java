@@ -82,6 +82,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -194,6 +195,10 @@ public final class SchematicBuilder {
     private final Set<Long> carriedFrom = new HashSet<>();
     /** How far the feet may move off where a click was worked out, as a slide coming to rest does, before it is given up. */
     private static final double CARRIED = 0.3;
+    /** Whether a walk is being looked for that may climb through cells the build fills later: helper blocks may go there. */
+    private boolean escaping;
+    /** When a helper block climbed on in a cell the build fills was last checked for whether it can go. */
+    private long escapeChecked = -100_000;
     /**
      * Blocks with no click from where the player stands, and why, worked out at {@code noClickFrom} in that stance: passed
      * over until the player moves, a block goes in or a couple of seconds go by. A long row of them would otherwise use
@@ -230,6 +235,8 @@ public final class SchematicBuilder {
     private long nextClick;
     /** Whether the builder holds the crouch key. */
     private boolean crouchHeld;
+    /** Whether the climb under way puts its block onto one with a use, crouched so the click doesn't open it. */
+    private boolean climbCrouch;
     /** Walks the player to where blocks are in reach; it never flies. */
     /** Turns the view smoothly, for aiming, walking and looking about alike. */
     private final Head head = new Head();
@@ -907,6 +914,14 @@ public final class SchematicBuilder {
             nextAction = System.nanoTime() + 250_000_000L;
             if (planWalk(client, player, candidates, materials, layerNumber, lift)) return;
         }
+        // On a narrow top with a drop beside it, a closed gate's or a fence's, a little drift brings the player down off it,
+        // into a pit or a shaft there may be no way out of: crouched there, as a player stands on one, and only clicks
+        // made crouching. Walking on stands up again.
+        boolean edge = settings().walk && onNarrowEdge(player);
+        if (edge && !player.isShiftKeyDown()) {
+            stance(client, true);
+            return;
+        }
         double reach = player.blockInteractionRange();
         missing.clear();
         PlacementSolver.Problem seen = null;
@@ -956,6 +971,7 @@ public final class SchematicBuilder {
                     if (!missing.contains(bucket)) missing.add(bucket);
                     continue;
                 }
+                if (edge) continue;
                 if (player.isShiftKeyDown()) {
                     stance(client, false);
                     return;
@@ -980,7 +996,7 @@ public final class SchematicBuilder {
             }
             if (current.getBlock() == target.getBlock() && BlockRules.missing(current, target) == 0) {
                 // A chest waiting for its other half needs nothing; clicking it would only open it.
-                if (BlockRules.adjustClicks(current, target) == 0) continue;
+                if (BlockRules.adjustClicks(current, target) == 0 || edge) continue;
                 if (player.isShiftKeyDown()) {
                     stance(client, false);
                     return;
@@ -1008,6 +1024,11 @@ public final class SchematicBuilder {
                 }
                 if (seen == null || result.problem() == PlacementSolver.Problem.IN_THE_WAY) seen = result.problem();
                 noClickHere.put(i, result.problem());
+                continue;
+            }
+            if (edge && !result.click().crouch()) {
+                if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
+                noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH);
                 continue;
             }
             if (!wayOut(player, i)) {
@@ -1062,6 +1083,7 @@ public final class SchematicBuilder {
             nextAction = System.nanoTime();
             return;
         }
+        if (settings().walk && climbOut(client, player, candidates, materials, layerNumber, lift)) return;
         // Last, from the top of a pillar of helper blocks with nothing in reach: down a block.
         if (settings().walk && stepDown(player)) return;
         // Blocks out of reach that nothing is left to place with are passed over by the walk: they are what the build
@@ -1443,6 +1465,56 @@ public final class SchematicBuilder {
         return false;
     }
 
+    /**
+     * With no place to stand found any other way: one more look, where a walk may climb through cells the build fills
+     * later, a helper block put in each on the way, as a player pillars out of a pit or a shaft they came down into. Those
+     * blocks come away again once the player has a way out without them (see {@link #removeUsedHelper}), and the blocks
+     * that go there after them.
+     */
+    private boolean climbOut(Minecraft client, LocalPlayer player, List<Integer> candidates, Materials materials, int layerNumber,
+                             boolean lift) {
+        if (helperItem(player) == null) return false;
+        boolean walking;
+        escaping = true;
+        try {
+            walking = planWalk(client, player, candidates, materials, layerNumber, lift);
+        } finally {
+            escaping = false;
+        }
+        if (walking && debug()) LOGGER.info("No place to stand otherwise: walking on over cells the build fills later");
+        return walking;
+    }
+
+    /** Whether a helper block at {@code at} stands in a cell the build fills with a block, not only water run through. */
+    private boolean inBuildCell(BlockPos at) {
+        int i = plan.indexOf(at);
+        return i >= 0 && !(plan.kind(i) == BlockRules.Kind.AUTO && plan.target(i).getBlock() instanceof LiquidBlock);
+    }
+
+    /**
+     * Whether the player stands on a narrow top, a closed gate's or a fence's, with a drop of two blocks or more right
+     * beside it: a few centimetres of drift off it and they are down there.
+     */
+    private static boolean onNarrowEdge(LocalPlayer player) {
+        if (!player.onGround()) return false;
+        Level level = player.level();
+        Navigator.Node node = Navigator.standingAt(level, player);
+        BlockPos floor = node.floor();
+        if (!Navigator.narrowTop(level.getBlockState(floor).getCollisionShape(level, floor))) return false;
+        for (Direction side : Direction.Plane.HORIZONTAL) {
+            BlockPos beside = floor.relative(side);
+            boolean ground = false;
+            // Something beside at most a block and a half under the feet, or a wall: a step, not a drop.
+            for (int dy = 1; dy >= -1 && !ground; dy--) {
+                BlockPos cell = beside.above(dy);
+                VoxelShape shape = level.getBlockState(cell).getCollisionShape(level, cell);
+                ground = !shape.isEmpty() && cell.getY() + shape.max(Direction.Axis.Y) >= node.feet() - 1.5;
+            }
+            if (!ground) return true;
+        }
+        return false;
+    }
+
     /** Whether block {@code i} can go in yet, worked out once for the blocks around it as they are: 1 yes, 2 no, 0 out of time. */
     private byte support(LocalPlayer player, int i, long started) {
         BlockPos pos = plan.pos(i);
@@ -1566,7 +1638,7 @@ public final class SchematicBuilder {
             aim = null;
             return;
         }
-        if (player.position().subtract(aimFeet).horizontalDistanceSqr() > CARRIED * CARRIED) {
+        if (player.position().subtract(aimFeet).horizontalDistanceSqr() > CARRIED * CARRIED || aimFeet.y - player.getY() > 0.5) {
             // Carried off while turning, by water running past or a push: the look is aimed again from the eye each tick, so
             // it would follow the player along, to wherever they come to rest, out of reach or with something in the way.
             // Worked out again from where they are, and walks don't end where it happened again.
@@ -1911,7 +1983,10 @@ public final class SchematicBuilder {
         boolean helper = helpers.containsKey(cell.asLong()) && !(view instanceof Overlay overlay && overlay.changes(cell));
         if (!state.canBeReplaced() || !state.getFluidState().isEmpty() || helper) return false;
         int i = plan.indexOf(cell);
-        return i < 0 || plan.kind(i) == BlockRules.Kind.AUTO && plan.target(i).getBlock() instanceof LiquidBlock;
+        if (i < 0 || plan.kind(i) == BlockRules.Kind.AUTO && plan.target(i).getBlock() instanceof LiquidBlock) return true;
+        // With no other place to stand, a walk may climb through cells the build fills later: those blocks wait until the
+        // player is out.
+        return escaping && plan.status(i) == BuildPlan.Status.PENDING;
     }
 
     /** Puts down the helper block that block {@code i} is placed against; false when it can't from here. */
@@ -1943,6 +2018,20 @@ public final class SchematicBuilder {
                 continue;
             }
             int serves = entry.getValue().serves();
+            if (serves < 0 && inBuildCell(at)) {
+                // Climbed on in a cell the build fills, on the way out of where the player was shut in: taken away once they
+                // are out, the top of its column first, while they still have a way out without it.
+                if (helpers.containsKey(at.above().asLong()) || tick - escapeChecked < 20 || missedMining(player, at)
+                        || !inView(player, player.getEyePosition(), at, reach)) continue;
+                Level level = client.level;
+                if (Navigator.standingAt(level, player).floor().equals(at)) continue;
+                escapeChecked = tick;
+                Overlay without = new Overlay(level, Map.of(at.asLong(), Blocks.AIR.defaultBlockState()));
+                if (exitFrom(player, without, Navigator.standingAt(without, player), null) == null) continue;
+                if (debug()) LOGGER.info("Out again: taking away the helper block climbed on at {}, where the build goes", at.toShortString());
+                startBreak(at);
+                return true;
+            }
             if (serves < 0 || plan.update(client.level, serves) == BuildPlan.Status.PENDING) continue;
             if (!missedMining(player, at) && inView(player, player.getEyePosition(), at, reach)) {
                 startBreak(at);
@@ -2318,7 +2407,7 @@ public final class SchematicBuilder {
                 .minmax(new AABB(player.blockPosition()).inflate(6));
         Item helper = climb ? helperItem(player) : null;
         return new Navigator(view, area, cell -> helper != null && helperAllowed(player, view, cell)
-                && !BlockRules.interactive(view.getBlockState(cell.below()).getBlock()), key -> {
+                && (escaping || !BlockRules.interactive(view.getBlockState(cell.below()).getBlock())), key -> {
             int i = plan.indexOf(key);
             return i >= 0 && plan.status(i) == BuildPlan.Status.PENDING;
         }).avoidSteps(badSteps).pillars(helper == null ? 0 : climbBudget(player));
@@ -2561,10 +2650,14 @@ public final class SchematicBuilder {
     }
 
     private void walk(Minecraft client, LocalPlayer player) {
-        if (player.isShiftKeyDown() && !walker.bridging()) setCrouch(client, false);
+        if (player.isShiftKeyDown() && !walker.bridging() && !climbCrouch) setCrouch(client, false);
         Walker.State state = walker.tick(client, player, new Walker.Climb() {
             @Override
             public boolean ready(BlockPos cell) {
+                // Onto a block with a use, a dispenser's top say, the block goes in crouched, as a player pillars up from
+                // one: else the click opens it.
+                climbCrouch = BlockRules.interactive(player.level().getBlockState(cell.below()).getBlock());
+                if (climbCrouch && !crouchHeld) setCrouch(client, true);
                 // Ground dug out is filled with what was there, when the hotbar has it.
                 BlockState was = dug.get(cell.asLong());
                 if (was != null && selectInHotbar(player, was.getBlock().asItem())) return true;
@@ -2581,6 +2674,7 @@ public final class SchematicBuilder {
             @Override
             public boolean placeBeside(BlockPos support, Direction face) { return bridgePlace(client, player, support, face); }
         });
+        if (state != Walker.State.WALKING) climbCrouch = false;
         if (state == Walker.State.ARRIVED) {
             walkFailures = 0;
             nextAction = System.nanoTime();
@@ -2616,10 +2710,15 @@ public final class SchematicBuilder {
                     player.getMainHandItem());
             return false;
         }
+        if (climbCrouch && !player.isShiftKeyDown()) {
+            if (debug()) LOGGER.info("Climb at {}: not crouched yet over {}", cell.toShortString(), player.level().getBlockState(cell.below()));
+            return false;
+        }
         InteractionResult result = client.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
         if (result instanceof InteractionResult.Success success && success.swingSource() == InteractionResult.SwingSource.CLIENT) {
             player.swing(InteractionHand.MAIN_HAND);
         }
+        climbCrouch = false;
         if (was != null) {
             // The pit is filled in again on the way out, and stays filled.
             dug.remove(cell.asLong());
