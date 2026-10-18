@@ -132,6 +132,8 @@ public final class SchematicBuilder {
      * meanwhile, or that a walk for the build passes, come along.
      */
     private static final int PICKUP_HANDFUL = 8, PICKUP_WAIT = 600;
+    /** Fewer helper blocks than this in hand, one dropped below is worth the climb back up. */
+    private static final int PICKUP_LAST = 4;
     /** What ending a walk for the build where dropped helper blocks are picked up is worth, in blocks placed there. */
     private static final double PICKUP_BONUS = 0.75;
     /**
@@ -495,6 +497,8 @@ public final class SchematicBuilder {
      * where it was; a block broken to go in again is, a few times.
      */
     private final Map<Integer, Integer> pickupTried = new HashMap<>();
+    /** Dropped helper blocks left lying below the layer for its sweep, by entity id: not searched for again until then. */
+    private final Set<Integer> pickupBelow = new HashSet<>();
     /**
      * Whether every dropped helper block in the build is gathered up before it goes on: before a layer's water goes in,
      * which would carry them off into the farm, and once a layer is done. And the layer whose drops were gathered before
@@ -930,6 +934,7 @@ public final class SchematicBuilder {
         missedHere.clear();
         forgetNoClicks();
         pickupTried.clear();
+        pickupBelow.clear();
         pickupSweep = false;
         sweptLayer = Integer.MIN_VALUE;
         placedAt.clear();
@@ -2856,7 +2861,8 @@ public final class SchematicBuilder {
         AABB area = pickupSweep ? plan.bounds.inflate(4) : player.getBoundingBox().inflate(8, 4, 8);
         List<ItemEntity> drops = player.level().getEntitiesOfClass(ItemEntity.class, area,
                 item -> (!helpersFull && isHelper(item.getItem()) || repairDrops.contains(item.getItem().getItem()))
-                        && pickupTried.getOrDefault(item.getId(), 0) < (repairDrops.contains(item.getItem().getItem()) ? 3 : 1));
+                        && pickupTried.getOrDefault(item.getId(), 0) < (repairDrops.contains(item.getItem().getItem()) ? 3 : 1)
+                        && (pickupSweep || loose < PICKUP_LAST || !pickupBelow.contains(item.getId())));
         drops.sort(Comparator.comparingDouble(item -> item.distanceToSqr(player)));
         Navigator.Node start = Navigator.standingAt(player.level(), player);
         for (ItemEntity drop : drops) {
@@ -2877,6 +2883,15 @@ public final class SchematicBuilder {
             if (path == null || path.nodes().size() < 2 || dropsIntoTrap(player, path)) continue;
             if (path.nodes().size() - 1 > most) {
                 if (!needed) pickupTried.merge(drop.getId(), -1, Integer::sum);
+                continue;
+            }
+            // Down off the layer for a block or two, the way back up is climbed again, a helper block for each step up:
+            // more than the walk brings back. Left for the layer's sweep, or until there are a handful there or none at all
+            // is left in hand.
+            if (!needed && !pickupSweep && start.feet() - path.end().feet() > 1 && loose >= PICKUP_LAST
+                    && helpersAround(player, drop) < PICKUP_HANDFUL) {
+                pickupTried.merge(drop.getId(), -1, Integer::sum);
+                pickupBelow.add(drop.getId());
                 continue;
             }
             // A drop the build needs back: a try for each walk made to it, none for one there is no way to yet.
