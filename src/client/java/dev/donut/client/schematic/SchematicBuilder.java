@@ -120,8 +120,11 @@ public final class SchematicBuilder {
     private static final int HELPER_STACKS = 2;
     /** With fewer helper blocks than this left outside the boxes, more are taken out of one. */
     private static final int HELPERS_LOW = 16;
-    /** How many of the nearest blocks a walk checks a real look for at each place it considers. */
-    private static final int VERIFY = 3;
+    /**
+     * How many of the nearest blocks a walk checks a real look for at each place it considers: enough to tell a place
+     * from which a handful go in from one from which a dozen do.
+     */
+    private static final int VERIFY = 6;
     private static SchematicBuilder instance;
     /** Logs each placement and why blocks can't go in, with -Ddonut.schematic.debug=true. */
     private static boolean debug() { return Boolean.getBoolean("donut.schematic.debug"); }
