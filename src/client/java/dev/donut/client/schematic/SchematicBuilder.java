@@ -257,6 +257,14 @@ public final class SchematicBuilder {
      * from anywhere else, as what can't be reached from up on a pillar often can from below.
      */
     private final Set<Long> cleanupSkipped = new HashSet<>();
+    /**
+     * Helper blocks a bridge put down, hanging off the side of what they were placed against: nothing is climbed on
+     * them, so each stays one block beside the ground it hangs from, to be taken back from there.
+     */
+    private final Set<Long> bridged = new HashSet<>();
+    /** Bridges cleanup walks have put down: a few, to get back across the gaps the build bridged, and no more. */
+    private int cleanupBridges;
+    private static final int CLEANUP_BRIDGES = 4;
     private long cleanupFrom = Long.MIN_VALUE;
     private String helperList = "";
     private Set<Item> helperItems = Set.of();
@@ -508,6 +516,8 @@ public final class SchematicBuilder {
         helpersLeft.clear();
         leftRetried = false;
         cleanupSkipped.clear();
+        bridged.clear();
+        cleanupBridges = 0;
         dug.clear();
         refillWalks.clear();
         plan = null;
@@ -706,6 +716,8 @@ public final class SchematicBuilder {
         helpersLeft.clear();
         leftRetried = false;
         cleanupSkipped.clear();
+        bridged.clear();
+        cleanupBridges = 0;
         dug.clear();
         refillWalks.clear();
         dugLeft.clear();
@@ -1902,7 +1914,7 @@ public final class SchematicBuilder {
         for (long key : helpers.keySet()) if (!helpers.containsKey(BlockPos.offset(key, Direction.UP))) tops.add(BlockPos.of(key));
         tops.sort(Comparator.comparingInt((BlockPos pos) -> pos.getY()).reversed());
         for (BlockPos top : tops) {
-            if (!inView(player, player.getEyePosition(), top, reach)) continue;
+            if (!inView(player, player.getEyePosition(), top, reach) || !safeToBreak(player, top)) continue;
             startBreak(top);
             return true;
         }
@@ -1911,11 +1923,15 @@ public final class SchematicBuilder {
                 if (cleanupSkipped.contains(top.asLong())) continue;
                 // Climbing too: the top of a tall pillar is only in reach from up beside it. Each block climbed on is a
                 // helper block too, and comes down under the player's feet after it.
-                // Never a bridge: the block it puts down would be one more to take away, and the next walk might bridge again.
-                Navigator.Path path = navigator(player, true).noBridges().limit(6000)
-                        .find(here, node -> inView(player, node.eye(), top, reach) ? 1 : 0);
+                // A bridge only a few times, to get back across a gap the build bridged: each puts down one more block
+                // to take away. Never to stand on a block with nothing under it, which would drop the player when broken.
+                Navigator navigator = navigator(player, true).limit(6000);
+                if (cleanupBridges >= CLEANUP_BRIDGES) navigator.noBridges();
+                Navigator.Path path = navigator.find(here, node -> node.floor().equals(top) && !groundUnder(player.level(), top) ? 0
+                        : inView(player, node.eye(), top, reach) ? 1 : 0);
                 if (path != null && path.nodes().size() > 1) {
                     if (!climbReady(client, player, path)) return true;
+                    cleanupBridges += (int) path.nodes().stream().filter(node -> node.move() == Navigator.Move.BRIDGE).count();
                     if (debug()) LOGGER.info("Cleanup: walking {} steps, {} of them climbing, to take away the helper block at {}",
                             path.nodes().size() - 1, path.nodes().stream().filter(node -> node.move() == Navigator.Move.PILLAR).count(),
                             top.toShortString());
@@ -1927,7 +1943,7 @@ public final class SchematicBuilder {
             }
             // None reached from up here, on helper blocks climbed: down a block, and from there they are looked for again.
             BlockPos under = BlockPos.containing(player.getX(), player.getY() - 0.05, player.getZ());
-            if (player.onGround() && helpers.containsKey(under.asLong())) {
+            if (player.onGround() && helpers.containsKey(under.asLong()) && safeToBreak(player, under)) {
                 if (debug()) LOGGER.info("No helper block left in reach of a walk from {}: down a block first", here);
                 startBreak(under);
                 return true;
@@ -1941,6 +1957,21 @@ public final class SchematicBuilder {
         }
         helpers.clear();
         return true;
+    }
+
+    /**
+     * Whether breaking the block at {@code pos} leaves the player on their feet: it isn't the one they stand on, or it
+     * has ground right under it, as in a pillar. A bridge block hangs over a gap, and the player would fall.
+     */
+    private static boolean safeToBreak(LocalPlayer player, BlockPos pos) {
+        BlockPos under = BlockPos.containing(player.getX(), player.getY() - 0.05, player.getZ());
+        return !pos.equals(under) || groundUnder(player.level(), pos);
+    }
+
+    /** Whether something solid is right under the block at {@code pos}. */
+    private static boolean groundUnder(Level level, BlockPos pos) {
+        BlockPos below = pos.below();
+        return !level.getBlockState(below).getCollisionShape(level, below).isEmpty();
     }
 
     /** How often a block that came back set another way is broken and placed again before it is left so. */
@@ -2077,6 +2108,7 @@ public final class SchematicBuilder {
         BlockState state = client.level.getBlockState(breaking);
         if (state.isAir() || state.canBeReplaced()) {
             helpers.remove(breaking.asLong());
+            bridged.remove(breaking.asLong());
             pours.put(breaking.asLong(), tick);
             // With the helper gone, a look may reach a block it was in front of, and a way out may open.
             noClickHere.clear();
@@ -2146,7 +2178,7 @@ public final class SchematicBuilder {
                 .minmax(new AABB(player.blockPosition()).inflate(6));
         Item helper = climb ? helperItem(player) : null;
         return new Navigator(view, area, cell -> helper != null && helperAllowed(player, view, cell)
-                && !BlockRules.interactive(view.getBlockState(cell.below()).getBlock()), key -> {
+                && !BlockRules.interactive(view.getBlockState(cell.below()).getBlock()) && !bridged.contains(cell.below().asLong()), key -> {
             int i = plan.indexOf(key);
             return i >= 0 && plan.status(i) == BuildPlan.Status.PENDING;
         }).avoidSteps(badSteps).pillars(helper == null ? 0 : climbBudget(player));
@@ -2467,6 +2499,7 @@ public final class SchematicBuilder {
             player.swing(InteractionHand.MAIN_HAND);
         }
         helpers.put(support.relative(face).asLong(), new Helper(-1, Block.byItem(item)));
+        bridged.add(support.relative(face).asLong());
         if (debug()) LOGGER.info("Bridging: a helper block against the {} side of {}", face, support.toShortString());
         return true;
     }

@@ -303,7 +303,9 @@ public final class Navigator {
         }
         // Climbing: jump and place a block where the feet were, then stand on it.
         BlockPos cell = from.feetCell();
-        if (Math.abs(from.feet() - cell.getY()) < 0.01 && cell.getY() + 1 < area.maxY && from.feet() + 1 <= climbCeiling
+        // Never straight up from a block just bridged: a column hanging off the side of a build is out of reach to take down.
+        if (from.move() != Move.BRIDGE && Math.abs(from.feet() - cell.getY()) < 0.01 && cell.getY() + 1 < area.maxY
+                && from.feet() + 1 <= climbCeiling
                 && pillarAllowed.test(cell)
                 && clear(from.x(), from.z(), from.feet() + 1, from.feet() + 1 + BODY, Integer.MIN_VALUE)
                 && seeThrough(from.x(), from.z(), cell.getY(), cell.getY() + 2)) {
