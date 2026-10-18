@@ -254,6 +254,8 @@ public final class SchematicBuilder {
     private int repairing = -1;
     /** Items of blocks broken to be placed again, whose drops are picked up. */
     private final Set<Item> repairDrops = new HashSet<>();
+    /** Walks made to a block to place again, by index: one still out of view after these is left as it is. */
+    private final Map<Integer, Integer> repairWalks = new HashMap<>();
     /** Ground dug out to stand lower, by position, with the block that was there; filled in again on the way out. */
     private final Map<Long, BlockState> dug = new LinkedHashMap<>();
     /** Dug-out ground filled in with something else, for want of the block that was there; and spots never filled. */
@@ -664,6 +666,7 @@ public final class SchematicBuilder {
         placedAt.clear();
         repairs.clear();
         repairDrops.clear();
+        repairWalks.clear();
         repairing = -1;
         helperFetchTick = -100_000;
         helpers.clear();
@@ -785,6 +788,7 @@ public final class SchematicBuilder {
             break;
         }
         if (layer == null) {
+            if (settings().walk && walkToRepair(client, player)) return;
             if (cleanUp(client, player)) return;
             finishBuild(client);
             return;
@@ -946,6 +950,7 @@ public final class SchematicBuilder {
         int left = 0;
         for (int i : layer) if (plan.status(i) == BuildPlan.Status.PENDING || plan.status(i) == BuildPlan.Status.UNLOADED) left++;
         if (settings().walk && pickUpHelpers(client, player)) return;
+        if (settings().walk && walkToRepair(client, player)) return;
         if (settings().walk && planWalk(client, player, candidates, materials, layerNumber, lift)) return;
         if (settings().walk && planPit(client, player, candidates, materials, layerNumber, lift)) return;
         if (settings().walk && breakOut(player)) return;
@@ -1833,6 +1838,46 @@ public final class SchematicBuilder {
             return true;
         }
         return false;
+    }
+
+    /**
+     * With nothing to place from here, to a block this build placed that came back set another way, out of reach or out
+     * of view: a walk to where it can be seen, so it is broken and placed again before more is built round it. Twice at
+     * most for each block, and only for one in a layer built already or being built.
+     */
+    private boolean walkToRepair(Minecraft client, LocalPlayer player) {
+        if (placedAt.isEmpty()) return false;
+        ClientLevel level = client.level;
+        double reach = player.blockInteractionRange() - 0.25;
+        Vec3 eye = player.getEyePosition();
+        int best = -1;
+        double nearest = Double.MAX_VALUE;
+        for (Map.Entry<Integer, Long> entry : placedAt.entrySet()) {
+            int i = entry.getKey();
+            if (plan.status(i) != BuildPlan.Status.MISPLACED || repairs.getOrDefault(i, 0) >= REPAIRS
+                    || repairWalks.getOrDefault(i, 0) >= REPAIRS || plan.pos(i).getY() > layerY) continue;
+            BlockPos pos = plan.pos(i);
+            if (plan.update(level, i) != BuildPlan.Status.MISPLACED || !getsBack(player, level.getBlockState(pos))
+                    || !safeToBreak(level, pos, tick - entry.getValue())) continue;
+            double away = Vec3.atCenterOf(pos).distanceToSqr(eye);
+            if (away < nearest) {
+                nearest = away;
+                best = i;
+            }
+        }
+        if (best < 0) return false;
+        BlockPos pos = plan.pos(best);
+        repairWalks.merge(best, 1, Integer::sum);
+        Navigator.Path path = navigator(player, true).find(Navigator.standingAt(level, player),
+                node -> inView(player, node.eye(), pos, reach) ? 1 : 0);
+        if (path == null || path.nodes().size() < 2 || dropsIntoTrap(player, path)) return false;
+        if (!climbReady(client, player, path)) return true;
+        releaseKeys(client);
+        walker.start(path.nodes(), Vec3.atCenterOf(pos));
+        show("Walking to " + plan.target(best).getBlock().getName().getString() + " at " + pos.getX() + " " + pos.getY() + " "
+                + pos.getZ() + " to place it again", false);
+        if (debug()) LOGGER.info("Walking {} steps to place {} at {} again", path.nodes().size() - 1, plan.target(best), pos.toShortString());
+        return true;
     }
 
     /** Whether breaking the block gives its item back: it needs no tool for that, or the inventory has one that does. */

@@ -175,6 +175,16 @@ public final class SchematicBuilderGameTest implements FabricClientGameTest {
             BlockPos at = ORIGIN.offset(observer);
             server.runCommand("setblock " + at.getX() + " " + at.getY() + " " + at.getZ() + " minecraft:observer[facing=south]");
             await(context, builder, placedAt, client -> placedAt.size() >= 12, 20 * 90);
+            // Later, once the player has gone out of reach of it, the repeater too: it is walked back to and placed again.
+            BlockPos repeater = new BlockPos(0, 0, 2);
+            await(context, builder, placedAt, client -> placedAt.containsKey(repeater), 20 * 120);
+            BlockPos turned = ORIGIN.offset(repeater);
+            try {
+                context.waitFor(client -> client.player.getEyePosition().distanceTo(net.minecraft.world.phys.Vec3.atCenterOf(turned)) > 6, 20 * 60);
+            } catch (AssertionError e) {
+                // Never that far: it is placed again from where the player is.
+            }
+            server.runCommand("setblock " + turned.getX() + " " + turned.getY() + " " + turned.getZ() + " minecraft:repeater[facing=west,delay=3]");
             screenshot(context, "donut-schematic-04-building");
             await(context, builder, placedAt, client -> !builder.isActive(), 20 * 180);
             context.runOnClient(client -> require(builder.status().startsWith("Finished"), "The build did not finish: " + builder.status()));
