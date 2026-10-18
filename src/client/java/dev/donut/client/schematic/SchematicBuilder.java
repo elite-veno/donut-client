@@ -257,6 +257,8 @@ public final class SchematicBuilder {
      * from anywhere else, as what can't be reached from up on a pillar often can from below.
      */
     private final Set<Long> cleanupSkipped = new HashSet<>();
+    /** When a bridging click that couldn't go out was last explained in the log. */
+    private long bridgeExplained = -1000;
     /** Bridges cleanup walks have put down: a few, to get back across the gaps the build bridged, and no more. */
     private int cleanupBridges;
     private static final int CLEANUP_BRIDGES = 4;
@@ -2502,12 +2504,23 @@ public final class SchematicBuilder {
      */
     private boolean bridgePlace(Minecraft client, LocalPlayer player, BlockPos support, Direction face) {
         Item item = helperItem(player);
-        if (item == null || !player.getMainHandItem().is(item)) return false;
         BlockHitResult hit = crosshair(player);
-        if (hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(support) || hit.getDirection() != face) return false;
+        if (item == null || !player.getMainHandItem().is(item) || hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(support)
+                || hit.getDirection() != face) {
+            if (debug() && tick - bridgeExplained >= 20) {
+                bridgeExplained = tick;
+                LOGGER.info("Bridging: no click yet for the {} side of {}: crosshair on {} {} {} at {}, eye {}, look {} {}, {}, holding {}",
+                        face, support.toShortString(), hit.getType(), hit.getBlockPos().toShortString(), hit.getDirection(), hit.getLocation(),
+                        player.getEyePosition(), player.getYRot(), player.getXRot(), player.isShiftKeyDown() ? "crouching" : "standing",
+                        player.getMainHandItem());
+            }
+            return false;
+        }
         InteractionResult result = client.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
         if (result instanceof InteractionResult.Success success && success.swingSource() == InteractionResult.SwingSource.CLIENT) {
             player.swing(InteractionHand.MAIN_HAND);
+        } else if (debug()) {
+            LOGGER.info("Bridging: the click on the {} side of {} gave {}", face, support.toShortString(), result);
         }
         helpers.put(support.relative(face).asLong(), new Helper(-1, Block.byItem(item)));
         if (debug()) LOGGER.info("Bridging: a helper block against the {} side of {}", face, support.toShortString());
