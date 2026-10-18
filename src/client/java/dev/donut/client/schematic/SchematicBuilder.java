@@ -3391,13 +3391,14 @@ public final class SchematicBuilder {
         PlacementSolver.Click placeClick = null;
         // Beside where the player stands, worked out as the walk there did: in a hopper's bowl the feet are inside the
         // hopper's own block, a block lower than the spot stood on.
-        BlockPos feet = Navigator.standingAt(player.level(), player).floor().above();
+        Navigator.Node here = Navigator.standingAt(player.level(), player);
+        BlockPos feet = here.floor().above();
         for (BlockPos candidate : boxSpots(player, feet, player.position())) {
             PlacementSolver.Result result = PlacementSolver.find(player, candidate, boxState, shulker, player.blockInteractionRange(),
                     helpers::containsKey);
             // A click in the other stance does too: placing the box crouches or stands up for it first.
             if (result.click() != null && (result.problem() == null || result.problem() == PlacementSolver.Problem.STANCE)
-                    && boxSeenFrom(player, player.getEyePosition(), candidate)) {
+                    && boxSeenFrom(player, player.getEyePosition(), candidate) && walksInto(player, here, candidate)) {
                 spot = candidate;
                 placeClick = result.click();
                 break;
@@ -3413,7 +3414,7 @@ public final class SchematicBuilder {
                     List<BlockPos> spots = boxSpots(player, node.floor().above(), node.standing());
                     for (BlockPos at : spots.subList(0, Math.min(3, spots.size()))) {
                         if (PlacementSolver.fromSpot(player, node.standing(), at, boxState, shulker, reach, helpers::containsKey) != null
-                                && boxSeenFrom(player, node.eye(), at)) return 1;
+                                && boxSeenFrom(player, node.eye(), at) && walksInto(player, node, at)) return 1;
                     }
                     return 0;
                 });
@@ -3486,6 +3487,18 @@ public final class SchematicBuilder {
         outside.addAll(inside);
         return outside;
     }
+
+    /**
+     * Whether a player standing at {@code from} can walk into {@code spot}, a few steps round at most: a box placed
+     * through a gap, in a place the player can't step into, drops where it can't be picked up.
+     */
+    private boolean walksInto(LocalPlayer player, Navigator.Node from, BlockPos spot) {
+        long floor = spot.below().asLong();
+        return navigator(player, false).limit(BOX_WALK_NODES).find(from, node -> node.key() == floor ? 1 : 0) != null;
+    }
+
+    /** The most places the search for a way into a box spot looks at. */
+    private static final int BOX_WALK_NODES = 300;
 
     /**
      * Whether a box placed at {@code spot} would show a face to {@code eye} within reach, to open and break it by: a
@@ -3729,11 +3742,11 @@ public final class SchematicBuilder {
                         walk(client, player);
                     } else if (dropped != null && boxWalks < 3 && !dropped.blockPosition().equals(player.blockPosition())) {
                         boxWalks++;
-                        Navigator.Path path = navigator(player, false).find(Navigator.standingAt(level, player), node -> {
-                            Vec3 stand = node.standing();
-                            double dx = stand.x - dropped.getX(), dz = stand.z - dropped.getZ(), dy = dropped.getY() - stand.y;
-                            return dx * dx + dz * dz < 0.8 && dy > -0.5 && dy < 1.5 ? 1 : 0;
-                        });
+                        // Picked up within a block of the body sideways and half a block up or down, as vanilla does:
+                        // from beside the block it lies in, when that one has no room to stand.
+                        AABB item = dropped.getBoundingBox();
+                        Navigator.Path path = navigator(player, false).find(Navigator.standingAt(level, player), node -> new AABB(node.x() + 0.2,
+                                node.feet(), node.z() + 0.2, node.x() + 0.8, node.feet() + 1.8, node.z() + 0.8).inflate(1, 0.5, 1).intersects(item) ? 1 : 0);
                         stopWalking(client);
                         // Not into a place with no way back out, for a box either.
                         if (path != null && path.nodes().size() > 1 && !dropsIntoTrap(player, path)) walker.start(path.nodes());
