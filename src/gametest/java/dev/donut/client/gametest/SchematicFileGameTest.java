@@ -136,6 +136,22 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                 LOGGER.info("Set {} blocks in place before the build ({}{})", placed, preplace.isEmpty() ? "" : preplace + " ",
                         fromY == Integer.MIN_VALUE ? "" : "everything below y " + fromY);
                 context.waitTicks(20);
+                // A machine set in place can move itself once its blocks update, a piston pushed or a torch knocked
+                // off: what came out otherwise is set again, so the build starts on the layers it was asked to.
+                int reset = server.computeOnServer(s -> {
+                    int n = 0;
+                    for (int i = 0; i < schematic.size(); i++) {
+                        BlockState target = Schematic.place(schematic.state(i), Mirror.NONE, Rotation.NONE);
+                        BlockPos pos = Schematic.place(schematic.pos(i), ORIGIN, Mirror.NONE, Rotation.NONE);
+                        if (!preplace.contains(target.getBlock()) && pos.getY() >= fromY) continue;
+                        if (BlockRules.kind(target) == BlockRules.Kind.UNPLACEABLE || s.overworld().getBlockState(pos) == target) continue;
+                        s.overworld().setBlock(pos, target, Block.UPDATE_CLIENTS);
+                        n++;
+                    }
+                    return n;
+                });
+                if (reset > 0) LOGGER.info("Set {} of them again, which had changed", reset);
+                context.waitTicks(10);
             }
             giveInShulkers(server, bill);
             server.runCommand("give @a minecraft:dirt 448");
