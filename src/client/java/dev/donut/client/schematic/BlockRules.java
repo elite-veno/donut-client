@@ -23,8 +23,11 @@ import net.minecraft.world.level.block.DaylightDetectorBlock;
 import net.minecraft.world.level.block.DiodeBlock;
 import net.minecraft.world.level.block.DispenserBlock;
 import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.DropExperienceBlock;
 import net.minecraft.world.level.block.FenceGateBlock;
+import net.minecraft.world.level.block.HalfTransparentBlock;
 import net.minecraft.world.level.block.HopperBlock;
+import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.LeverBlock;
 import net.minecraft.world.level.block.LightningRodBlock;
 import net.minecraft.world.level.block.LiquidBlock;
@@ -32,10 +35,12 @@ import net.minecraft.world.level.block.MultifaceBlock;
 import net.minecraft.world.level.block.NoteBlock;
 import net.minecraft.world.level.block.ObserverBlock;
 import net.minecraft.world.level.block.PoweredBlock;
+import net.minecraft.world.level.block.RedStoneOreBlock;
 import net.minecraft.world.level.block.RedStoneWireBlock;
 import net.minecraft.world.level.block.RedstoneLampBlock;
 import net.minecraft.world.level.block.RedstoneTorchBlock;
 import net.minecraft.world.level.block.SculkSensorBlock;
+import net.minecraft.world.level.block.StainedGlassPaneBlock;
 import net.minecraft.world.level.block.TargetBlock;
 import net.minecraft.world.level.block.TntBlock;
 import net.minecraft.world.level.block.TrapDoorBlock;
@@ -226,6 +231,21 @@ public final class BlockRules {
     public static boolean needsWater(BlockState current, BlockState target) {
         return soaked(target) && current.getBlock() == target.getBlock() && current.hasProperty(BlockStateProperties.WATERLOGGED)
                 && !current.getValue(BlockStateProperties.WATERLOGGED);
+    }
+
+    /** Blocks that drop something other than themselves, or nothing, when broken without silk touch. */
+    private static final Set<Block> DROPS_OTHER = Set.of(Blocks.STONE, Blocks.DEEPSLATE, Blocks.GRASS_BLOCK, Blocks.PODZOL,
+            Blocks.MYCELIUM, Blocks.DIRT_PATH, Blocks.FARMLAND, Blocks.BOOKSHELF, Blocks.GLOWSTONE, Blocks.SEA_LANTERN, Blocks.CLAY,
+            Blocks.MELON, Blocks.GRAVEL, Blocks.SNOW_BLOCK, Blocks.PACKED_ICE, Blocks.GLASS_PANE, Blocks.BUDDING_AMETHYST);
+
+    /**
+     * Whether breaking the block gives back its own item, as far as can be told without the server's loot tables: not
+     * glass, panes, ice, leaves or ores, nor stone, grass or the like, which drop something else.
+     */
+    public static boolean dropsItself(BlockState state) {
+        Block block = state.getBlock();
+        return !(block instanceof HalfTransparentBlock || block instanceof StainedGlassPaneBlock || block instanceof LeavesBlock
+                || block instanceof DropExperienceBlock || block instanceof RedStoneOreBlock || DROPS_OTHER.contains(block));
     }
 
     /**

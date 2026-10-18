@@ -206,6 +206,24 @@ class BlockRulesTest {
     }
 
     @Test
+    void onlyBlocksThatGiveThemselvesBackAreBrokenToGetOut() {
+        assertTrue(BlockRules.dropsItself(Blocks.COBBLESTONE.defaultBlockState()));
+        assertTrue(BlockRules.dropsItself(Blocks.SPRUCE_FENCE_GATE.defaultBlockState()));
+        assertTrue(BlockRules.dropsItself(Blocks.CONCRETE.blue().defaultBlockState()));
+        assertFalse(BlockRules.dropsItself(Blocks.GLASS.defaultBlockState()), "glass breaks into nothing");
+        assertFalse(BlockRules.dropsItself(Blocks.STAINED_GLASS.blue().defaultBlockState()));
+        assertFalse(BlockRules.dropsItself(Blocks.GLASS_PANE.defaultBlockState()));
+        assertFalse(BlockRules.dropsItself(Blocks.STAINED_GLASS_PANE.red().defaultBlockState()));
+        assertFalse(BlockRules.dropsItself(Blocks.BLUE_ICE.defaultBlockState()));
+        assertFalse(BlockRules.dropsItself(Blocks.PACKED_ICE.defaultBlockState()));
+        assertFalse(BlockRules.dropsItself(Blocks.ICE.defaultBlockState()), "ice turns to water");
+        assertFalse(BlockRules.dropsItself(Blocks.OAK_LEAVES.defaultBlockState()));
+        assertFalse(BlockRules.dropsItself(Blocks.STONE.defaultBlockState()), "stone gives cobblestone");
+        assertFalse(BlockRules.dropsItself(Blocks.DIAMOND_ORE.defaultBlockState()));
+        assertFalse(BlockRules.dropsItself(Blocks.REDSTONE_ORE.defaultBlockState()));
+    }
+
+    @Test
     void aKelpStemIsPlacedAsKelpAndCountsAsIt() {
         BlockState stem = Blocks.KELP_PLANT.defaultBlockState(), tip = Blocks.KELP.defaultBlockState();
         assertEquals(BlockRules.Kind.PLACE, BlockRules.kind(stem));

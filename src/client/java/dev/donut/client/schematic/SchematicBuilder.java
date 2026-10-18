@@ -324,6 +324,27 @@ public final class SchematicBuilder {
     private final Set<Item> repairDrops = new HashSet<>();
     /** Walks made to a block to place again, by index: one still out of view after these is left as it is. */
     private final Map<Integer, Integer> repairWalks = new HashMap<>();
+    /**
+     * Blocks of the build broken to get out of a pocket the player was shut in, by index: left out until the player is out,
+     * then placed again like any other. And when that was last looked for.
+     */
+    private final Set<Integer> brokeOut = new HashSet<>();
+    private long breakOutChecked = -100_000;
+    /** When the player was first seen out of the pocket since, or -1 while not; and the places to stand it held. */
+    private long outSince = -1;
+    private final Set<Long> pocketPlaces = new HashSet<>();
+    /** The other block of a way out through a wall, broken next; null when there is none. */
+    private BlockPos pairNext;
+    /**
+     * Helper blocks climbed on during a walk out of where the player was shut in, by position: taken away as soon as
+     * the player is out, as the pocket they stand in may be closed again after; and whether the walk under way is one.
+     */
+    private final Set<Long> escapeHelpers = new HashSet<>();
+    private boolean escapeWalk;
+    /** Walks made to bring each of those into view, by position. */
+    private final Map<Long, Integer> escapeWalks = new HashMap<>();
+    /** Whether the way out {@link #wayOut} keeps clear climbs over cells the build fills later. */
+    private boolean exitEscapes;
     /** How often each block was broken to go in again into water, and the tick it last was. */
     private final Map<Integer, Integer> drains = new HashMap<>();
     private final Map<Integer, Long> drainedAt = new HashMap<>();
@@ -788,6 +809,14 @@ public final class SchematicBuilder {
         repairWalks.clear();
         drains.clear();
         drainedAt.clear();
+        brokeOut.clear();
+        breakOutChecked = -100_000;
+        outSince = -1;
+        pocketPlaces.clear();
+        pairNext = null;
+        escapeHelpers.clear();
+        escapeWalk = false;
+        escapeWalks.clear();
         repairing = -1;
         helperFetchTick = -100_000;
         helpers.clear();
@@ -917,16 +946,43 @@ public final class SchematicBuilder {
             break;
         }
         if (layer == null) {
+            // Only blocks broken to get out of a pocket are left: out first, then they go in again.
+            if (!brokeOut.isEmpty()) {
+                if (settings().walk && walkOut(client, player)) return;
+                brokeOut.clear();
+                nextAction = System.nanoTime();
+                return;
+            }
             if (settings().walk && walkToRepair(client, player)) return;
             if (cleanUp(client, player)) return;
             finishBuild(client);
             return;
         }
         Vec3 eye = player.getEyePosition();
+        if (!brokeOut.isEmpty()) {
+            // Out: on top of the layer or off the build, or anywhere the pocket didn't reach with a way on from there. A way
+            // out found from inside, as soon as the block is gone, is no reason yet to put it back.
+            Navigator.Node here = Navigator.standingAt(level, player);
+            boolean out = player.getY() >= layerY + 1 - 1e-3 || offBuild(player.position())
+                    || !pocketPlaces.contains(here.key()) && exitFrom(player, level, here, null) != null;
+            if (!out) outSince = -1;
+            else if (outSince < 0) outSince = tick;
+            // Once out, the helper blocks of the climb out come away first: with the block back in they would be shut in. A
+            // walk brings each into view in turn; one no walk does is left for the cleanup, and two minutes is the most it
+            // waits.
+            if (out && settings().walk && walkToEscapeHelper(client, player)) return;
+            if (out && (escapeHelpers.isEmpty() || tick - outSince > 2400)) {
+                brokeOut.clear();
+                pocketPlaces.clear();
+                outSince = -1;
+            }
+        }
         List<Integer> candidates = new ArrayList<>();
         for (int i : layer) {
             BuildPlan.Status st = plan.status(i);
             if (st != BuildPlan.Status.PENDING && st != BuildPlan.Status.UNLOADED) continue;
+            // Broken to get out of where the player was shut in: back in once they are out, not to shut them in again.
+            if (brokeOut.contains(i)) continue;
             // Water, lava and kelp wait until every other block of their layer, and of those below, is in.
             if (plan.wetWaits(i)) continue;
             if (byGroup && !inOrder(player, i, group, lift, started)) continue;
@@ -1171,6 +1227,7 @@ public final class SchematicBuilder {
         int left = 0;
         for (int i : layer) if (plan.status(i) == BuildPlan.Status.PENDING || plan.status(i) == BuildPlan.Status.UNLOADED) left++;
         if (settings().walk && pickUpHelpers(client, player)) return;
+        if (settings().walk && walkOut(client, player)) return;
         if (settings().walk && walkToRepair(client, player)) return;
         if (settings().walk && planWalk(client, player, candidates, materials, layerNumber, lift)) return;
         if (settings().walk && planPit(client, player, candidates, materials, layerNumber, lift)) return;
@@ -1205,6 +1262,7 @@ public final class SchematicBuilder {
             return;
         }
         if (settings().walk && climbOut(client, player, candidates, materials, layerNumber, lift)) return;
+        if (settings().walk && breakOutOfBuild(player)) return;
         // Last, from the top of a pillar of helper blocks with nothing in reach: down a block.
         if (settings().walk && stepDown(player)) return;
         // Blocks out of reach that nothing is left to place with are passed over by the walk: they are what the build
@@ -1240,7 +1298,8 @@ public final class SchematicBuilder {
      */
     private int firstReady(LocalPlayer player, int[] layer, boolean lift, long started) {
         for (int i : layer) {
-            if (plan.wetWaits(i)) continue;
+            // Broken to get out of a pocket: its layer is done for now, and the build goes on with the next.
+            if (plan.wetWaits(i) || brokeOut.contains(i)) continue;
             BuildPlan.Status st = plan.status(i);
             if (st == BuildPlan.Status.PENDING) st = plan.update(player.level(), i);
             if (st == BuildPlan.Status.PENDING) {
@@ -1461,7 +1520,10 @@ public final class SchematicBuilder {
         // The way out there is now, worked out once a tick. A block anywhere off it, near or as far as reach goes,
         // leaves it open; one on it may close the last way out, and the search is made again with it in place.
         if (exitTick != tick) {
-            Navigator.Path exit = exitFrom(player, player.level(), Navigator.standingAt(player.level(), player), null);
+            Navigator.Node start = Navigator.standingAt(player.level(), player);
+            Navigator.Path exit = exitFrom(player, player.level(), start, null);
+            // With no other way out, the climb over cells the build fills later is the way out: kept clear as well.
+            exitEscapes = exit == null && (exit = escapeFrom(player, player.level(), start, null)) != null;
             exitCells = exit == null ? null : bodyCells(exit);
             exitTick = tick;
         }
@@ -1470,7 +1532,8 @@ public final class SchematicBuilder {
         Overlay view = new Overlay(player.level(), Map.of(pos.asLong(), plan.target(i)));
         // Every place this search reaches is shut in with the player when it finds no way out.
         Set<Long> reached = new HashSet<>();
-        if (exitFrom(player, view, Navigator.standingAt(view, player), reached) != null) return true;
+        Navigator.Node viewStart = Navigator.standingAt(view, player);
+        if ((exitEscapes ? escapeFrom(player, view, viewStart, reached) : exitFrom(player, view, viewStart, reached)) != null) return true;
         shutIn.put(i, reached);
         if (debug()) LOGGER.info("{} at {} waits: it would shut you in, with {} places to stand", plan.target(i).getBlock().getName().getString(),
                 pos.toShortString(), reached.size());
@@ -1514,6 +1577,170 @@ public final class SchematicBuilder {
             if (reached != null) reached.add(node.key());
             return node.feet() >= layerY + 1 - 1e-3 || offBuild(node.standing()) ? 1 : 0;
         });
+    }
+
+    /** As {@link #exitFrom}, climbing over cells the build fills later too, a helper block put in each, as {@link #climbOut} does. */
+    private Navigator.Path escapeFrom(LocalPlayer player, BlockGetter view, Navigator.Node start, Set<Long> reached) {
+        boolean was = escaping;
+        escaping = true;
+        try {
+            return exitFrom(player, view, start, reached);
+        } finally {
+            escaping = was;
+        }
+    }
+
+    /**
+     * Shut in with a block of the build broken to get out (see {@link #breakOutOfBuild}): the walk out, climbing over
+     * cells the build fills later, the broken block's among them.
+     */
+    private boolean walkOut(Minecraft client, LocalPlayer player) {
+        if (brokeOut.isEmpty() || helperItem(player) == null) return false;
+        Level level = player.level();
+        Navigator.Path path = escapeFrom(player, level, Navigator.standingAt(level, player), null);
+        if (path == null || path.nodes().size() < 2) return false;
+        if (!climbReady(client, player, path)) return true;
+        releaseKeys(client);
+        walker.start(path.nodes());
+        escapeWalk = true;
+        show("Climbing out of where you were shut in", false);
+        if (debug()) LOGGER.info("Climbing out, {} steps, over where a block of the build was broken", path.nodes().size() - 1);
+        return true;
+    }
+
+    /**
+     * Shut in with nothing to place from here and no climb out, not even over cells the build fills later, as after a
+     * fall into a finished part of a machine: one of the build's own blocks in reach is broken, as a player digs out of
+     * a pocket, the quickest to break of those that open a way out. Only a plain block that breaking gives back, with
+     * nothing resting on it, hanging from it or held back by it; it goes in again once the player is out.
+     */
+    private boolean breakOutOfBuild(LocalPlayer player) {
+        if (helperItem(player) == null || tick - breakOutChecked < (brokeOut.isEmpty() ? 100 : 10)) return false;
+        breakOutChecked = tick;
+        Level level = player.level();
+        Navigator.Node start = Navigator.standingAt(level, player);
+        if (escapeFrom(player, level, start, null) != null) return false;
+        Set<Long> inside = new HashSet<>();
+        exitFrom(player, level, start, inside);
+        double reach = player.blockInteractionRange() - 0.25;
+        Vec3 eye = player.getEyePosition();
+        BlockPos middle = BlockPos.containing(eye);
+        int r = (int) Math.ceil(reach);
+        List<BlockPos> candidates = new ArrayList<>();
+        for (BlockPos at : BlockPos.betweenClosed(middle.offset(-r, -r, -r), middle.offset(r, r, r))) {
+            int i = plan.indexOf(at);
+            if (i < 0 || plan.status(i) != BuildPlan.Status.DONE || plan.kind(i) != BlockRules.Kind.PLACE || at.equals(start.floor())) continue;
+            BlockState state = level.getBlockState(at);
+            if (BlockRules.group(state) != 0 || BlockRules.wet(state) || !BlockRules.dropsItself(state) || !getsBack(player, state)
+                    || state.getDestroySpeed(level, at) < 0 || level.getBlockEntity(at) != null) continue;
+            if (new AABB(at).distanceToSqr(eye) > reach * reach || !safeToBreak(level, at, 0)) continue;
+            candidates.add(at.immutable());
+        }
+        candidates.sort(Comparator.comparingDouble(at -> breakTicks(player, level, at) + new AABB(at).distanceToSqr(eye)));
+        // The second block of a way out through a wall goes before any other: else each round would start on another.
+        if (pairNext != null && candidates.remove(pairNext)) candidates.addFirst(pairNext);
+        pairNext = null;
+        Set<BlockPos> breakable = new HashSet<>(candidates);
+        long started = System.nanoTime();
+        for (BlockPos at : candidates) {
+            if (System.nanoTime() - started > 40_000_000L) break;
+            if (missedMining(player, at) || !inView(player, eye, at, reach)) continue;
+            Overlay view = new Overlay(level, Map.of(at.asLong(), Blocks.AIR.defaultBlockState()));
+            if (escapeFrom(player, view, Navigator.standingAt(view, player), null) == null) {
+                // A way out through a wall takes two blocks, one over the other, a body's height: this one first, the other
+                // found on its own once this one is gone.
+                BlockPos other = breakable.contains(at.above()) ? at.above() : breakable.contains(at.below()) ? at.below() : null;
+                if (other == null) continue;
+                Overlay both = new Overlay(level, Map.of(at.asLong(), Blocks.AIR.defaultBlockState(), other.asLong(), Blocks.AIR.defaultBlockState()));
+                if (escapeFrom(player, both, Navigator.standingAt(both, player), null) == null) continue;
+                pairNext = other;
+            }
+            int i = plan.indexOf(at);
+            if (debug()) LOGGER.info("Shut in for good: breaking {} at {}, the build's own, to climb out; it goes in again after",
+                    level.getBlockState(at), at.toShortString());
+            brokeOut.add(i);
+            pocketPlaces.addAll(inside);
+            Item item = BlockRules.item(plan.target(i));
+            if (!player.hasInfiniteMaterials() && item != null) repairDrops.add(item);
+            startBreak(at);
+            repairing = i;
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Out of the pocket, with helper blocks of the climb out still standing: a walk to where the top one of a column is in
+     * view, for {@link #removeUsedHelper} to take it away. False when one is in view already, or none is left to go to.
+     */
+    private boolean walkToEscapeHelper(Minecraft client, LocalPlayer player) {
+        Level level = player.level();
+        double reach = player.blockInteractionRange() - 0.25;
+        for (Iterator<Long> it = escapeHelpers.iterator(); it.hasNext(); ) {
+            long key = it.next();
+            BlockPos at = BlockPos.of(key);
+            Helper helper = helpers.get(key);
+            if (helper == null || level.getBlockState(at).getBlock() != helper.block()) {
+                it.remove();
+                continue;
+            }
+            if (helpers.containsKey(at.above().asLong())) continue;
+            if (inView(player, player.getEyePosition(), at, reach)) return false;
+            if (escapeWalks.getOrDefault(key, 0) >= 3) {
+                it.remove();
+                continue;
+            }
+            // Where it is in view from as far round the middle as a walk comes to rest, as down a narrow hole only a few
+            // places see it, and only just. Never from on top of the column, nor from back down in the pocket: from there it
+            // can't be broken, and the walk out would only be made again.
+            Navigator.Node start = Navigator.standingAt(level, player);
+            Navigator.Path path = navigator(player, true).find(start, node -> pocketPlaces.contains(node.key())
+                    || node.x() == at.getX() && node.z() == at.getZ() && node.feet() >= at.getY() ? 0 : viewScore(player, node.eye(), at, reach));
+            if (path == null || dropsIntoTrap(player, path)) {
+                it.remove();
+                continue;
+            }
+            // Here already, only a little off where it is in view: tried again from wherever the build takes the player.
+            if (path.nodes().size() < 2) continue;
+            escapeWalks.merge(key, 1, Integer::sum);
+            if (!climbReady(client, player, path)) return true;
+            releaseKeys(client);
+            walker.start(path.nodes(), Vec3.atCenterOf(at));
+            show("Walking to the helper blocks climbed out on, to take them away", false);
+            if (debug()) LOGGER.info("Walking {} steps to take away the helper block climbed out on at {}", path.nodes().size() - 1, at.toShortString());
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * How well a face of the block at {@code pos} is in view from {@code eye}: 0 when not from there, else 1 and one more for
+     * each of the eight places round it, as far off as a walk comes to rest, it is in view from too.
+     */
+    private static int viewScore(LocalPlayer player, Vec3 eye, BlockPos pos, double reach) {
+        if (!inView(player, eye, pos, reach)) return 0;
+        int score = 1;
+        for (double dx : new double[] {-REST_SPREAD, 0, REST_SPREAD}) {
+            for (double dz : new double[] {-REST_SPREAD, 0, REST_SPREAD}) {
+                if ((dx != 0 || dz != 0) && inView(player, eye.add(dx, 0, dz), pos, reach)) score++;
+            }
+        }
+        return score;
+    }
+
+    /** Roughly how many ticks breaking the block takes with the best tool carried, for picking the quickest. */
+    private static double breakTicks(LocalPlayer player, Level level, BlockPos pos) {
+        BlockState state = level.getBlockState(pos);
+        float hardness = state.getDestroySpeed(level, pos);
+        if (hardness <= 0) return 0;
+        double best = Double.MAX_VALUE;
+        Inventory inventory = player.getInventory();
+        for (int slot = 0; slot < Materials.SLOTS; slot++) {
+            ItemStack stack = inventory.getItem(slot);
+            boolean right = !state.requiresCorrectToolForDrops() || stack.isCorrectToolForDrops(state);
+            best = Math.min(best, hardness * (right ? 30 : 100) / Math.max(1f, stack.getDestroySpeed(state)));
+        }
+        return best;
     }
 
     /**
@@ -1602,6 +1829,7 @@ public final class SchematicBuilder {
         } finally {
             escaping = false;
         }
+        if (walking && walker.active()) escapeWalk = true;
         if (walking && debug()) LOGGER.info("No place to stand otherwise: walking on over cells the build fills later");
         return walking;
     }
@@ -2059,7 +2287,8 @@ public final class SchematicBuilder {
             int most = helpersShort || repairDrops.contains(drop.getItem().getItem()) ? 12 : 3;
             // Further off than that, it is left for now, for when the player passes by.
             if (drop.distanceTo(player) > most + 2) continue;
-            pickupTried.merge(drop.getId(), 1, Integer::sum);
+            boolean needed = repairDrops.contains(drop.getItem().getItem());
+            if (!needed) pickupTried.merge(drop.getId(), 1, Integer::sum);
             AABB item = drop.getBoundingBox();
             // Picked up within a block of the body sideways and half a block up or down, as vanilla does; planned from the
             // middle of the block half a block short of that sideways, as a walk comes to rest up to about that far off it.
@@ -2068,9 +2297,11 @@ public final class SchematicBuilder {
                     .intersects(item) ? 1 : 0);
             if (path == null || path.nodes().size() < 2 || dropsIntoTrap(player, path)) continue;
             if (path.nodes().size() - 1 > most) {
-                pickupTried.merge(drop.getId(), -1, Integer::sum);
+                if (!needed) pickupTried.merge(drop.getId(), -1, Integer::sum);
                 continue;
             }
+            // A drop the build needs back: a try for each walk made to it, none for one there is no way to yet.
+            if (needed) pickupTried.merge(drop.getId(), 1, Integer::sum);
             releaseKeys(client);
             walker.start(path.nodes());
             show("Picking up " + name(drop.getItem().getItem()) + " dropped nearby", false);
@@ -2108,7 +2339,7 @@ public final class SchematicBuilder {
         if (i < 0 || plan.kind(i) == BlockRules.Kind.AUTO && plan.target(i).getBlock() instanceof LiquidBlock) return true;
         // With no other place to stand, a walk may climb through cells the build fills later: those blocks wait until the
         // player is out.
-        return escaping && plan.status(i) == BuildPlan.Status.PENDING;
+        return escaping && (plan.status(i) == BuildPlan.Status.PENDING || view instanceof Overlay overlay && overlay.changes(cell));
     }
 
     /** Puts down the helper block that block {@code i} is placed against; false when it can't from here. */
@@ -2140,10 +2371,11 @@ public final class SchematicBuilder {
             BlockPos at = BlockPos.of(entry.getKey());
             if (client.level.getBlockState(at).getBlock() != entry.getValue().block()) {
                 it.remove();
+                escapeHelpers.remove(entry.getKey());
                 continue;
             }
             int serves = entry.getValue().serves();
-            if (serves < 0 && plan.indexOf(at) >= 0) {
+            if (serves < 0 && (plan.indexOf(at) >= 0 || escapeHelpers.contains(entry.getKey()))) {
                 // Climbed on in a cell of the build: one the build fills, on the way out of where the player was shut in, or
                 // one only water runs through, where it holds the water back and the build closes in on it, as a shaft
                 // roofed over with water poured onto it, out of reach by the end. Taken away once the player is out, the
@@ -2482,6 +2714,7 @@ public final class SchematicBuilder {
         BlockState state = client.level.getBlockState(breaking);
         if (state.isAir() || state.canBeReplaced()) {
             helpers.remove(breaking.asLong());
+            escapeHelpers.remove(breaking.asLong());
             pours.put(breaking.asLong(), tick);
             // With the helper gone, a look may reach a block it was in front of, and a way out may open.
             noClickHere.clear();
@@ -2512,6 +2745,7 @@ public final class SchematicBuilder {
                     breakTicks, progress);
             helpersLeft.add(breaking);
             helpers.remove(breaking.asLong());
+            escapeHelpers.remove(breaking.asLong());
         }
         breaking = null;
         repairing = -1;
@@ -2864,7 +3098,10 @@ public final class SchematicBuilder {
             @Override
             public boolean placeBeside(BlockPos support, Direction face) { return bridgePlace(client, player, support, face); }
         });
-        if (state != Walker.State.WALKING) climbCrouch = false;
+        if (state != Walker.State.WALKING) {
+            climbCrouch = false;
+            escapeWalk = false;
+        }
         if (state == Walker.State.ARRIVED) {
             if (debug()) {
                 Navigator.Node end = Navigator.standingAt(player.level(), player);
@@ -2920,6 +3157,7 @@ public final class SchematicBuilder {
             if (item != was.getBlock().asItem()) refilledOther++;
         } else {
             helpers.put(cell.asLong(), new Helper(-1, Block.byItem(item)));
+            if (escapeWalk || !brokeOut.isEmpty()) escapeHelpers.add(cell.asLong());
         }
         return true;
     }
@@ -2949,6 +3187,7 @@ public final class SchematicBuilder {
             LOGGER.info("Bridging: the click on the {} side of {} gave {}", face, support.toShortString(), result);
         }
         helpers.put(support.relative(face).asLong(), new Helper(-1, Block.byItem(item)));
+        if (escapeWalk || !brokeOut.isEmpty()) escapeHelpers.add(support.relative(face).asLong());
         if (debug()) LOGGER.info("Bridging: a helper block against the {} side of {}", face, support.toShortString());
         return true;
     }
