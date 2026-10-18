@@ -79,6 +79,13 @@ final class Head {
     private int offGrid;
     /** For {@link #follow}: how far, in degrees, the spot followed may drift from a view resting on it; 0 otherwise. */
     private float slack;
+    /** When the view was last turned by this, to tell a turn that went on from one taken up again after a pause. */
+    private long steppedAt;
+    /**
+     * A gap longer than this since the last tick turned, two ticks and more, and the hand has stopped: a screen, a
+     * break, a wait; what comes next starts from rest rather than at the speed the last turn had.
+     */
+    private static final long PAUSED = 120_000_000L;
 
     /**
      * Whether a look, as yaw and pitch, does what an aim is for: the crosshair on the face meant, the block it places
@@ -114,6 +121,7 @@ final class Head {
      * follows something does, now and then rather than every tick.
      */
     boolean follow(LocalPlayer player, float yaw, float pitch, float slack) {
+        resumed();
         float[] view = {player.getYRot(), player.getXRot()};
         boolean there = followStep(view, yaw, pitch, slack, mouseStep(), ThreadLocalRandom.current());
         set(player, view[0], view[1]);
@@ -159,6 +167,7 @@ final class Head {
     }
 
     private boolean move(LocalPlayer player, float yaw, float pitch, boolean aiming, Check check) {
+        resumed();
         float[] view = {player.getYRot(), player.getXRot()};
         boolean there = step(view, yaw, pitch, aiming, check, mouseStep(), ThreadLocalRandom.current());
         set(player, view[0], view[1]);
@@ -167,6 +176,13 @@ final class Head {
 
     boolean step(float[] view, float yaw, float pitch, boolean aiming, float mouse, RandomGenerator random) {
         return step(view, yaw, pitch, aiming, null, mouse, random);
+    }
+
+    /** Rests first if the view went unturned for a while, so a turn taken up again starts slowly, as a hand does. */
+    private void resumed() {
+        long now = System.nanoTime();
+        if (now - steppedAt > PAUSED) rest();
+        steppedAt = now;
     }
 
     /**
