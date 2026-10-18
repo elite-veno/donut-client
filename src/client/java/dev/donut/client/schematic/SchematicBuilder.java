@@ -82,7 +82,6 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
-import net.minecraft.world.phys.shapes.VoxelShape;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -1522,23 +1521,7 @@ public final class SchematicBuilder {
      * beside it: a few centimetres of drift off it and they are down there.
      */
     private static boolean onNarrowEdge(LocalPlayer player) {
-        if (!player.onGround()) return false;
-        Level level = player.level();
-        Navigator.Node node = Navigator.standingAt(level, player);
-        BlockPos floor = node.floor();
-        if (!Navigator.narrowTop(level.getBlockState(floor).getCollisionShape(level, floor))) return false;
-        for (Direction side : Direction.Plane.HORIZONTAL) {
-            BlockPos beside = floor.relative(side);
-            boolean ground = false;
-            // Something beside at most a block and a half under the feet, or a wall: a step, not a drop.
-            for (int dy = 1; dy >= -1 && !ground; dy--) {
-                BlockPos cell = beside.above(dy);
-                VoxelShape shape = level.getBlockState(cell).getCollisionShape(level, cell);
-                ground = !shape.isEmpty() && cell.getY() + shape.max(Direction.Axis.Y) >= node.feet() - 1.5;
-            }
-            if (!ground) return true;
-        }
-        return false;
+        return player.onGround() && Navigator.narrowOverDrop(player.level(), Navigator.standingAt(player.level(), player));
     }
 
     /** Whether block {@code i} can go in yet, worked out once for the blocks around it as they are: 1 yes, 2 no, 0 out of time. */
@@ -2700,7 +2683,7 @@ public final class SchematicBuilder {
     }
 
     private void walk(Minecraft client, LocalPlayer player) {
-        if (player.isShiftKeyDown() && !walker.bridging() && !climbCrouch) setCrouch(client, false);
+        if (player.isShiftKeyDown() && !walker.holdsCrouch() && !climbCrouch) setCrouch(client, false);
         Walker.State state = walker.tick(client, player, new Walker.Climb() {
             @Override
             public boolean ready(BlockPos cell) {

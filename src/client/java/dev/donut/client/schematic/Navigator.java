@@ -433,6 +433,27 @@ public final class Navigator {
      * Whether the shape's top, where a player stands on it, leaves the middle of the block open somewhere: the middle,
      * from 0.3 to 0.7 each way, isn't all under it. However the shape is cut into boxes.
      */
+    /**
+     * Whether the place to stand is a narrow top, a closed gate's or a fence's, with a drop of two blocks or more right
+     * beside it: a few centimetres of drift off it and the player is down there.
+     */
+    static boolean narrowOverDrop(BlockGetter level, Node node) {
+        BlockPos floor = node.floor();
+        if (!narrowTop(level.getBlockState(floor).getCollisionShape(level, floor))) return false;
+        for (Direction side : Direction.Plane.HORIZONTAL) {
+            BlockPos beside = floor.relative(side);
+            boolean ground = false;
+            // Something beside at most a block and a half under the feet, or a wall: a step, not a drop.
+            for (int dy = 1; dy >= -1 && !ground; dy--) {
+                BlockPos cell = beside.above(dy);
+                VoxelShape shape = level.getBlockState(cell).getCollisionShape(level, cell);
+                ground = !shape.isEmpty() && cell.getY() + shape.max(Direction.Axis.Y) >= node.feet() - 1.5;
+            }
+            if (!ground) return true;
+        }
+        return false;
+    }
+
     static boolean narrowTop(VoxelShape shape) {
         double top = topUnderFeet(shape);
         if (Double.isNaN(top)) return false;

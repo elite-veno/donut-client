@@ -88,6 +88,8 @@ final class Walker {
     /** Whether this walk crouched for a bridging step, how many ticks it has been at it, and when it last clicked. */
     private boolean bridgeCrouch;
     private int bridgeTicks, bridgeClicked;
+    /** Whether this walk crouched for its last bit, onto a narrow top over a drop. */
+    private boolean edgeCrouch;
     /** The pitch a climbing step looks down with. */
     private float climbLook;
     private String failure = "";
@@ -121,6 +123,7 @@ final class Walker {
         hesitate = random.nextInt(100) < hesitateChance ? 3 + random.nextInt(8) : 0;
         sidestep = null;
         bridgeCrouch = false;
+        edgeCrouch = false;
         bridgeTicks = 0;
         strafeHold = 0;
         trail.clear();
@@ -138,6 +141,13 @@ final class Walker {
         if (path == null) return State.FAILED;
         if (index >= path.size()) {
             release(client);
+            Navigator.Node end = path.getLast();
+            if (!edgeCrouch && player.onGround() && Math.abs(player.getY() - end.feet()) < 0.05
+                    && Navigator.narrowOverDrop(player.level(), end)) {
+                // Sliding to a stop on a narrow top over a drop: crouched, the edge holds the player.
+                climb.crouch(true);
+                edgeCrouch = true;
+            }
             // Still sliding on ice, a player taps the key the other way to stop rather than wait the slide out.
             if (player.onGround() && slippery(player)) brake(client, player);
             // Sliding to a stop, the player already turns toward what they walked here for, which a turn doesn't slow:
@@ -183,6 +193,15 @@ final class Walker {
         }
         double dx = to.x() + 0.5 + offX - at.x, dz = to.z() + 0.5 + offZ - at.z;
         double distance = Math.sqrt(dx * dx + dz * dz);
+        // Onto a narrow top over a drop, a closed gate's or a fence's, the last bit is walked crouched, as a player edges
+        // onto one: crouched, the edge holds them, where the run-on of a step or the slide to a stop carries a player
+        // walking upright off the top, a block or more down, into what may be a pit with no way out. Only once the feet
+        // are at the top's height: crouched, a player can't step down onto it.
+        if (last && !edgeCrouch && player.onGround() && Math.abs(at.y - to.feet()) < 0.05 && distance < 1.2
+                && Navigator.narrowOverDrop(player.level(), to)) {
+            climb.crouch(true);
+            edgeCrouch = true;
+        }
         // The last step ends standing; one on the way also counts passed over mid-hop, close above where it stands.
         boolean there = last ? player.onGround() && Math.abs(at.y - to.feet()) < 0.6
                 : (player.onGround() ? Math.abs(at.y - to.feet()) < 0.6 : at.y >= to.feet() - 0.05 && at.y - to.feet() < 0.45);
@@ -355,8 +374,11 @@ final class Walker {
         return State.WALKING;
     }
 
-    /** Whether the walk is crouched for a bridging step, which the crouch must not be let go of. */
-    boolean bridging() { return path != null && bridgeCrouch; }
+    /**
+     * Whether the walk is crouched, for a bridging step or onto a narrow top over a drop, which the crouch must not be let
+     * go of.
+     */
+    boolean holdsCrouch() { return path != null && (bridgeCrouch || edgeCrouch); }
 
     /** Stands still over the spot, looks down at it, jumps, and at the top has the block placed where the feet were. */
     private State climb(Minecraft client, LocalPlayer player, Navigator.Node from, Navigator.Node to, Climb climb) {
