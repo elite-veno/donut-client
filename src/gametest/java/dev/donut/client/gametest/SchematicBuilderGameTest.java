@@ -168,6 +168,12 @@ public final class SchematicBuilderGameTest implements FabricClientGameTest {
             context.runOnClient(client -> require(builder.summary() != null, "The info panel has no builder line"));
             context.runOnClient(client -> require(client.player.blockInteractionRange() <= 4.5 + 1e-6,
                     "The test runs with more than the normal reach: " + client.player.blockInteractionRange()));
+            // The observer comes back from the server facing another way, as a look the server had a hair otherwise can make
+            // it: the builder breaks it and places it again.
+            BlockPos observer = new BlockPos(2, 0, 2);
+            await(context, builder, placedAt, client -> placedAt.containsKey(observer), 20 * 120);
+            BlockPos at = ORIGIN.offset(observer);
+            server.runCommand("setblock " + at.getX() + " " + at.getY() + " " + at.getZ() + " minecraft:observer[facing=south]");
             await(context, builder, placedAt, client -> placedAt.size() >= 12, 20 * 90);
             screenshot(context, "donut-schematic-04-building");
             await(context, builder, placedAt, client -> !builder.isActive(), 20 * 180);

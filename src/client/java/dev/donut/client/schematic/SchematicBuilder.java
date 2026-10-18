@@ -38,6 +38,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.util.Mth;
+import net.minecraft.world.Container;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.item.ItemEntity;
@@ -53,14 +54,27 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.BasePressurePlateBlock;
+import net.minecraft.world.level.block.BaseRailBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.CarpetBlock;
+import net.minecraft.world.level.block.ChestBlock;
+import net.minecraft.world.level.block.CrossCollisionBlock;
+import net.minecraft.world.level.block.DiodeBlock;
+import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.FenceGateBlock;
+import net.minecraft.world.level.block.HopperBlock;
 import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.Mirror;
+import net.minecraft.world.level.block.RedStoneWireBlock;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.level.block.SignBlock;
+import net.minecraft.world.level.block.SlabBlock;
+import net.minecraft.world.level.block.StairBlock;
+import net.minecraft.world.level.block.TrapDoorBlock;
+import net.minecraft.world.level.block.WallBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.AABB;
@@ -230,6 +244,16 @@ public final class SchematicBuilder {
     /** A helper block being broken, and for how long. */
     private BlockPos breaking;
     private int breakTicks;
+    /**
+     * Blocks this build placed, by index, with the tick of the click: one the server then sets another way than the click
+     * was for is broken and placed again.
+     */
+    private final Map<Integer, Long> placedAt = new HashMap<>();
+    /** How often each block was broken to be placed again; and the one being broken for that now, or -1. */
+    private final Map<Integer, Integer> repairs = new HashMap<>();
+    private int repairing = -1;
+    /** Items of blocks broken to be placed again, whose drops are picked up. */
+    private final Set<Item> repairDrops = new HashSet<>();
     /** Ground dug out to stand lower, by position, with the block that was there; filled in again on the way out. */
     private final Map<Long, BlockState> dug = new LinkedHashMap<>();
     /** Dug-out ground filled in with something else, for want of the block that was there; and spots never filled. */
@@ -637,6 +661,10 @@ public final class SchematicBuilder {
         missedHere.clear();
         noClickHere.clear();
         pickupTried.clear();
+        placedAt.clear();
+        repairs.clear();
+        repairDrops.clear();
+        repairing = -1;
         helperFetchTick = -100_000;
         helpers.clear();
         helperSpot.clear();
@@ -709,6 +737,7 @@ public final class SchematicBuilder {
         if (!player.onGround() && !player.isInWater() && !player.onClimbable()) return;
         if (!creative && eat(client, player)) return;
         if (removeUsedHelper(client, player)) return;
+        if (repairMisplaced(client, player)) return;
         if (refill(client, player, false)) return;
         if (restockAfterWalk != null) {
             Item wanted = restockAfterWalk;
@@ -1512,6 +1541,7 @@ public final class SchematicBuilder {
                     pourCheckAt = tick + 10;
                 }
                 placedSincePit = true;
+                if (planned.act() == Act.PLACE) placedAt.put(i, tick);
                 sealsLifted = false;
                 orderLifted = false;
                 shutIn.remove(i);
@@ -1671,9 +1701,11 @@ public final class SchematicBuilder {
     private boolean pickUpHelpers(Minecraft client, LocalPlayer player) {
         if (player.hasInfiniteMaterials()) return false;
         helperItem(player);
-        if (helpersLoose(player) >= HELPER_STACKS * 64) return false;
+        boolean helpersFull = helpersLoose(player) >= HELPER_STACKS * 64;
+        if (helpersFull && repairDrops.isEmpty()) return false;
         List<ItemEntity> drops = player.level().getEntitiesOfClass(ItemEntity.class, player.getBoundingBox().inflate(8, 4, 8),
-                item -> isHelper(item.getItem()) && !pickupTried.contains(item.getId()));
+                item -> (!helpersFull && isHelper(item.getItem()) || repairDrops.contains(item.getItem().getItem()))
+                        && !pickupTried.contains(item.getId()));
         drops.sort(Comparator.comparingDouble(item -> item.distanceToSqr(player)));
         Navigator.Node start = Navigator.standingAt(player.level(), player);
         for (ItemEntity drop : drops) {
@@ -1770,6 +1802,88 @@ public final class SchematicBuilder {
         return true;
     }
 
+    /** How often a block that came back set another way is broken and placed again before it is left so. */
+    private static final int REPAIRS = 2;
+
+    /**
+     * A block this build placed that the server set another way than the click was for, an observer facing down rather
+     * than east say, is broken and placed again, as a player fixes a block put in wrong: from where the player stands, with
+     * a tool that gets the block back, and only where breaking it lets nothing loose. Twice at most for each block; one
+     * left wrong is counted at the end.
+     */
+    private boolean repairMisplaced(Minecraft client, LocalPlayer player) {
+        if (placedAt.isEmpty()) return false;
+        ClientLevel level = client.level;
+        double reach = player.blockInteractionRange() - 0.25;
+        Vec3 eye = player.getEyePosition();
+        for (Map.Entry<Integer, Long> entry : placedAt.entrySet()) {
+            int i = entry.getKey();
+            if (plan.status(i) != BuildPlan.Status.MISPLACED || repairs.getOrDefault(i, 0) >= REPAIRS) continue;
+            BlockPos pos = plan.pos(i);
+            if (new AABB(pos).distanceToSqr(eye) > reach * reach || plan.update(level, i) != BuildPlan.Status.MISPLACED) continue;
+            BlockState state = level.getBlockState(pos);
+            Item item = BlockRules.item(plan.target(i));
+            if (item == null || !getsBack(player, state) || !safeToBreak(level, pos, tick - entry.getValue())) continue;
+            if (!inView(player, eye, pos, reach)) continue;
+            repairs.merge(i, 1, Integer::sum);
+            if (!player.hasInfiniteMaterials()) repairDrops.add(item);
+            if (debug()) LOGGER.info("Breaking {} at {} to place it again: it went in as {}", plan.target(i), pos.toShortString(), state);
+            startBreak(pos);
+            repairing = i;
+            return true;
+        }
+        return false;
+    }
+
+    /** Whether breaking the block gives its item back: it needs no tool for that, or the inventory has one that does. */
+    private static boolean getsBack(LocalPlayer player, BlockState state) {
+        if (player.hasInfiniteMaterials() || !state.requiresCorrectToolForDrops()) return true;
+        Inventory inventory = player.getInventory();
+        for (int slot = 0; slot < Materials.SLOTS; slot++) if (inventory.getItem(slot).isCorrectToolForDrops(state)) return true;
+        return false;
+    }
+
+    /**
+     * Whether breaking the block at {@code pos} lets nothing loose: no water or lava beside it or in it, nothing resting on
+     * it or hanging from it that would drop, and no container that may have taken items in since it was placed, which
+     * {@code age} ticks ago. Only blocks that stand by themselves may be beside it.
+     */
+    private static boolean safeToBreak(Level level, BlockPos pos, long age) {
+        if (!level.getFluidState(pos).isEmpty()) return false;
+        if (level.getBlockEntity(pos) instanceof Container && age > 100) return false;
+        for (Direction side : Direction.values()) {
+            BlockPos next = pos.relative(side);
+            BlockState there = level.getBlockState(next);
+            if (!level.getFluidState(next).isEmpty()) return false;
+            if (there.isAir()) continue;
+            if (there.getBlock() instanceof FallingBlock) {
+                if (side == Direction.UP) return false;
+                continue;
+            }
+            if (there.isCollisionShapeFullBlock(level, next) || standsAlone(there)) continue;
+            // Beside it or under it, a wire, a rail or a repeater rests on a floor of its own; on top of it, anything may
+            // rest on it, and a torch, a ladder or a lever beside it or a lantern under it may hang from it.
+            if (side != Direction.UP && restsOnFloor(there)) continue;
+            return false;
+        }
+        return true;
+    }
+
+    /** Blocks that rest on the block under them and on nothing else. */
+    private static boolean restsOnFloor(BlockState state) {
+        Block block = state.getBlock();
+        return block instanceof DiodeBlock || block instanceof RedStoneWireBlock || block instanceof BaseRailBlock || block instanceof CarpetBlock
+                || block instanceof BasePressurePlateBlock;
+    }
+
+    /** Blocks that keep standing whatever is beside, above or under them. */
+    private static boolean standsAlone(BlockState state) {
+        Block block = state.getBlock();
+        return block instanceof ChestBlock || block instanceof HopperBlock || block instanceof SlabBlock || block instanceof StairBlock
+                || block instanceof CrossCollisionBlock || block instanceof WallBlock || block instanceof FenceGateBlock
+                || block instanceof TrapDoorBlock || block instanceof ShulkerBoxBlock;
+    }
+
     private void startBreak(BlockPos pos) {
         breaking = pos;
         breakTicks = 0;
@@ -1788,6 +1902,7 @@ public final class SchematicBuilder {
             shutIn.clear();
             traps.clear();
             breaking = null;
+            repairing = -1;
             nextAction = System.nanoTime() + quick();
             return;
         }
@@ -1796,15 +1911,17 @@ public final class SchematicBuilder {
             breakTicks = 0;
             return;
         }
-        show("Taking away a helper block at " + breaking.getX() + " " + breaking.getY() + " " + breaking.getZ(), false);
+        show((repairing >= 0 ? "Breaking " + plan.target(repairing).getBlock().getName().getString() + " to place it again at "
+                : "Taking away a helper block at ") + breaking.getX() + " " + breaking.getY() + " " + breaking.getZ(), false);
         if (mine(client, player, breaking) && breakTicks <= 20 * 15) return;
         // Out of view, or not breaking: it is left for later, from somewhere else.
         client.gameMode.stopDestroyBlock();
-        if (breakTicks > 20 * 15) {
+        if (breakTicks > 20 * 15 && repairing < 0) {
             helpersLeft.add(breaking);
             helpers.remove(breaking.asLong());
         }
         breaking = null;
+        repairing = -1;
         nextAction = System.nanoTime() + quick();
     }
 
