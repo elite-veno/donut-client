@@ -454,6 +454,27 @@ public final class Navigator {
         return false;
     }
 
+    /**
+     * Whether a step from {@code from} to {@code to} at the same height keeps the feet over the tops all the way: the tops
+     * meet, as along a fence or a row of closed gates facing the same way, so a crouched player walks it held by the edges.
+     * Across the gap between two gates' tops, which upright a player crosses in a stride, they don't.
+     */
+    static boolean supportedAlong(BlockGetter level, Node from, Node to) {
+        if (Math.abs(from.feet() - to.feet()) > 0.01) return false;
+        List<AABB> tops = new ArrayList<>();
+        for (BlockPos floor : List.of(from.floor(), to.floor())) {
+            for (AABB box : level.getBlockState(floor).getCollisionShape(level, floor).toAabbs()) {
+                if (Math.abs(floor.getY() + box.maxY - from.feet()) < 0.01) tops.add(box.move(floor.getX(), floor.getY(), floor.getZ()));
+            }
+        }
+        for (int k = 0; k <= 4; k++) {
+            double t = k / 4.0, x = from.x() + 0.5 + (to.x() - from.x()) * t, z = from.z() + 0.5 + (to.z() - from.z()) * t;
+            AABB feet = new AABB(x - 0.3, from.feet() - 0.1, z - 0.3, x + 0.3, from.feet() + 0.1, z + 0.3);
+            if (tops.stream().noneMatch(feet::intersects)) return false;
+        }
+        return true;
+    }
+
     static boolean narrowTop(VoxelShape shape) {
         double top = topUnderFeet(shape);
         if (Double.isNaN(top)) return false;

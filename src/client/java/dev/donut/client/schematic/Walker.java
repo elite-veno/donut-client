@@ -198,15 +198,22 @@ final class Walker {
         // walking upright off the top, a block or more down, into what may be a pit with no way out. Only once standing
         // on that top itself, in its block at its height: crouched, a player can't step down onto it, nor across the gap
         // between two gates' tops, which upright they cross in a stride.
-        if (last && !edgeCrouch && player.onGround() && Math.abs(at.y - to.feet()) < 0.05 && within(at, to)
-                && Navigator.narrowOverDrop(player.level(), to)) {
-            climb.crouch(true);
-            edgeCrouch = true;
+        // Along a row of such tops whose tops meet, a fence or closed gates side by side, each step is walked crouched too:
+        // upright, a step that ends a little off the line has the next one walk off the side of the row.
+        boolean onTop = player.onGround() && Math.abs(at.y - to.feet()) < 0.05;
+        boolean narrow = Navigator.narrowOverDrop(player.level(), to);
+        boolean rail = onTop && narrow && to.move() == Navigator.Move.WALK && (within(at, from) || within(at, to))
+                && Navigator.supportedAlong(player.level(), from, to);
+        boolean crouchHere = rail || last && onTop && narrow && within(at, to);
+        if (!bridgeCrouch && crouchHere != edgeCrouch && (crouchHere || player.onGround())) {
+            climb.crouch(crouchHere);
+            edgeCrouch = crouchHere;
         }
-        // The last step ends standing; one on the way also counts passed over mid-hop, close above where it stands.
+        // The last step ends standing; one on the way also counts passed over mid-hop, close above where it stands. On a
+        // narrow top over a drop, one on the way is passed only close to its middle, so the next step starts on the line.
         boolean there = last ? player.onGround() && Math.abs(at.y - to.feet()) < 0.6
                 : (player.onGround() ? Math.abs(at.y - to.feet()) < 0.6 : at.y >= to.feet() - 0.05 && at.y - to.feet() < 0.45);
-        if (there && distance < (last ? (player.onGround() && slippery(player) ? 0.4 : 0.25) : 0.45)) {
+        if (there && distance < (last ? (player.onGround() && slippery(player) ? 0.4 : 0.25) : narrow ? 0.2 : 0.45)) {
             if (bridgeCrouch) {
                 // On the block put down: standing up again.
                 climb.crouch(false);

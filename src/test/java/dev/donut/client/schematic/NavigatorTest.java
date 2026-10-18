@@ -184,6 +184,20 @@ class NavigatorTest {
         assertNull(path, "the gate's top is only reached by a jump");
     }
 
+    @Test
+    void alongAGateRowTheTopsMeetAndAcrossItTheyDont() {
+        // Closed gates facing north run along x as one ridge; side by side along z, a gap lies between their tops.
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        blocks.put(new BlockPos(0, 65, 0), Blocks.SPRUCE_FENCE_GATE.defaultBlockState());
+        blocks.put(new BlockPos(1, 65, 0), Blocks.SPRUCE_FENCE_GATE.defaultBlockState());
+        blocks.put(new BlockPos(0, 65, 1), Blocks.SPRUCE_FENCE_GATE.defaultBlockState());
+        BlockGetter level = world(blocks);
+        Navigator.Node start = new Navigator.Node(0, 65, 0, 66.5, Navigator.Move.START);
+        assertTrue(Navigator.supportedAlong(level, start, new Navigator.Node(1, 65, 0, 66.5, Navigator.Move.WALK)));
+        assertFalse(Navigator.supportedAlong(level, start, new Navigator.Node(0, 65, 1, 66.5, Navigator.Move.WALK)));
+        assertFalse(Navigator.supportedAlong(level, start, new Navigator.Node(1, 64, 0, 65, Navigator.Move.DROP)), "not at one height");
+    }
+
     private static boolean narrow(BlockState state) {
         return Navigator.narrowTop(state.getCollisionShape(world(Map.of()), BlockPos.ZERO));
     }
