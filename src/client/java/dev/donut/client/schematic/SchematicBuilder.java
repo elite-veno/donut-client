@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -2628,7 +2629,7 @@ public final class SchematicBuilder {
         double reach = player.blockInteractionRange();
         Vec3 eye = player.getEyePosition();
         for (BlockPos cell : renewing) {
-            PlacementSolver.Click click = fillLook(player, eye, cell, reach);
+            PlacementSolver.Click click = fillLook(player, eye, cell, reach, player.getViewVector(1.0f));
             if (click == null) continue;
             if (player.isShiftKeyDown()) {
                 stance(client, false);
@@ -2645,7 +2646,7 @@ public final class SchematicBuilder {
             if (wetSoon(player.level(), node.feetCell(), poured, wetCells)) return 0;
             for (BlockPos cell : sources) {
                 if (Vec3.atCenterOf(cell).distanceTo(node.eye()) > reach + 1) continue;
-                if (fillLook(player, node.eye(), cell, reach) != null) return 1;
+                if (fillLook(player, node.eye(), cell, reach, null) != null) return 1;
             }
             return 0;
         });
@@ -2695,17 +2696,34 @@ public final class SchematicBuilder {
 
     /**
      * A look from {@code eye} that an empty bucket takes water from {@code cell} with: the first water source on it,
-     * through anything that isn't one, is that cell. Its top is tried, then its sides.
+     * through anything that isn't one, is that cell. Its top is tried, then its sides; with {@code aim}, the way the
+     * player looks now, the points least turn away come first, give or take, as for a block placed.
      */
-    private static PlacementSolver.Click fillLook(LocalPlayer player, Vec3 eye, BlockPos cell, double reach) {
+    private static PlacementSolver.Click fillLook(LocalPlayer player, Vec3 eye, BlockPos cell, double reach, Vec3 aim) {
         Level level = player.level();
         double height = level.getFluidState(cell).getHeight(level, cell);
+        ThreadLocalRandom random = ThreadLocalRandom.current();
         List<Vec3> points = new ArrayList<>();
+        // A little off the same few points each time, as a hand aims: never the very middle of the water every fill.
         for (double a : new double[] {0.5, 0.25, 0.75}) {
-            for (double b : new double[] {0.5, 0.25, 0.75}) points.add(new Vec3(cell.getX() + a, cell.getY() + height - 0.01, cell.getZ() + b));
+            for (double b : new double[] {0.5, 0.25, 0.75}) {
+                points.add(new Vec3(cell.getX() + a + (random.nextDouble() * 2 - 1) * 0.06, cell.getY() + height - 0.01,
+                        cell.getZ() + b + (random.nextDouble() * 2 - 1) * 0.06));
+            }
         }
         for (Direction side : Direction.Plane.HORIZONTAL) {
-            points.add(Vec3.atCenterOf(cell).add(side.getStepX() * 0.49, height / 2 - 0.5, side.getStepZ() * 0.49));
+            double across = (random.nextDouble() * 2 - 1) * 0.2, up = (random.nextDouble() * 2 - 1) * 0.2 * height;
+            points.add(Vec3.atCenterOf(cell).add(side.getStepX() * 0.49 + side.getStepZ() * across, height / 2 - 0.5 + up,
+                    side.getStepZ() * 0.49 + side.getStepX() * across));
+        }
+        if (aim != null) {
+            // The nearest to the crosshair first, give or take: a few degrees apart are as near as each other by the turn.
+            Map<Vec3, Double> away = new IdentityHashMap<>();
+            for (Vec3 point : points) {
+                double angle = Math.toDegrees(Math.acos(Mth.clamp(aim.dot(point.subtract(eye).normalize()), -1, 1)));
+                away.put(point, angle * (0.8 + 0.4 * random.nextDouble()) + 3 * random.nextDouble());
+            }
+            points.sort(Comparator.comparingDouble(away::get));
         }
         for (Vec3 point : points) {
             if (point.distanceTo(eye) > reach) continue;
