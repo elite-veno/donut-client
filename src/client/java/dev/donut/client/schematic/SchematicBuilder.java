@@ -307,6 +307,12 @@ public final class SchematicBuilder {
     private BlockPos box;
     private PlacementSolver.Click boxClick;
     private int restockTicks, nextTake, boxesBefore, restockFailures;
+    /**
+     * Items a box had but the inventory had no room for, by the blocks done when that was found: the build goes on with
+     * what is carried, which frees slots, and fetches them again later. And the blocks done at the last such find.
+     */
+    private final Map<Item, long[]> noRoomFor = new HashMap<>();
+    private int noRoomDone = -1;
     /** When helper blocks were last taken out of a box for running low: not tried again for a while, should it fail. */
     private long helperFetchTick = -100_000;
     /** Dropped helper blocks a walk went to pick up, by entity id: not walked to again, should they have stayed where they were. */
@@ -653,6 +659,8 @@ public final class SchematicBuilder {
         active = true;
         shortageReported = false;
         restockFailures = 0;
+        noRoomFor.clear();
+        noRoomDone = -1;
         restock = Restock.NONE;
         restockAfterWalk = null;
         restockWalks = 0;
@@ -944,6 +952,7 @@ public final class SchematicBuilder {
                 continue;
             }
             if (!creative && materials.loose(item) == 0) {
+                if (waitsForRoom(item, materials)) continue;
                 startRestock(client, player, item, materials);
                 return;
             }
@@ -3270,7 +3279,12 @@ public final class SchematicBuilder {
                     restock = Restock.NONE;
                     if (!player.hasInfiniteMaterials() && Materials.of(player.getInventory()).loose(restockItem) == 0) {
                         // Opened and closed again without it: the inventory has no room, and the next try would go the
-                        // same way.
+                        // same way. The blocks carried go in first, as a player builds with what is in hand, and that
+                        // makes room; only with nothing going in between does it come to a stop.
+                        int done = plan.count(BuildPlan.Status.DONE);
+                        noRoomFor.put(restockItem, new long[] {done, tick});
+                        if (done != noRoomDone) restockFailures = 0;
+                        noRoomDone = done;
                         if (++restockFailures >= RESTOCK_FAILURES) {
                             finish(client, "stopped: no room in your inventory to take " + name(restockItem)
                                     + " out of a shulker box; make room and start again.", true);
@@ -3347,6 +3361,20 @@ public final class SchematicBuilder {
         if (path == null || path.nodes().size() < 2 || dropsIntoTrap(player, path)) return false;
         releaseKeys(client);
         walker.start(path.nodes(), Vec3.atCenterOf(box));
+        return true;
+    }
+
+    /**
+     * Whether a fetch of {@code item} waits, there having been no room for it a moment ago: till a few more blocks are
+     * in or slots are free, and no longer than half a minute, after which it is tried again.
+     */
+    private boolean waitsForRoom(Item item, Materials materials) {
+        long[] since = noRoomFor.get(item);
+        if (since == null) return false;
+        if (materials.freeSlots() >= 3 || plan.count(BuildPlan.Status.DONE) - since[0] >= 8 || tick - since[1] > 600) {
+            noRoomFor.remove(item);
+            return false;
+        }
         return true;
     }
 
