@@ -3,6 +3,7 @@ package dev.donut.client.gametest;
 import dev.donut.client.config.SchematicSettings;
 import dev.donut.client.schematic.BlockRules;
 import dev.donut.client.schematic.LitematicFile;
+import dev.donut.client.schematic.Materials;
 import dev.donut.client.schematic.Schematic;
 import dev.donut.client.schematic.SchematicBuilder;
 import java.io.IOException;
@@ -161,6 +162,16 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
             context.runOnClient(client -> builder.setEnabled(true));
             // It starts on its next tick.
             context.waitFor(client -> builder.isActive() || !settings.enabled, 100);
+            if (!preplace.isEmpty() || fromY != Integer.MIN_VALUE) {
+                // With blocks set in place, what the rest still takes can differ from the bill less them (water set in
+                // place may run off, a machine move itself): what the build's own plan finds short is handed out too.
+                context.waitTicks(5);
+                Map<Item, Integer> topUp = context.computeOnClient(client -> builder.shortage(Materials.of(client.player.getInventory())));
+                if (!topUp.isEmpty()) {
+                    giveInShulkers(server, topUp);
+                    LOGGER.info("Topped up what the plan still needs: {}", topUp);
+                }
+            }
             long started = System.currentTimeMillis();
             // DONUT_SCHEMATIC_MINUTES gives a big schematic longer than the 50 minutes the test waits by default.
             String limit = System.getenv("DONUT_SCHEMATIC_MINUTES");
