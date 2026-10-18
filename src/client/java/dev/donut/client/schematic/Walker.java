@@ -190,6 +190,17 @@ final class Walker {
         head.boost(offNow > turnFirst && player.onGround() && !wading && distance >= 0.5 ? TURN_ROUND : 1);
         turnToward(player, dx, dz);
         head.boost(1);
+        // In the air, and over a step down or up, the keys push toward the spot whichever way the player faces: a calm turn
+        // would go on pushing the old way, past a ledge a block wide, where a little air control steers onto it. Close
+        // over the spot, nothing is held, and the player comes down on it.
+        boolean landing = to.move() != Navigator.Move.WALK && (distance < 0.5 || Math.abs(at.y - to.feet()) < 0.6 && distance < 1.0);
+        if (!wading && (!player.onGround() || landing)) {
+            strafe(client, player, dx, dz, distance > (last ? 0.2 : 0.15));
+            client.options.keySprint.setDown(false);
+            client.options.keyJump.setDown(player.onGround()
+                    && (to.move() == Navigator.Move.JUMP && to.feet() - at.y > 0.1 || to.feet() - at.y > Navigator.STEP));
+            return State.WALKING;
+        }
         // Close to the spot with it well off to the side, a step that way rather than walking round it: a calm turn
         // can't tighten enough to reach a point less than a block off, and would circle it.
         float aside = Math.abs(Mth.wrapDegrees((float) Math.toDegrees(Math.atan2(-dx, dz)) - player.getYRot()));
