@@ -67,6 +67,9 @@ public final class WatchBuild implements ClientModInitializer {
             // builder turns the camera itself.
             ClientTickEvents.END_CLIENT_TICK.register(client -> {
                 if (!mouseHeld && client.mouseHandler.isMouseGrabbed()) client.mouseHandler.releaseMouse();
+                // With no key or mouse input for ten minutes the game draws 10 frames a second, and a test runs a tick
+                // a frame: the build would go on at half speed. Nobody types into these windows; they count as in use.
+                client.getFramerateLimitTracker().onInputReceived();
             });
         }
         if (property.isBlank()) return;
