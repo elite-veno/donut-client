@@ -175,6 +175,18 @@ public final class SchematicBuilder {
     private int handSlot = -1;
     private Item handItem;
     private long handReadyTick;
+    /**
+     * When the hands may do something again after a swap, a block broken or a box picked up: the view may already turn
+     * toward what comes next, see {@link #paceAfterHands}.
+     */
+    private long handsAt;
+    /**
+     * When a block the builder broke last went, and how long water waits after that: on a server the drop shows up a
+     * moment later than the block goes, and water poured meanwhile, before anything can see the drop to pick it up first,
+     * carries it off into the farm.
+     */
+    private long brokeAt = -1000;
+    private static final int DROPS_SETTLE = 10;
     private int buildSlot = -1;
 
     private volatile String status = "Idle";
@@ -421,6 +433,8 @@ public final class SchematicBuilder {
 
     /** An item being moved into the hotbar with the inventory open: from which slot, to which, and when the steps come. */
     private int swapFrom = -1, swapTo, swapTicks, swapAt, swapClose;
+    /** Whether the swap under way waits for the hands to be free before its inventory opens. */
+    private boolean swapOpening;
 
     private Restock restock = Restock.NONE;
     /**
@@ -631,6 +645,8 @@ public final class SchematicBuilder {
         restock = Restock.NONE;
         aim = null;
         swapFrom = -1;
+        swapOpening = false;
+        handsAt = System.nanoTime();
         walker.stop(client);
         releaseKeys(client);
         breaking = null;
@@ -764,7 +780,7 @@ public final class SchematicBuilder {
      */
     private boolean handReady(LocalPlayer player) {
         noteHand(player);
-        return tick >= handReadyTick;
+        return tick >= handReadyTick && System.nanoTime() - handsAt >= 0;
     }
 
     /**
@@ -1191,6 +1207,8 @@ public final class SchematicBuilder {
         PlacementSolver.Problem seen = null;
         int nearest = -1;
         boolean sealing = false;
+        // Water held back a moment after a block broke, for its drop to show up: the builder waits rather than walks off.
+        boolean settling = false;
         // Still sliding to rest after a walk, the player moves a little each tick: what has no click stays known until they
         // are still, else each tick starts the row over and the next walk waits seconds for it. Once still, once more.
         boolean sliding = player.getDeltaMovement().horizontalDistanceSqr() > 1e-5;
@@ -1237,6 +1255,10 @@ public final class SchematicBuilder {
                 Item bucket = BlockRules.item(target);
                 if (!creative && materials.total(bucket) == 0) {
                     if (!missing.contains(bucket)) missing.add(bucket);
+                    continue;
+                }
+                if (tick - brokeAt < DROPS_SETTLE) {
+                    settling = true;
                     continue;
                 }
                 if (edge) continue;
@@ -1311,6 +1333,10 @@ public final class SchematicBuilder {
                 if (!creative && waitsForDrop(level, i, materials)) {
                     // What breaking it dropped is picked up first: the water would carry it off.
                     if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
+                    continue;
+                }
+                if (tick - brokeAt < DROPS_SETTLE) {
+                    settling = true;
                     continue;
                 }
                 if (edge) continue;
@@ -1403,6 +1429,10 @@ public final class SchematicBuilder {
                 return;
             }
             startAim(client, player, new Aim(Act.PLACE, i, result.click(), item, pos, current, layerNumber));
+            return;
+        }
+        if (settling) {
+            nextAction = System.nanoTime() + 100_000_000L;
             return;
         }
         nextAction = System.nanoTime() + 250_000_000L;
@@ -2464,6 +2494,21 @@ public final class SchematicBuilder {
         nextAction = now + Math.min(wait, react <= 0 ? 0 : ThreadLocalRandom.current().nextLong(react / 3, react + 1));
     }
 
+    /**
+     * Paces what follows something done with the hands other than a click, a hotbar swap, a block broken, a shulker box
+     * picked up, as a click is: the next click, or anything else the hands do (mining, a box put down), no sooner than
+     * {@code wait} from now, as before, and the turn toward it after a moment to react, rather than standing still for
+     * all of it. The view never moves on the very tick a screen shuts or a block breaks: the tick that finishes them
+     * decides nothing more.
+     */
+    private void paceAfterHands(long wait) {
+        long now = System.nanoTime();
+        nextClick = Math.max(nextClick, now + wait);
+        handsAt = now + wait;
+        long react = (long) (settings().reaction * 1_000_000_000L);
+        nextAction = now + Math.min(wait, react <= 0 ? 0 : ThreadLocalRandom.current().nextLong(react / 3, react + 1));
+    }
+
     /** A short wait for clicks that follow each other: a repeater set right after placing it, a helper taken away. */
     private static long quick() { return ThreadLocalRandom.current().nextLong(150_000_000L, 320_000_000L); }
 
@@ -3062,7 +3107,8 @@ public final class SchematicBuilder {
             traps.clear();
             breaking = null;
             repairing = -1;
-            nextAction = System.nanoTime() + quick();
+            brokeAt = tick;
+            paceAfterHands(quick());
             return;
         }
         // On a narrow top over a drop the player stays crouched while mining, as anywhere they could be nudged off.
@@ -3089,7 +3135,7 @@ public final class SchematicBuilder {
         }
         breaking = null;
         repairing = -1;
-        nextAction = System.nanoTime() + quick();
+        paceAfterHands(quick());
     }
 
     /**
@@ -4201,10 +4247,24 @@ public final class SchematicBuilder {
         // A moment to find the item and point at it, the number key, and a moment more to shut the inventory again.
         swapAt = 5 + ThreadLocalRandom.current().nextInt(6);
         swapClose = swapAt + 3 + ThreadLocalRandom.current().nextInt(4);
-        client.gui.setScreen(new InventoryScreen(player));
+        // Right after a swap, a block broken or a box picked up, the inventory opens no sooner than the hands are free.
+        swapOpening = System.nanoTime() - handsAt < 0;
+        if (!swapOpening) client.gui.setScreen(new InventoryScreen(player));
     }
 
     private void swapTick(Minecraft client, LocalPlayer player) {
+        if (swapOpening) {
+            if (client.gui.screen() != null) {
+                // The player, or the server, opened something meanwhile: the next decision looks again.
+                swapOpening = false;
+                swapFrom = -1;
+                return;
+            }
+            if (System.nanoTime() - handsAt < 0) return;
+            swapOpening = false;
+            client.gui.setScreen(new InventoryScreen(player));
+            return;
+        }
         swapTicks++;
         if (!(client.gui.screen() instanceof InventoryScreen)) {
             // Closed by the player; the next decision looks again.
@@ -4219,13 +4279,14 @@ public final class SchematicBuilder {
             player.getInventory().setSelectedSlot(swapTo);
             buildSlot = swapTo;
             swapFrom = -1;
-            nextAction = System.nanoTime() + quick();
+            paceAfterHands(quick());
         }
     }
 
     private void abandonSwap(Minecraft client) {
         if (swapFrom < 0) return;
         swapFrom = -1;
+        swapOpening = false;
         if (client.player != null && client.gui.screen() instanceof InventoryScreen) client.player.closeContainer();
     }
 
@@ -4661,7 +4722,7 @@ public final class SchematicBuilder {
                         return;
                     }
                     restockFailures = 0;
-                    nextAction = System.nanoTime() + delay();
+                    paceAfterHands(delay());
                     show("Took " + name(restockItem) + " out of a shulker box", false);
                     return;
                 }
