@@ -25,6 +25,7 @@ import java.util.stream.Stream;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.inventory.AbstractSignEditScreen;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
@@ -56,6 +57,7 @@ import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
+import net.minecraft.world.level.block.SignBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
@@ -149,6 +151,8 @@ public final class SchematicBuilder {
     /** The cells the way out from where the player stands passes through, worked out at tick {@code exitTick}; null for none. */
     private Set<Long> exitCells;
     private long exitTick = -1;
+    /** When the builder last placed a sign, whose editor it then closes. */
+    private long signPlacedAt = -1000;
     private Vec3 noClickFrom;
     private boolean noClickCrouch;
     private long noClickTick;
@@ -439,6 +443,11 @@ public final class SchematicBuilder {
             if (tick % 10 == 0) updatePreview(player);
             return;
         }
+        if (client.gui.screen() instanceof AbstractSignEditScreen editor && tick - signPlacedAt < 100) {
+            // A sign the builder placed opens its editor. The schematic's text isn't written: Done, a moment later.
+            if (tick - signPlacedAt >= 4) editor.onClose();
+            return;
+        }
         if (client.gui.screen() != null) {
             walker.stop(client);
             show("Paused while a menu is open", false);
@@ -699,6 +708,12 @@ public final class SchematicBuilder {
                     if (seen == null) seen = PlacementSolver.Problem.NO_VIEW;
                     continue;
                 }
+                if (floods(level, pos, player.position())) {
+                    // It would run where the player stands and push them off: poured from somewhere else.
+                    if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
+                    noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH);
+                    continue;
+                }
                 if (!creative && materials.loose(bucket) == 0) {
                     startRestock(client, player, bucket, materials);
                     return;
@@ -881,6 +896,47 @@ public final class SchematicBuilder {
             if (seals != 1) return false;
         }
         return true;
+    }
+
+    /**
+     * Whether water or lava poured at {@code at} could run where a player standing with the feet at {@code feet} is: it
+     * falls where it can, and spreads sideways up to a flow's length, a source always and falling water once it lands.
+     * A player it reaches is pushed about, off a narrow top or down into a channel.
+     */
+    static boolean floods(BlockGetter level, BlockPos at, Vec3 feet) {
+        AABB body = new AABB(feet.x - 0.3, feet.y, feet.z - 0.3, feet.x + 0.3, feet.y + 1.8, feet.z + 0.3);
+        Map<Long, Integer> spread = new HashMap<>();
+        ArrayDeque<BlockPos> open = new ArrayDeque<>();
+        spread.put(at.asLong(), 0);
+        open.add(at);
+        while (!open.isEmpty() && spread.size() < 4000) {
+            BlockPos pos = open.poll();
+            if (new AABB(pos).intersects(body)) return true;
+            int run = spread.get(pos.asLong());
+            BlockPos below = pos.below();
+            boolean falls = below.getY() > at.getY() - 24 && runsInto(level, below);
+            if (falls && !spread.containsKey(below.asLong())) {
+                spread.put(below.asLong(), 0);
+                open.add(below);
+            }
+            if ((pos.equals(at) || !falls) && run < 7) {
+                for (Direction side : Direction.Plane.HORIZONTAL) {
+                    BlockPos next = pos.relative(side);
+                    Integer known = spread.get(next.asLong());
+                    if ((known == null || known > run + 1) && runsInto(level, next)) {
+                        spread.put(next.asLong(), run + 1);
+                        open.add(next);
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /** Whether water could run into the cell at {@code pos}: empty, or something it washes away or already fills. */
+    private static boolean runsInto(BlockGetter level, BlockPos pos) {
+        BlockState state = level.getBlockState(pos);
+        return state.canBeReplaced() || !state.getFluidState().isEmpty();
     }
 
     /** Whether water is where a player standing with the feet in {@code feet} has their feet or head. */
@@ -1193,6 +1249,7 @@ public final class SchematicBuilder {
                 show(layer + "setting " + planned.before().getBlock().getName().getString(), false);
             }
             case PLACE, POUR -> {
+                if (plan.target(i).getBlock() instanceof SignBlock) signPlacedAt = tick;
                 placedSincePit = true;
                 sealsLifted = false;
                 orderLifted = false;
@@ -1599,7 +1656,7 @@ public final class SchematicBuilder {
         BlockState target = plan.target(i), current = level.getBlockState(pos);
         Vec3 eye = feet.add(0, PlacementSolver.STAND_EYE, 0);
         if (plan.kind(i) == BlockRules.Kind.FLUID) {
-            return PlacementSolver.pour(level, player, eye, pos, target.getFluidState().getType(), reach) != null;
+            return !floods(level, pos, feet) && PlacementSolver.pour(level, player, eye, pos, target.getFluidState().getType(), reach) != null;
         }
         if (current.getBlock() == target.getBlock() && BlockRules.missing(current, target) == 0) {
             return PlacementSolver.use(player, eye, pos, reach, target) != null;
