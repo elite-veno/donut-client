@@ -107,7 +107,7 @@ public final class SchematicBuilderGameTest implements FabricClientGameTest {
             server.runCommand("clear @a");
             // Loose in the inventory; more than the hotbar holds, so some must be swapped in from the inventory.
             for (String give : List.of("stone 12", "repeater", "observer", "piston", "redstone 4", "lever", "redstone_torch",
-                    "oak_planks", "stone_slab", "hopper", "oak_door", "red_bed", "iron_pickaxe", "dirt 16")) {
+                    "oak_planks", "stone_slab", "hopper 2", "oak_door", "red_bed", "iron_pickaxe", "dirt 16", "dispenser 2", "observer")) {
                 server.runCommand("give @a minecraft:" + give);
             }
             // These only come out of a shulker box.
@@ -267,6 +267,13 @@ public final class SchematicBuilderGameTest implements FabricClientGameTest {
         b.put(new BlockPos(5, 0, 4), Blocks.CANDLE.defaultBlockState().setValue(BlockStateProperties.CANDLES, 3));
         b.put(new BlockPos(6, 0, 4), Blocks.HOPPER.defaultBlockState().setValue(BlockStateProperties.FACING_HOPPER, Direction.EAST));
         b.put(new BlockPos(7, 0, 4), stone);
+        // A hopper feeding a dispenser from the side, which it can only be clicked onto, a second dispenser beside, and an
+        // observer: the second dispenser needn't wait for the hopper, the observer must.
+        BlockState dispenser = Blocks.DISPENSER.defaultBlockState().setValue(BlockStateProperties.FACING, Direction.UP);
+        b.put(new BlockPos(2, 0, 6), dispenser);
+        b.put(new BlockPos(3, 0, 6), Blocks.HOPPER.defaultBlockState().setValue(BlockStateProperties.FACING_HOPPER, Direction.WEST));
+        b.put(new BlockPos(2, 0, 7), dispenser);
+        b.put(new BlockPos(4, 0, 7), Blocks.OBSERVER.defaultBlockState().setValue(BlockStateProperties.FACING, Direction.SOUTH));
         // Layer 1: the first step of wire, the second step's block, and the lantern's ceiling, held from the side.
         b.put(new BlockPos(0, 1, 0), wire.setValue(BlockStateProperties.EAST_REDSTONE, RedstoneSide.UP));
         b.put(new BlockPos(1, 1, 0), stone);
@@ -305,6 +312,15 @@ public final class SchematicBuilderGameTest implements FabricClientGameTest {
                 "The top step of wire is not joined to the one below");
     }
 
+    /** Whether the block at {@code pos} is a hopper pointing sideways into a block of {@code group} or a later one. */
+    private static boolean feedsLater(Map<BlockPos, BlockState> blocks, BlockPos pos, int group) {
+        BlockState state = blocks.get(pos);
+        if (!state.is(Blocks.HOPPER)) return false;
+        Direction facing = state.getValue(BlockStateProperties.FACING_HOPPER);
+        BlockState fed = blocks.get(pos.relative(facing));
+        return facing.getAxis().isHorizontal() && fed != null && BlockRules.group(fed) >= group;
+    }
+
     private static void checkOrder(Map<BlockPos, BlockState> blocks, Map<BlockPos, Long> placedAt,
                                    Map<BlockPos, net.minecraft.world.phys.Vec3> placedFrom) {
         BlockPos lantern = new BlockPos(6, 0, 0), ceiling = new BlockPos(6, 1, 0);
@@ -334,6 +350,9 @@ public final class SchematicBuilderGameTest implements FabricClientGameTest {
                 BlockPos near = earlier.getKey();
                 if (near.getY() != 0 || near.equals(lantern) || BlockRules.group(blocks.get(near)) >= group) continue;
                 if (Math.abs(near.getX() - at.getX()) > BuildPlan.NEAR || Math.abs(near.getZ() - at.getZ()) > BuildPlan.NEAR) continue;
+                // A hopper fed sideways into a block of this group or a later one goes in after that block in any case:
+                // it holds back no block of the group but an observer.
+                if (feedsLater(blocks, near, group) && !(blocks.get(at).getBlock() instanceof net.minecraft.world.level.block.ObserverBlock)) continue;
                 require(earlier.getValue() < later.getValue(), blocks.get(at).getBlock().getName().getString() + " at " + at.toShortString()
                         + " went in before " + blocks.get(near).getBlock().getName().getString() + " beside it at " + near.toShortString());
             }

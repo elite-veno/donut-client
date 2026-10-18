@@ -70,6 +70,7 @@ import net.minecraft.world.level.block.HopperBlock;
 import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.MultifaceBlock;
+import net.minecraft.world.level.block.ObserverBlock;
 import net.minecraft.world.level.block.RedStoneWireBlock;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
@@ -404,6 +405,9 @@ public final class SchematicBuilder {
     private boolean orderLifted;
     private long[] sealStamp = new long[0];
     private byte[] seal = new byte[0];
+    /** What {@link #heldByLater} found for each block, against blocks of group 1 and later and of group 2, and when. */
+    private long[] laterStamp = new long[0];
+    private byte[] later = new byte[0];
 
     /** An item being moved into the hotbar with the inventory open: from which slot, to which, and when the steps come. */
     private int swapFrom = -1, swapTo, swapTicks, swapAt, swapClose;
@@ -926,6 +930,8 @@ public final class SchematicBuilder {
         nextIndex = -1;
         sealStamp = new long[plan.size()];
         seal = new byte[plan.size()];
+        laterStamp = new long[2 * plan.size()];
+        later = new byte[2 * plan.size()];
     }
 
     public static Rotation rotation(int quarterTurns) {
@@ -1496,11 +1502,53 @@ public final class SchematicBuilder {
             // Not worked out yet: it waits for a later decision.
             if (support == 0) return false;
             if (support != 1) continue;
+            byte held = heldByLater(player, i, j, own, started);
+            if (held == 0) return false;
+            if (held == 1) continue;
             if (lift) return false;
             byte seals = seals(player, j, started);
             if (seals != 1) return false;
         }
         return true;
+    }
+
+    /**
+     * Whether block {@code j}, of an earlier group than block {@code i}'s {@code own}, can only be clicked onto blocks of
+     * that group or a later one: a hopper feeding a dispenser or a crafter beside it, say. Such a block goes in after
+     * them in any case, so {@code i} doesn't wait for it; else each would hold back the next of the other kind, and they
+     * would go in one of each at a time, from either side, a walk for every block. An observer waits all the same, as
+     * a block put in front of it afterwards sets it off, and so does anything that gives off power. 1 yes, 2 no, 0 out
+     * of time.
+     */
+    private byte heldByLater(LocalPlayer player, int i, int j, int own, long started) {
+        BlockState target = plan.target(j);
+        if (plan.target(i).getBlock() instanceof ObserverBlock || target.isSignalSource() || helperSpot.containsKey(j)) return 2;
+        Level level = player.level();
+        BlockPos pos = plan.pos(j);
+        long stamp = BuildPlan.stamp(level, pos);
+        int slot = 2 * j + (own == 1 ? 0 : 1);
+        if (laterStamp[slot] == stamp) return later[slot];
+        Map<Long, BlockState> without = new HashMap<>();
+        for (Direction side : Direction.values()) {
+            BlockPos at = pos.relative(side);
+            int k = plan.indexOf(at);
+            if (k >= 0 && BlockRules.group(plan.target(k)) >= own && level.getBlockState(at).getBlock() == plan.target(k).getBlock()) {
+                without.put(at.asLong(), Blocks.AIR.defaultBlockState());
+            }
+        }
+        byte result = 2;
+        Item item = BlockRules.item(target);
+        if (!without.isEmpty() && item != null) {
+            if (System.nanoTime() - started > PLAN_NANOS) return 0;
+            Overlay view = new Overlay(level, without);
+            if (!PlacementSolver.supported(player, view, pos, target, new ItemStack(item), a -> unclickable(a, j))
+                    && !PlacementSolver.supportedFinely(player, view, pos, target, new ItemStack(item), a -> unclickable(a, j))) {
+                result = 1;
+            }
+        }
+        laterStamp[slot] = stamp;
+        later[slot] = result;
+        return result;
     }
 
     /**
