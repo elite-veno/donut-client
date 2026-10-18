@@ -29,6 +29,7 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.contents.TranslatableContents;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.gamerules.GameRules;
@@ -67,6 +68,9 @@ public final class WatchBuild implements ClientModInitializer {
             // builder turns the camera itself.
             ClientTickEvents.END_CLIENT_TICK.register(client -> {
                 if (!mouseHeld && client.mouseHandler.isMouseGrabbed()) client.mouseHandler.releaseMouse();
+                // Silent: several of these windows play at once beside whoever works at the computer.
+                var master = client.options.getSoundSourceOptionInstance(SoundSource.MASTER);
+                if (master.get() > 0) master.set(0.0);
                 // With no key or mouse input for ten minutes the game draws 10 frames a second, and a test runs a tick
                 // a frame: the build would go on at half speed. Nobody types into these windows; they count as in use.
                 client.getFramerateLimitTracker().onInputReceived();
