@@ -198,7 +198,7 @@ public final class SchematicBuilder {
     private final List<Item> missing = new ArrayList<>();
 
     /** What a click is for. */
-    private enum Act { PLACE, POUR, ADJUST, HELPER, REFILL }
+    private enum Act { PLACE, POUR, ADJUST, HELPER, REFILL, FILL_BUCKET }
 
     /**
      * A click being lined up: the camera turns to it, rests, and the click goes out once the crosshair is on the same
@@ -252,6 +252,14 @@ public final class SchematicBuilder {
     private long exitTick = -1;
     /** When the builder last placed a sign, whose editor it then closes, and the tick it does: a moment later, as a hand. */
     private long signPlacedAt = -1000, signDoneAt;
+    /** Water sources that weren't there again after a bucket was filled from them: not filled from again. */
+    private final Set<Long> finiteSources = new HashSet<>();
+    /** The water source a bucket was last filled from, and when, to see that it comes back. */
+    private BlockPos filledFrom;
+    private long filledAt;
+    /** Water near the player that comes back when a bucket is filled from it, nearest first, found at {@code waterTick}. */
+    private List<BlockPos> renewing = List.of();
+    private long waterTick = -1000;
     /** While eating: since when, and what was in hand then and how many; {@code eatingSince} is -1 when not eating. */
     private long eatingSince = -1;
     private Item eatingItem;
@@ -660,6 +668,8 @@ public final class SchematicBuilder {
         breaking = null;
         pit = null;
         pitAlong = false;
+        finiteSources.clear();
+        filledFrom = null;
         helpers.clear();
         helperSpot.clear();
         helpersLeft.clear();
@@ -1216,6 +1226,13 @@ public final class SchematicBuilder {
         PlacementSolver.Problem seen = null;
         int nearest = -1;
         boolean sealing = false;
+        boolean fetchTried = false;
+        if (filledFrom != null && tick - filledAt > 10) {
+            // Vanilla makes a new source there within a few ticks, where it does at all.
+            if (!level.getFluidState(filledFrom).isSource()) finiteSources.add(filledFrom.asLong());
+            filledFrom = null;
+            waterTick = -1000;
+        }
         List<Integer> helpersHeld = new ArrayList<>();
         // Water held back a moment after a block broke, for its drop to show up: the builder waits rather than walks off.
         boolean settling = false;
@@ -1266,8 +1283,15 @@ public final class SchematicBuilder {
             if (System.nanoTime() - started > PLAN_NANOS) return;
             BlockState current = level.getBlockState(pos), target = plan.target(i);
             if (plan.kind(i) == BlockRules.Kind.FLUID) {
+                // Just filled a bucket from it: it comes back by itself, or is found not to, in a moment.
+                if (pos.equals(filledFrom)) continue;
                 Item bucket = BlockRules.item(target);
                 if (!creative && materials.total(bucket) == 0) {
+                    // Out of water buckets: an empty one is filled where water comes back, as a player does.
+                    if (bucket == Items.WATER_BUCKET && !fetchTried && materials.total(Items.BUCKET) > 0) {
+                        fetchTried = true;
+                        if (fetchWater(client, player, materials, layerNumber)) return;
+                    }
                     if (!missing.contains(bucket)) missing.add(bucket);
                     continue;
                 }
@@ -2268,10 +2292,12 @@ public final class SchematicBuilder {
     }
 
     /** What the crosshair is on: the same trace the game makes for a click. */
-    private static BlockHitResult crosshair(LocalPlayer player) {
+    private static BlockHitResult crosshair(LocalPlayer player) { return crosshair(player, ClipContext.Fluid.NONE); }
+
+    private static BlockHitResult crosshair(LocalPlayer player, ClipContext.Fluid fluids) {
         Vec3 eye = player.getEyePosition();
         Vec3 end = eye.add(player.getViewVector(1.0f).scale(player.blockInteractionRange()));
-        return player.level().clip(new ClipContext(eye, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
+        return player.level().clip(new ClipContext(eye, end, ClipContext.Block.OUTLINE, fluids, player));
     }
 
     /** What the crosshair would be on with this look: the same trace, the look put in place for the moment it takes. */
@@ -2302,6 +2328,19 @@ public final class SchematicBuilder {
      */
     private boolean clicksAsPlanned(LocalPlayer player, Aim planned, float yaw, float pitch) {
         BlockHitResult planHit = planned.click().hit();
+        if (planned.act() == Act.FILL_BUCKET) {
+            // An empty bucket takes the first water source on the look, which the crosshair otherwise looks through.
+            float oldYaw = player.getYRot(), oldPitch = player.getXRot();
+            try {
+                player.setYRot(yaw);
+                player.setXRot(pitch);
+                BlockHitResult hit = crosshair(player, ClipContext.Fluid.SOURCE_ONLY);
+                return hit.getType() == HitResult.Type.BLOCK && hit.getBlockPos().equals(planHit.getBlockPos());
+            } finally {
+                player.setYRot(oldYaw);
+                player.setXRot(oldPitch);
+            }
+        }
         if (!onBlock(player, planHit.getBlockPos(), planHit.getDirection()).ok(yaw, pitch)) return false;
         if (planned.act() == Act.ADJUST && planned.index() >= 0 && plan.target(planned.index()).getBlock() instanceof FenceGateBlock
                 && Direction.fromYRot(yaw) == plan.target(planned.index()).getValue(FenceGateBlock.FACING).getOpposite()) {
@@ -2364,15 +2403,17 @@ public final class SchematicBuilder {
         if (!handReady(player)) return;
         if (planned.act() == Act.PLACE && !headAgrees(player, planned)) return;
         aim = null;
-        BlockHitResult hit = crosshair(player);
+        boolean filling = planned.act() == Act.FILL_BUCKET;
+        BlockHitResult hit = crosshair(player, filling ? ClipContext.Fluid.SOURCE_ONLY : ClipContext.Fluid.NONE);
         if (hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(click.hit().getBlockPos())
-                || hit.getDirection() != click.hit().getDirection()) {
+                || !filling && hit.getDirection() != click.hit().getDirection()) {
             // Something moved into the line, or the player did: work it out again, with this block left for later from
             // here, so a look that only just reaches its face isn't tried over and over.
             if (debug()) LOGGER.info("Crosshair on {} {} instead of {} {}", hit.getBlockPos().toShortString(), hit.getDirection(),
                     click.hit().getBlockPos().toShortString(), click.hit().getDirection());
             if (!player.blockPosition().equals(missedAt)) missedHere.clear();
             missedAt = player.blockPosition();
+            if (filling) return;
             missedHere.add(planned.index());
             missedFrom.add(aimFrom * 31 + planned.index());
             return;
@@ -2388,7 +2429,7 @@ public final class SchematicBuilder {
             missedFrom.add(aimFrom * 31 + planned.index());
             return;
         }
-        InteractionResult result = planned.act() == Act.POUR ? client.gameMode.useItem(player, InteractionHand.MAIN_HAND)
+        InteractionResult result = planned.act() == Act.POUR || filling ? client.gameMode.useItem(player, InteractionHand.MAIN_HAND)
                 : client.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
         if (result instanceof InteractionResult.Success success && success.swingSource() == InteractionResult.SwingSource.CLIENT) {
             player.swing(InteractionHand.MAIN_HAND);
@@ -2449,6 +2490,16 @@ public final class SchematicBuilder {
         walkFailures = 0;
         String layer = "Layer " + layerNumber + " of " + plan.layers().size() + " (y " + layerY + "): ";
         switch (planned.act()) {
+            case FILL_BUCKET -> {
+                filledFrom = planned.at();
+                filledAt = tick;
+                // An opened cell: the water around runs into it until it comes back.
+                pours.put(planned.at().asLong(), tick);
+                paceAfterClick(quick());
+                if (debug()) LOGGER.info("Filled a bucket from the water at {}", planned.at().toShortString());
+                show("Filled a bucket with water at " + planned.at().getX() + " " + planned.at().getY() + " " + planned.at().getZ(), false);
+                return;
+            }
             case REFILL -> {
                 BlockState was = dug.remove(planned.at().asLong());
                 if (was != null && !planned.item().equals(was.getBlock().asItem())) refilledOther++;
@@ -2556,6 +2607,115 @@ public final class SchematicBuilder {
         double min = settings().minDelay, max = settings().maxDelay;
         double seconds = max > min ? min + (max - min) * Math.pow(ThreadLocalRandom.current().nextDouble(), DELAY_LEAN) : min;
         return (long) (seconds * 1_000_000_000L);
+    }
+
+    // Water ------------------------------------------------------------------------------------------------------
+
+    /**
+     * Fills an empty bucket from water that comes back, from where the player stands or after a walk to it: an empty
+     * bucket out of a shulker box first if none is loose. False when there is no such water to get to.
+     */
+    private boolean fetchWater(Minecraft client, LocalPlayer player, Materials materials, int layerNumber) {
+        if (materials.loose(Items.BUCKET) == 0) {
+            startRestock(client, player, Items.BUCKET, materials);
+            return true;
+        }
+        if (tick - waterTick > 40) {
+            renewing = renewingWater(player);
+            waterTick = tick;
+        }
+        if (renewing.isEmpty()) return false;
+        double reach = player.blockInteractionRange();
+        Vec3 eye = player.getEyePosition();
+        for (BlockPos cell : renewing) {
+            PlacementSolver.Click click = fillLook(player, eye, cell, reach);
+            if (click == null) continue;
+            if (player.isShiftKeyDown()) {
+                stance(client, false);
+                return true;
+            }
+            startAim(client, player, new Aim(Act.FILL_BUCKET, -1, click, Items.BUCKET, cell, player.level().getBlockState(cell), layerNumber));
+            return true;
+        }
+        if (!settings().walk) return false;
+        List<BlockPos> sources = renewing, poured = recentPours();
+        Map<Long, Boolean> wetCells = new HashMap<>();
+        Navigator.Path path = navigator(player, true).find(Navigator.standingAt(player.level(), player), node -> {
+            // Never from in the water, or where it is about to run: it pushes the player off the look.
+            if (wetSoon(player.level(), node.feetCell(), poured, wetCells)) return 0;
+            for (BlockPos cell : sources) {
+                if (Vec3.atCenterOf(cell).distanceTo(node.eye()) > reach + 1) continue;
+                if (fillLook(player, node.eye(), cell, reach) != null) return 1;
+            }
+            return 0;
+        });
+        if (path == null || path.nodes().size() < 2 || dropsIntoTrap(player, path)) return false;
+        releaseKeys(client);
+        walker.start(path.nodes());
+        show("Walking to water to fill a bucket", false);
+        return true;
+    }
+
+    /**
+     * Water sources around the player that come back when a bucket is filled from them, the build's own last and the
+     * nearest first: two water sources beside one and something solid or more water under it make it a source again,
+     * as vanilla does. Water the build pours itself counts, where it is laid out that way.
+     */
+    private List<BlockPos> renewingWater(LocalPlayer player) {
+        Level level = player.level();
+        BlockPos center = player.blockPosition();
+        List<BlockPos> found = new ArrayList<>();
+        BlockPos.MutableBlockPos at = new BlockPos.MutableBlockPos();
+        for (int dy = -6; dy <= 6; dy++) {
+            for (int dx = -16; dx <= 16; dx++) {
+                for (int dz = -16; dz <= 16; dz++) {
+                    at.setWithOffset(center, dx, dy, dz);
+                    BlockState state = level.getBlockState(at);
+                    if (!(state.getBlock() instanceof LiquidBlock) || !state.getFluidState().isSource()
+                            || !state.getFluidState().is(FluidTags.WATER) || finiteSources.contains(at.asLong())) continue;
+                    int sources = 0;
+                    for (Direction side : Direction.Plane.HORIZONTAL) {
+                        FluidState beside = level.getFluidState(at.relative(side));
+                        if (beside.isSource() && beside.is(FluidTags.WATER)) sources++;
+                    }
+                    if (sources < 2) continue;
+                    BlockPos below = at.below();
+                    FluidState under = level.getFluidState(below);
+                    if (!level.getBlockState(below).isSolid() && !(under.isSource() && under.is(FluidTags.WATER))) continue;
+                    found.add(at.immutable());
+                }
+            }
+        }
+        // Water that isn't the build's first, so the build's own is left alone where there is other.
+        Vec3 eye = player.getEyePosition();
+        found.sort(Comparator.comparingInt((BlockPos cell) -> plan.indexOf(cell) >= 0 ? 1 : 0)
+                .thenComparingDouble(cell -> Vec3.atCenterOf(cell).distanceToSqr(eye)));
+        return found;
+    }
+
+    /**
+     * A look from {@code eye} that an empty bucket takes water from {@code cell} with: the first water source on it,
+     * through anything that isn't one, is that cell. Its top is tried, then its sides.
+     */
+    private static PlacementSolver.Click fillLook(LocalPlayer player, Vec3 eye, BlockPos cell, double reach) {
+        Level level = player.level();
+        double height = level.getFluidState(cell).getHeight(level, cell);
+        List<Vec3> points = new ArrayList<>();
+        for (double a : new double[] {0.5, 0.25, 0.75}) {
+            for (double b : new double[] {0.5, 0.25, 0.75}) points.add(new Vec3(cell.getX() + a, cell.getY() + height - 0.01, cell.getZ() + b));
+        }
+        for (Direction side : Direction.Plane.HORIZONTAL) {
+            points.add(Vec3.atCenterOf(cell).add(side.getStepX() * 0.49, height / 2 - 0.5, side.getStepZ() * 0.49));
+        }
+        for (Vec3 point : points) {
+            if (point.distanceTo(eye) > reach) continue;
+            Vec3 end = eye.add(point.subtract(eye).normalize().scale(reach));
+            BlockHitResult hit = level.clip(new ClipContext(eye, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.SOURCE_ONLY, player));
+            if (hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(cell)) continue;
+            float[] look = PlacementSolver.look(eye, point);
+            return new PlacementSolver.Click(hit, look[0], look[1], false);
+        }
+        return null;
     }
 
     // Helper blocks ------------------------------------------------------------------------------------------------
@@ -5087,7 +5247,11 @@ public final class SchematicBuilder {
             if (helperItems.contains(item)) {
                 if (helperKept.merge(item, 1, Integer::sum) <= HELPER_STACKS) continue;
                 rank = 1;
-            } else if (stack.is(Items.BUCKET) || needs.containsKey(item) && !soon.containsKey(item)) {
+            } else if (stack.is(Items.BUCKET)) {
+                // A few empty ones stay, to fill for the water the next layers still take.
+                if (carried.loose(Items.BUCKET) - stack.getCount() < Math.min(3, soon.getOrDefault(Items.WATER_BUCKET, 0))) continue;
+                rank = 0;
+            } else if (needs.containsKey(item) && !soon.containsKey(item)) {
                 rank = 0;
             } else if (!needs.containsKey(item)) {
                 continue;
