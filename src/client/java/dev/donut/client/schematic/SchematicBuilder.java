@@ -2356,10 +2356,15 @@ public final class SchematicBuilder {
         nextAction = System.nanoTime() + quick();
     }
 
-    /** Whether a face of the block at {@code pos} is in view and in reach from {@code eye}, to mine it. */
+    /**
+     * Whether a face of the block at {@code pos} is in view and in reach from {@code eye}, to mine it: within the reach
+     * {@link #mine} looks for one, never further, or a block found in view here would go to mine and be dropped there,
+     * again and again.
+     */
     private static boolean inView(LocalPlayer player, Vec3 eye, BlockPos pos, double reach) {
         if (new AABB(pos).distanceToSqr(eye) > reach * reach) return false;
-        return PlacementSolver.use(player, eye, pos, reach + 0.5, player.level().getBlockState(pos)) != null;
+        return PlacementSolver.use(player, eye, pos, Math.min(reach + 0.5, player.blockInteractionRange()),
+                player.level().getBlockState(pos)) != null;
     }
 
     /**
@@ -2371,7 +2376,12 @@ public final class SchematicBuilder {
         // search and leaves the crosshair on nothing.
         PlacementSolver.Click face = PlacementSolver.use(player, player.getEyePosition(), pos, player.blockInteractionRange(),
                 client.level.getBlockState(pos));
-        if (face == null) return false;
+        if (face == null) {
+            // Passed over from here, as a block the crosshair missed is: whatever found it in view, it isn't mined from here.
+            missedMining(player, pos);
+            mineMissed.add(pos.asLong());
+            return false;
+        }
         if (!pos.equals(minePos)) {
             minePos = pos;
             mineMisses = 0;
