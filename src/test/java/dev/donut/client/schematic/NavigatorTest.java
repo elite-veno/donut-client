@@ -131,6 +131,16 @@ class NavigatorTest {
         assertFalse(first.x() != start.x() && first.z() != start.z(), "the first step off the gate is straight");
     }
 
+    @Test
+    void noJumpLandsOnANarrowTop() {
+        // A closed gate a jump up from the ground: never stood on that way.
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        blocks.put(new BlockPos(1, 65, 0), Blocks.SPRUCE_FENCE_GATE.defaultBlockState());
+        Navigator.Node start = new Navigator.Node(0, 64, 0, 65, Navigator.Move.START);
+        Navigator.Path path = navigator(world(blocks)).find(start, node -> node.x() == 1 && node.z() == 0 && node.y() == 65 ? 1 : 0);
+        assertNull(path, "the gate's top is only reached by a jump");
+    }
+
     private static boolean narrow(BlockState state) {
         return Navigator.narrowTop(state.getCollisionShape(world(Map.of()), BlockPos.ZERO));
     }

@@ -232,6 +232,9 @@ public final class Navigator {
                 // off it sideways.
                 if (diagonal && (narrow(nx, ny, nz) || narrow(from.x(), from.y(), from.z()))) continue;
                 Move move = over > STEP ? Move.JUMP : rise < -STEP ? Move.DROP : Move.WALK;
+                // Landing a jump or a drop on a narrow top takes more aim than a walk has: a few centimetres off and the
+                // body comes down beside it. Narrow tops are walked onto at their own height only.
+                if (move != Move.WALK && narrow(nx, ny, nz)) continue;
                 Node next = new Node(nx, ny, nz, feet, move);
                 if (!badSteps.isEmpty() && badSteps.contains(stepKey(from, next))) continue;
                 out.add(next);

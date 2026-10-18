@@ -124,7 +124,13 @@ final class Walker {
             client.options.keyJump.setDown(false);
             return State.WALKING;
         }
-        if (++climbTicks > 200) return fail(client, "climb took too long");
+        if (++climbTicks > 200) {
+            double offX = from.x() + 0.5 - player.getX(), offZ = from.z() + 0.5 - player.getZ();
+            return fail(client, String.format(java.util.Locale.ROOT,
+                    "climb took too long: %s, %.2f from the middle, pitch %.1f, jumped %s, tries %d, block %s, holding %s",
+                    player.onGround() ? "on the ground" : "in the air", Math.sqrt(offX * offX + offZ * offZ), player.getXRot(),
+                    jumpTicks > 0 ? "yes" : "no", climbTries, placedClimb ? "placed" : "not placed", player.getMainHandItem()));
+        }
         if (placedClimb) {
             client.options.keyJump.setDown(false);
             return climbTicks - placedAt > 30 ? fail(client, "didn't land on the block climbed on") : State.WALKING;
