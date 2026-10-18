@@ -31,8 +31,11 @@ final class Walker {
     private static final int STUCK_TICKS = 30;
     /** How far off the middle of a block on open ground a walk may pass, in blocks: each walk takes its own line. */
     private static final double WANDER = 0.14;
-    /** How near the middle of the block a climb starts from, in blocks: the new block lands under the feet from there. */
-    private static final double CENTRED = 0.25;
+    /**
+     * How near the middle of the block a climb starts from, in blocks along each axis: the new block lands under the feet
+     * from there, and the body, 0.6 wide, keeps inside the block's column, clear of anything beside it.
+     */
+    private static final double CENTRED = 0.15;
     /** Facing further than this from the next step, the player turns on the spot before walking on. */
     private static final float TURN_FIRST = 35;
     /**
@@ -331,12 +334,11 @@ final class Walker {
             return State.WALKING;
         }
         double dx = from.x() + 0.5 - player.getX(), dz = from.z() + 0.5 - player.getZ();
-        if (dx * dx + dz * dz > CENTRED * CENTRED) {
-            // Over the middle of the block first, so the jump lands back on the new one: turned toward it, then a step,
-            // as walking while turning circles round the middle without coming within reach of it.
-            turnToward(player, dx, dz, false);
-            float off = Math.abs(Mth.wrapDegrees((float) Math.toDegrees(Math.atan2(-dx, dz)) - player.getYRot()));
-            client.options.keyUp.setDown(off <= 20);
+        if (Math.abs(dx) > CENTRED || Math.abs(dz) > CENTRED) {
+            // Over the middle of the block first, the whole body inside its column: the jump lands back on the new block,
+            // and nothing beside the column at head height, a hopper's rim or a slab, catches the head on the way up. A
+            // step straight there, whichever way the player faces: walking while turning circles round the middle.
+            strafe(client, player, dx, dz, true);
             client.options.keyJump.setDown(false);
             return State.WALKING;
         }
