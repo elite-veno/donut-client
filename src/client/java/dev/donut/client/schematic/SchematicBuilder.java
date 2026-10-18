@@ -1551,10 +1551,19 @@ public final class SchematicBuilder {
     /** A short wait for clicks that follow each other: a repeater set right after placing it, a helper taken away. */
     private static long quick() { return ThreadLocalRandom.current().nextLong(150_000_000L, 320_000_000L); }
 
-    /** The configured wait before the next block, in nanoseconds: anywhere between the shortest and longest delay. */
+    /**
+     * How much the waits lean toward the shortest delay: a player's clicks mostly follow each other quickly, now and then
+     * after a longer moment, rather than at any time in between as often.
+     */
+    private static final double DELAY_LEAN = 1.8;
+
+    /**
+     * The configured wait before the next block, in nanoseconds: anywhere between the shortest and longest delay, the
+     * shorter waits more often.
+     */
     private long delay() {
         double min = settings().minDelay, max = settings().maxDelay;
-        double seconds = max > min ? ThreadLocalRandom.current().nextDouble(min, max) : min;
+        double seconds = max > min ? min + (max - min) * Math.pow(ThreadLocalRandom.current().nextDouble(), DELAY_LEAN) : min;
         return (long) (seconds * 1_000_000_000L);
     }
 
