@@ -218,6 +218,8 @@ public final class SchematicBuilder {
     private final Set<Long> uselessSpots = new HashSet<>();
     /** Steps that failed when walked, by {@link Navigator#stepKey}, this layer: walks go another way. */
     private final Set<Long> badSteps = new HashSet<>();
+    /** When the steps that failed were last given another try, for want of any other way on. */
+    private long badStepsRetried = -100_000;
     /**
      * Places to stand that a block would shut the player in from, by the block's index: placed from any of them, it
      * leaves no way out, so walks for that block go somewhere else. Worked out when {@link #wayOut} holds it back.
@@ -671,6 +673,7 @@ public final class SchematicBuilder {
         shutIn.clear();
         traps.clear();
         badSteps.clear();
+        badStepsRetried = -100_000;
         pours.clear();
         missedHere.clear();
         noClickHere.clear();
@@ -978,6 +981,16 @@ public final class SchematicBuilder {
             // does. A block that can only be clicked onto a later one beside it then gets its face.
             orderLifted = true;
             if (debug()) LOGGER.info("Nothing in turn can be placed in layer {}: later blocks may go first", layerNumber);
+            nextAction = System.nanoTime();
+            return;
+        }
+        // Steps that failed once are left out of every walk in the layer. With no way on without them, they get another
+        // try before anything is taken away: what made one fail, a climb begun off the middle or something in the way,
+        // may be gone, and it may be the only way out.
+        if (settings().walk && !badSteps.isEmpty() && tick - badStepsRetried > 600) {
+            if (debug()) LOGGER.info("No way on without the {} steps that failed: trying them again", badSteps.size());
+            badSteps.clear();
+            badStepsRetried = tick;
             nextAction = System.nanoTime();
             return;
         }
