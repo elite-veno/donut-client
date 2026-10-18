@@ -3,6 +3,7 @@ package dev.donut.client.schematic;
 import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -111,6 +112,8 @@ final class Walker {
     private int bridgeTicks, bridgeClicked;
     /** Whether this walk crouched for its last bit, onto a narrow top over a drop. */
     private boolean edgeCrouch;
+    /** Walking steps, by {@link Navigator#stepKey}, that a walk fell off before: walked crouched, so the edge holds the player. */
+    private Set<Long> careful = Set.of();
     /** The pitch a climbing step looks down with. */
     private float climbLook;
     private String failure = "";
@@ -132,6 +135,9 @@ final class Walker {
     }
 
     void start(List<Navigator.Node> path) { start(path, null); }
+
+    /** The walking steps to take crouched (see {@link #careful}). */
+    void careful(Set<Long> steps) { careful = steps; }
 
     void start(List<Navigator.Node> path, Vec3 lookAt) {
         this.path = path;
@@ -227,7 +233,9 @@ final class Walker {
         boolean narrow = Navigator.narrowOverDrop(player.level(), to);
         boolean rail = onTop && narrow && to.move() == Navigator.Move.WALK && (within(at, from) || within(at, to))
                 && Navigator.supportedAlong(player.level(), from, to);
-        boolean crouchHere = rail || last && onTop && narrow && within(at, to);
+        // A walking step a walk fell off before is taken crouched all the way: slower, but the edge holds the player.
+        boolean wary = onTop && to.move() == Navigator.Move.WALK && careful.contains(Navigator.stepKey(from, to));
+        boolean crouchHere = rail || wary || last && onTop && narrow && within(at, to);
         if (!bridgeCrouch && crouchHere != edgeCrouch && (crouchHere || player.onGround())) {
             climb.crouch(crouchHere);
             edgeCrouch = crouchHere;

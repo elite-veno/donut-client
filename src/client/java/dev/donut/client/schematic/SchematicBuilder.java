@@ -270,6 +270,14 @@ public final class SchematicBuilder {
     /** When the steps that failed were last given another try, for want of any other way on. */
     private long badStepsRetried = -100_000;
     /**
+     * How often each step failed this layer, and when it last did: one that failed twice stays out of the walks when the
+     * others get another try, for five minutes. And the walking steps that failed by a fall off them: on their next try
+     * they are walked crouched, so the edge holds the player.
+     */
+    private final Map<Long, Integer> stepFailures = new HashMap<>();
+    private final Map<Long, Long> stepFailedAt = new HashMap<>();
+    private final Set<Long> carefulSteps = new HashSet<>();
+    /**
      * Places to stand that a block would shut the player in from, by the block's index: placed from any of them, it
      * leaves no way out, so walks for that block go somewhere else. Worked out when {@link #wayOut} holds it back.
      */
@@ -845,6 +853,9 @@ public final class SchematicBuilder {
         traps.clear();
         badSteps.clear();
         badStepsRetried = -100_000;
+        stepFailures.clear();
+        stepFailedAt.clear();
+        carefulSteps.clear();
         missedFrom.clear();
         carriedFrom.clear();
         pours.clear();
@@ -996,6 +1007,9 @@ public final class SchematicBuilder {
                     shutIn.clear();
                     traps.clear();
                     badSteps.clear();
+                    stepFailures.clear();
+                    stepFailedAt.clear();
+                    carefulSteps.clear();
                     missedFrom.clear();
                     carriedFrom.clear();
                 }
@@ -1020,6 +1034,9 @@ public final class SchematicBuilder {
                 shutIn.clear();
                 traps.clear();
                 badSteps.clear();
+                stepFailures.clear();
+                stepFailedAt.clear();
+                carefulSteps.clear();
                 missedFrom.clear();
                 carriedFrom.clear();
             }
@@ -1343,9 +1360,11 @@ public final class SchematicBuilder {
         // Places whose click missed the same, and places the player was carried off from: tried again with them, when
         // there is no other.
         if (settings().walk && (!badSteps.isEmpty() || !missedFrom.isEmpty() || !carriedFrom.isEmpty()) && tick - badStepsRetried > 600) {
-            if (debug()) LOGGER.info("No way on without the {} steps that failed, {} clicks that missed and {} places carried off from: trying them again",
-                    badSteps.size(), missedFrom.size(), carriedFrom.size());
-            badSteps.clear();
+            // A step that failed twice, the second time maybe crouched, stays out for five minutes: else one bad spot on the
+            // only way takes every walk there and uses up the failures that stop the build.
+            badSteps.removeIf(step -> stepFailures.getOrDefault(step, 0) < 2 || tick - stepFailedAt.getOrDefault(step, 0L) > 6000);
+            if (debug()) LOGGER.info("No way on without the steps that failed, {} clicks that missed and {} places carried off from: trying them again, but for {} that failed twice",
+                    missedFrom.size(), carriedFrom.size(), badSteps.size());
             missedFrom.clear();
             carriedFrom.clear();
             badStepsRetried = tick;
@@ -3258,6 +3277,7 @@ public final class SchematicBuilder {
     }
 
     private void walk(Minecraft client, LocalPlayer player) {
+        walker.careful(carefulSteps);
         if (player.isShiftKeyDown() && !walker.holdsCrouch() && !climbCrouch) setCrouch(client, false);
         Walker.State state = walker.tick(client, player, new Walker.Climb() {
             @Override
@@ -3301,7 +3321,14 @@ public final class SchematicBuilder {
             if (debug()) LOGGER.info("Walk failed at {}: {}", player.position(), walker.failure());
             // The same step would fail the same way: the next walk goes around it.
             Navigator.Node[] step = walker.failedStep();
-            if (step != null) badSteps.add(Navigator.stepKey(step[0], step[1]));
+            if (step != null) {
+                long key = Navigator.stepKey(step[0], step[1]);
+                badSteps.add(key);
+                stepFailures.merge(key, 1, Integer::sum);
+                stepFailedAt.put(key, tick);
+                // Off the side of a walk at its own height, on ice past a bend say: tried again, it is walked crouched.
+                if (step[1].move() == Navigator.Move.WALK && walker.failure().startsWith("fell")) carefulSteps.add(key);
+            }
             if (++walkFailures >= 8) {
                 finish(client, "stopped: it can't find a way to walk to the next blocks.", true);
                 return;
