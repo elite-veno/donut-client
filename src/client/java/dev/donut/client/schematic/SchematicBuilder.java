@@ -37,6 +37,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.sounds.SoundEvents;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.Container;
 import net.minecraft.world.InteractionHand;
@@ -2334,8 +2335,17 @@ public final class SchematicBuilder {
         BlockState state = view.getBlockState(cell);
         // A helper block just clicked in may not be there yet; one a what-if takes away is gone.
         boolean helper = helpers.containsKey(cell.asLong()) && !(view instanceof Overlay overlay && overlay.changes(cell));
-        if (!state.canBeReplaced() || !state.getFluidState().isEmpty() || helper) return false;
+        if (!state.canBeReplaced() || helper) return false;
         int i = plan.indexOf(cell);
+        boolean water = i >= 0 && (plan.kind(i) == BlockRules.Kind.FLUID || plan.kind(i) == BlockRules.Kind.AUTO)
+                && plan.target(i).getBlock() instanceof LiquidBlock && plan.target(i).getFluidState().is(FluidTags.WATER);
+        if (!state.getFluidState().isEmpty()) {
+            // Water in the way only for a way on found no other way: then a helper block may go into water the build has
+            // there anyway, as a player builds up through a flooded shaft to reach its bottom, and the water is poured
+            // again once the block is gone. Water poured too early, over blocks still to place below it, otherwise
+            // leaves no place to stand above them.
+            return escaping && water && state.getFluidState().is(FluidTags.WATER);
+        }
         if (i < 0 || plan.kind(i) == BlockRules.Kind.AUTO && plan.target(i).getBlock() instanceof LiquidBlock) return true;
         // With no other place to stand, a walk may climb through cells the build fills later: those blocks wait until the
         // player is out.
