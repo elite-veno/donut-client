@@ -132,12 +132,31 @@ public final class PlacementSolver {
      */
     public static boolean supported(LocalPlayer player, BlockGetter view, BlockPos pos, BlockState target, ItemStack stack,
                                     LongPredicate unclickable) {
+        return supported(player, view, pos, target, stack, unclickable, looks(target));
+    }
+
+    /**
+     * As {@code supported}, with looks every 15 degrees: a block that can go in only with a look slanting between the
+     * axes, past a neighbor in the way, is found too. Several times the work, so only to make sure before holding a
+     * block back for it.
+     */
+    public static boolean supportedFinely(LocalPlayer player, BlockGetter view, BlockPos pos, BlockState target, ItemStack stack,
+                                          LongPredicate unclickable) {
+        List<float[]> looks = new ArrayList<>();
+        for (int pitch = -75; pitch <= 75; pitch += 15) for (int yaw = -180; yaw < 180; yaw += 15) looks.add(new float[] {yaw, pitch});
+        looks.add(new float[] {0, 89});
+        looks.add(new float[] {0, -89});
+        return supported(player, view, pos, target, stack, unclickable, looks);
+    }
+
+    private static boolean supported(LocalPlayer player, BlockGetter view, BlockPos pos, BlockState target, ItemStack stack,
+                                     LongPredicate unclickable, List<float[]> looks) {
         if (target.getBlock() instanceof FallingBlock && FallingBlock.isFree(player.level().getBlockState(pos.below()))) return false;
         Level level = player.level();
         boolean partnerReady = partnerReady(level, pos, target);
         List<Spot> spots = spots(view, pos, target, Vec3.atCenterOf(pos), Double.POSITIVE_INFINITY, unclickable, null, null);
         for (boolean crouch : new boolean[] {false, true}) {
-            for (float[] look : looks(target)) {
+            for (float[] look : looks) {
                 Vec3 direction = Vec3.directionFromRotation(look[1], look[0]);
                 for (Spot spot : spots) {
                     if (!allowed(view, spot, pos, crouch)) continue;

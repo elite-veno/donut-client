@@ -1078,7 +1078,10 @@ public final class SchematicBuilder {
             if (item == null) continue;
             if (view == null) view = new Overlay(level, Map.of(pos.asLong(), plan.target(i)));
             int neighbor = j;
-            if (!PlacementSolver.supported(player, view, at, plan.target(j), new ItemStack(item), a -> unclickable(a, neighbor))) {
+            // Made sure of with finer looks: two blocks side by side each held back for the other would go in in whichever
+            // order came first, and the one a slanting look alone can reach would be shut in.
+            if (!PlacementSolver.supported(player, view, at, plan.target(j), new ItemStack(item), a -> unclickable(a, neighbor))
+                    && !PlacementSolver.supportedFinely(player, view, at, plan.target(j), new ItemStack(item), a -> unclickable(a, neighbor))) {
                 if (debug()) LOGGER.info("{} at {} waits: it would shut in {} at {}", plan.target(i).getBlock().getName().getString(),
                         pos.toShortString(), plan.target(j).getBlock().getName().getString(), at.toShortString());
                 result = 1;
@@ -1370,7 +1373,8 @@ public final class SchematicBuilder {
             supported = true;
         } else {
             Item item = BlockRules.item(target);
-            supported = item != null && PlacementSolver.supported(player, pos, target, new ItemStack(item), at -> unclickable(at, i));
+            supported = item != null && (PlacementSolver.supported(player, pos, target, new ItemStack(item), at -> unclickable(at, i))
+                    || PlacementSolver.supportedFinely(player, player.level(), pos, target, new ItemStack(item), at -> unclickable(at, i)));
             helperSpot.remove(i);
             if (!supported && item != null && helperItem(player) != null) {
                 // Nothing to click that gives it the right facing: a helper block put down and taken away again can.
@@ -2293,15 +2297,15 @@ public final class SchematicBuilder {
         }
         Item item = BlockRules.item(target);
         if (item == null) return 0;
-        BlockPos helper = helperSpot.get(i);
-        if (helper != null && level.getBlockState(helper).canBeReplaced()) {
-            BlockState helperState = Block.byItem(helperItem(player) == null ? Items.DIRT : helperItem(player)).defaultBlockState();
-            return PlacementSolver.fromSpot(player, feet, helper, helperState, new ItemStack(helperState.getBlock()), reach,
-                    helpers::containsKey) != null ? 2 : 0;
-        }
+        // The block itself first: a helper is worked out for one no look seemed to reach, yet from some places one does.
         LongPredicate unclickable = at -> unclickable(at, i);
         PlacementSolver.Click click = PlacementSolver.fromSpot(player, feet, pos, target, new ItemStack(item), reach, unclickable);
-        return click == null ? 0 : steadyFrom(player, feet, click, reach) ? 2 : 1;
+        if (click != null) return steadyFrom(player, feet, click, reach) ? 2 : 1;
+        BlockPos helper = helperSpot.get(i);
+        if (helper == null || !level.getBlockState(helper).canBeReplaced()) return 0;
+        BlockState helperState = Block.byItem(helperItem(player) == null ? Items.DIRT : helperItem(player)).defaultBlockState();
+        return PlacementSolver.fromSpot(player, feet, helper, helperState, new ItemStack(helperState.getBlock()), reach,
+                helpers::containsKey) != null ? 2 : 0;
     }
 
     /** Whether the click's spot, aimed at from {@code feet} give or take {@link #REST_SPREAD}, is hit first, on its face. */
