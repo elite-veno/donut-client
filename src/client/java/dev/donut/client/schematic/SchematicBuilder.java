@@ -1015,6 +1015,15 @@ public final class SchematicBuilder {
         }
         // Last, from the top of a pillar of helper blocks with nothing in reach: down a block.
         if (settings().walk && stepDown(player)) return;
+        // Blocks out of reach that nothing is left to place with are passed over by the walk: they are what the build
+        // waits for, not a place to stand.
+        if (!creative) {
+            for (int i : candidates) {
+                if (plan.status(i) != BuildPlan.Status.PENDING) continue;
+                Item item = BlockRules.item(plan.target(i));
+                if (item != null && materials.total(item) == 0 && !missing.contains(item)) missing.add(item);
+            }
+        }
         next = nearest < 0 ? null : plan.pos(nearest);
         nextIndex = nearest;
         String where = " in layer " + layerNumber + " of " + plan.layers().size() + " (y " + layerY + ")";
