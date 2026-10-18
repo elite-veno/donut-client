@@ -424,11 +424,17 @@ public final class SchematicBuilder {
 
     private Restock restock = Restock.NONE;
     /**
-     * The item a walk to open ground was for, to fetch first thing on arrival, before the blocks in reach send the
-     * player back; and how many such walks in a row found no room yet.
+     * The item a walk to open ground was for, or a shulker box just swapped into the hotbar, to fetch first thing on
+     * arrival or once the swap is done, before the blocks in reach send the player back; and how many such walks in a row
+     * found no room yet.
      */
     private Item restockAfterWalk;
     private int restockWalks;
+    /**
+     * Swaps for a restock not started yet that carried it over, to go on once the box is in hand: after two, a further
+     * swap no longer does, so one that keeps being undone can't send the builder round again and again.
+     */
+    private int restockSwaps;
     private Item restockItem;
     private BlockPos box;
     private PlacementSolver.Click boxClick;
@@ -866,6 +872,7 @@ public final class SchematicBuilder {
         restock = Restock.NONE;
         restockAfterWalk = null;
         restockWalks = 0;
+        restockSwaps = 0;
         aim = null;
         buildSlot = -1;
         walkFailures = 0;
@@ -2381,6 +2388,7 @@ public final class SchematicBuilder {
                     pourCheckAt = tick + 10;
                 }
                 placedSincePit = true;
+                restockSwaps = 0;
                 if (planned.act() == Act.PLACE) placedAt.put(i, tick);
                 sealsLifted = false;
                 orderLifted = false;
@@ -4321,7 +4329,12 @@ public final class SchematicBuilder {
         }
         boxesBefore = shulkerCount(inventory);
         if (!holdSlot(client, player, slot)) {
-            // Moving the box into the hotbar first.
+            // Moving the box into the hotbar first. The restock goes on from here once it is: else, with the blocks it is for
+            // out of reach from this spot, often one walked to for it, a walk back to them would come first, and another here.
+            if (restockSwaps < 2) {
+                restockSwaps++;
+                restockAfterWalk = item;
+            }
             show("Taking " + name(item) + " out of a shulker box", false);
             return;
         }
@@ -4333,6 +4346,7 @@ public final class SchematicBuilder {
         restock = Restock.PLACE;
         boxViewWalks = boxRounds = 0;
         restockWalks = 0;
+        restockSwaps = 0;
         restockItem = item;
         box = spot;
         boxClick = placeClick;
