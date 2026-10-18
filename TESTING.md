@@ -22,6 +22,27 @@ The Freecam runtime test compares both the actual client player and integrated s
 - The menu is near-black with warm ivory text, and gold (`#D9AE4E`) is the default accent: switches, sliders, the selected page, a fine rim around the window that is brightest along the top, and a hairline under the header. Warnings turned orange so they stand apart from the gold, as did the builder's and ChunkMiner's warning preview boxes. Configs on the mint accent move to gold once (`gui.theme` becomes `gold`); an accent picked by hand stays. Mint is still in the color picker.
 - `build` passes and `DonutClientGameTest` passes; its menu screenshots show the new colors.
 
+## Work in progress on 2026-10-18 (Builder edition: from IKEA and mossy crafter runs)
+
+Fixes found by building IKEA kelp v1 and the mossy crafter V1.3 in game tests, each a general rule rather than one for
+those schematics:
+- The player is never shut in: the way-out check holds even when nothing else can go in, covers any block in reach on
+  the way out, and the places a block would shut them in from are kept so walks for it go elsewhere. A walk that drops
+  down checks there is a way back up; a helper block is taken away when that is the only way out.
+- Walking: steps into a hopper's or composter's bowl go by its rim (a jump), a step that failed is walked around, corners
+  over holes aren't cut, narrow tops (closed gates, fences) cost more and take no diagonal steps, a player facing well
+  away from the next step turns first, and a climb places its block only at the top of its own jump.
+- Water: it goes in once the solid blocks of its own layer and those below are in, before the layer above roofs it
+  over; bubble columns are poured; kelp grown into a water cell counts. Water is never poured where it would run onto
+  the player, and places that water poured, or let loose, in the last ten seconds will reach aren't stood on.
+- Order: when nothing whose turn it is in the redstone-last order can be placed from anywhere, later blocks may go first.
+- Clicks: a steady click also holds with the spot nudged along the face (door hinges, slab and stair halves), and a
+  click whose crosshair spot wouldn't give the block is aimed again. Glow lichen counts by its faces.
+- Restock: room is made in a full inventory, two slots stay free for the box, and a dropped box is gone after for as
+  long as it can be seen. A sign's editor is closed with Done (sign text isn't part of building).
+- "Can't keep up" warnings in client game tests are an artifact of the test's lock-stepped ticking, not lag.
+- Furthest so far: IKEA 912 of 1,708 blocks (layer 6 of 14), mossy crafter 3,404 of 10,355 (layer 3 of 18); runs go on.
+
 ## Work in progress on 2026-10-17 (Builder edition: real placement)
 
 - The builder never flies or teleports and uses the normal reach. It walks, jumps, climbs on helper blocks and takes them away again, and digs a pit to stand in when a block can only be placed looking up at it, then fills the pit in. Every click is a visible camera turn onto a face in view; it really crouches, and items reach the hotbar through the opened inventory. Water, lava and kelp go in after every other block. Blocks that would wall in a neighbour, or the player, wait. Tested with patches 1-12 from the speed review (session self-gonuts-77).
