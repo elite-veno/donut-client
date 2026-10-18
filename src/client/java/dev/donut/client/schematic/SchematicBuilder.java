@@ -252,6 +252,12 @@ public final class SchematicBuilder {
     private final List<BlockPos> helpersLeft = new ArrayList<>();
     /** Whether the helper blocks left during the build were given another try once every block was in. */
     private boolean leftRetried;
+    /**
+     * Tops of helper columns no walk reached from where the player stood, standing at {@code cleanupFrom}: tried again
+     * from anywhere else, as what can't be reached from up on a pillar often can from below.
+     */
+    private final Set<Long> cleanupSkipped = new HashSet<>();
+    private long cleanupFrom = Long.MIN_VALUE;
     private String helperList = "";
     private Set<Item> helperItems = Set.of();
     /** A helper block being broken, and for how long. */
@@ -501,6 +507,7 @@ public final class SchematicBuilder {
         helperSpot.clear();
         helpersLeft.clear();
         leftRetried = false;
+        cleanupSkipped.clear();
         dug.clear();
         refillWalks.clear();
         plan = null;
@@ -698,6 +705,7 @@ public final class SchematicBuilder {
         helperSpot.clear();
         helpersLeft.clear();
         leftRetried = false;
+        cleanupSkipped.clear();
         dug.clear();
         refillWalks.clear();
         dugLeft.clear();
@@ -1856,8 +1864,10 @@ public final class SchematicBuilder {
     }
 
     /**
-     * Once every block is in, takes the helper blocks away, highest first, so a pillar comes down a block at a time
-     * under the player's feet. True while there is one to go to or break.
+     * Once every block is in, takes the helper blocks away, each column from its top, so a pillar comes down a block at
+     * a time and none is left in the air: those in reach first, highest first, then a walk to the highest a walk reaches,
+     * climbing too. Where none is reached from up on helper blocks climbed, down a block and look again; from the ground,
+     * what still isn't reached stays. True while there is one to go to or break.
      */
     private boolean cleanUp(Minecraft client, LocalPlayer player) {
         if (refill(client, player, true)) return true;
@@ -1872,27 +1882,50 @@ public final class SchematicBuilder {
         }
         helpers.entrySet().removeIf(e -> client.level.getBlockState(BlockPos.of(e.getKey())).getBlock() != e.getValue().block());
         if (helpers.isEmpty()) return false;
-        BlockPos top = helpers.keySet().stream().map(BlockPos::of).max(Comparator.comparingInt(BlockPos::getY)).orElseThrow();
+        Navigator.Node here = Navigator.standingAt(player.level(), player);
+        if (here.key() != cleanupFrom) {
+            cleanupSkipped.clear();
+            cleanupFrom = here.key();
+        }
         double reach = player.blockInteractionRange() - 0.25;
-        if (inView(player, player.getEyePosition(), top, reach)) {
+        // The top of each column: a helper block with another on it waits for that one.
+        List<BlockPos> tops = new ArrayList<>();
+        for (long key : helpers.keySet()) if (!helpers.containsKey(BlockPos.offset(key, Direction.UP))) tops.add(BlockPos.of(key));
+        tops.sort(Comparator.comparingInt((BlockPos pos) -> pos.getY()).reversed());
+        for (BlockPos top : tops) {
+            if (!inView(player, player.getEyePosition(), top, reach)) continue;
             startBreak(top);
             return true;
         }
         if (settings().walk) {
-            // Climbing too: the top of a tall pillar is only in reach from up beside it, and one left there leaves every
-            // block under it to be broken from below, the top standing in the air. Each block climbed on is a helper
-            // block too, and comes down under the player's feet after it.
-            Navigator.Path path = navigator(player, true).find(Navigator.standingAt(player.level(), player),
-                    node -> inView(player, node.eye(), top, reach) ? 1 : 0);
-            if (path != null && path.nodes().size() > 1) {
-                if (!climbReady(client, player, path)) return true;
-                walker.start(path.nodes());
-                show("Taking the helper blocks away", false);
+            for (BlockPos top : tops) {
+                if (cleanupSkipped.contains(top.asLong())) continue;
+                // Climbing too: the top of a tall pillar is only in reach from up beside it. Each block climbed on is a
+                // helper block too, and comes down under the player's feet after it.
+                Navigator.Path path = navigator(player, true).limit(6000).find(here, node -> inView(player, node.eye(), top, reach) ? 1 : 0);
+                if (path != null && path.nodes().size() > 1) {
+                    if (!climbReady(client, player, path)) return true;
+                    walker.start(path.nodes());
+                    show("Taking the helper blocks away", false);
+                    return true;
+                }
+                cleanupSkipped.add(top.asLong());
+            }
+            // None reached from up here, on helper blocks climbed: down a block, and from there they are looked for again.
+            BlockPos under = BlockPos.containing(player.getX(), player.getY() - 0.05, player.getZ());
+            if (player.onGround() && helpers.containsKey(under.asLong())) {
+                if (debug()) LOGGER.info("No helper block left in reach of a walk from {}: down a block first", here);
+                startBreak(under);
                 return true;
             }
         }
-        helpers.remove(top.asLong());
-        helpersLeft.add(top);
+        for (long key : helpers.keySet()) {
+            BlockPos pos = BlockPos.of(key);
+            if (debug()) LOGGER.info("Leaving the helper block at {}: no place to stand in reach of it, climbing too, from {}",
+                    pos.toShortString(), here);
+            helpersLeft.add(pos);
+        }
+        helpers.clear();
         return true;
     }
 
