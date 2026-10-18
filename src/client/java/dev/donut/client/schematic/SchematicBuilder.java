@@ -1520,9 +1520,11 @@ public final class SchematicBuilder {
                 uselessPits.removeIf(p -> Math.abs(p.x() - in.getX()) <= 3 && Math.abs(p.z() - in.getZ()) <= 3);
                 pitTries.keySet().removeIf(p -> Math.abs(p.x() - in.getX()) <= 3 && Math.abs(p.z() - in.getZ()) <= 3);
                 if (debug()) {
-                    LOGGER.info("Placed {} at {}: {} face of {} at {}, look {} {}{}", plan.target(i), planned.at().toShortString(),
-                            hit.getDirection(), hit.getBlockPos().toShortString(), hit.getLocation(), planned.click().yaw(),
-                            planned.click().pitch(), planned.click().crouch() ? ", crouching" : "");
+                    LocalPlayer player = Minecraft.getInstance().player;
+                    LOGGER.info("Placed {} at {}: {} face of {} at {}, look {} {} (clicked with {} {}){}", plan.target(i),
+                            planned.at().toShortString(), hit.getDirection(), hit.getBlockPos().toShortString(), hit.getLocation(),
+                            planned.click().yaw(), planned.click().pitch(), player == null ? "?" : Mth.wrapDegrees(player.getYRot()),
+                            player == null ? "?" : player.getXRot(), planned.click().crouch() ? ", crouching" : "");
                 }
                 // Water flowing by keeps changing what a pour finds there, so its tries count against one state.
                 plan.tried(i, planned.act() == Act.POUR ? Blocks.AIR.defaultBlockState() : planned.before());
