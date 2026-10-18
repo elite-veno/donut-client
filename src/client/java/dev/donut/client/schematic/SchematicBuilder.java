@@ -3062,6 +3062,13 @@ public final class SchematicBuilder {
         Level level = player.level();
         if (helpers.containsKey(at.above().asLong()) || tick - escapeChecked < 20 || Navigator.standingAt(level, player).floor().equals(at)
                 || missedMining(player, at) || !inView(player, player.getEyePosition(), at, reach) || !safeToBreak(player, at)) return false;
+        if (!plan.enclosed(at) && helperItem(player) != null) {
+            // Taken back for its drop: one over a drop, a bridge say, falls to where a walk down and a climb back up, a new
+            // helper block a step, cost more than it gives. With none left at all, any will do.
+            int rest = at.getY();
+            while (rest > level.getMinY() && level.getBlockState(at.atY(rest - 1)).getCollisionShape(level, at.atY(rest - 1)).isEmpty()) rest--;
+            if (rest < player.getBlockY() - 1) return false;
+        }
         for (Direction side : Direction.values()) {
             BlockPos next = at.relative(side);
             BlockState there = level.getBlockState(next);
