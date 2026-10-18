@@ -154,6 +154,8 @@ public final class SchematicBuilder {
     private long exitTick = -1;
     /** When the builder last placed a sign, whose editor it then closes. */
     private long signPlacedAt = -1000;
+    /** Since when, and last when, the builder found nothing to do from where the player is, for {@link #stepDown}. */
+    private long idleSince = -1000, idleLast = -1000;
     private Vec3 noClickFrom;
     private boolean noClickCrouch;
     private long noClickTick;
@@ -1100,23 +1102,32 @@ public final class SchematicBuilder {
     }
 
     /**
-     * When the player has no way back out onto the layer or off the build, breaks a helper block in reach whose going
-     * opens one: the builder's own blocks, which come away at the end anyway. False when the player isn't shut in, or
-     * no helper block in reach would let them out.
-     */
-    /**
      * When no place to stand is found from where the player is, and they stand on a helper block, as on top of a pillar
      * they climbed, takes that block away, as a player digs down a pillar: a block lower, other places may be reached.
      */
     private boolean stepDown(LocalPlayer player) {
+        // Nothing to do may be only for now, as places to stand stay wet a few seconds after a pour: waited out first.
+        // A step down that leaves nothing to do again goes on at once.
+        if (tick - idleLast > 40) idleSince = tick;
+        idleLast = tick;
+        if (tick - idleSince < 100) return false;
+        Level level = player.level();
         BlockPos under = BlockPos.containing(player.getX(), player.getY() - 0.05, player.getZ());
         if (!player.onGround() || !helpers.containsKey(under.asLong())) return false;
+        // Down a pillar onto the block under it, never off a helper bridge into a drop or water.
+        BlockPos landing = under.below();
+        if (level.getBlockState(landing).getCollisionShape(level, landing).isEmpty()) return false;
         if (!inView(player, player.getEyePosition(), under, player.blockInteractionRange() - 0.25)) return false;
         if (debug()) LOGGER.info("No place to stand from up here: taking away the helper block underfoot at {}", under.toShortString());
         startBreak(under);
         return true;
     }
 
+    /**
+     * When the player has no way back out onto the layer or off the build, breaks a helper block in reach whose going
+     * opens one: the builder's own blocks, which come away at the end anyway. False when the player isn't shut in, or
+     * no helper block in reach would let them out.
+     */
     private boolean breakOut(LocalPlayer player) {
         Level level = player.level();
         if (exitFrom(player, level, Navigator.standingAt(level, player), null) != null) return false;
