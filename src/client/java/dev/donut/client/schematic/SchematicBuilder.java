@@ -207,6 +207,11 @@ public final class SchematicBuilder {
      * which blocks would, by the blocks around them.
      */
     private boolean sealsLifted;
+    /**
+     * Whether blocks may go in ahead of their turn in the redstone-last order, because the blocks whose turn it is can't
+     * be reached from anywhere and nothing else can go in: one of those may need a later one beside it to click on.
+     */
+    private boolean orderLifted;
     private long[] sealStamp = new long[0];
     private byte[] seal = new byte[0];
 
@@ -511,6 +516,7 @@ public final class SchematicBuilder {
         uselessPits.clear();
         pitTries.clear();
         sealsLifted = false;
+        orderLifted = false;
         nextAction = System.nanoTime() + 500_000_000L;
         int layers = plan.layers().size();
         String span = layers == 0 ? "" : " (y " + plan.layers().firstKey() + (layers > 1 ? " to " + plan.layers().lastKey() : "") + ")";
@@ -598,6 +604,7 @@ public final class SchematicBuilder {
             group = byGroup ? BlockRules.group(plan.target(first)) : 0;
             if (entry.getKey() != layerY) {
                 sealsLifted = false;
+                orderLifted = false;
                 shutIn.clear();
                 traps.clear();
                 badSteps.clear();
@@ -757,6 +764,14 @@ public final class SchematicBuilder {
             nextAction = System.nanoTime();
             return;
         }
+        if (settings().redstoneLast && !orderLifted) {
+            // The blocks whose turn it is can't be placed from anywhere: those after them may go in first, until one
+            // does. A block that can only be clicked onto a later one beside it then gets its face.
+            orderLifted = true;
+            if (debug()) LOGGER.info("Nothing in turn can be placed in layer {}: later blocks may go first", layerNumber);
+            nextAction = System.nanoTime();
+            return;
+        }
         next = nearest < 0 ? null : plan.pos(nearest);
         nextIndex = nearest;
         String where = " in layer " + layerNumber + " of " + plan.layers().size() + " (y " + layerY + ")";
@@ -852,6 +867,7 @@ public final class SchematicBuilder {
         int own = BlockRules.group(plan.target(i));
         if (own == group) return true;
         if (own < group || own > 2) return false;
+        if (orderLifted) return true;
         for (int j : plan.earlierNear(i)) {
             BuildPlan.Status st = plan.status(j);
             if (st == BuildPlan.Status.UNLOADED) return false;
@@ -1179,6 +1195,7 @@ public final class SchematicBuilder {
             case PLACE, POUR -> {
                 placedSincePit = true;
                 sealsLifted = false;
+                orderLifted = false;
                 shutIn.remove(i);
                 // A block in changes what a pit beside it can do.
                 BlockPos in = planned.at();
