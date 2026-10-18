@@ -1762,20 +1762,31 @@ public final class SchematicBuilder {
     private boolean pickUpHelpers(Minecraft client, LocalPlayer player) {
         if (player.hasInfiniteMaterials()) return false;
         helperItem(player);
-        boolean helpersFull = helpersLoose(player) >= HELPER_STACKS * 64;
+        int loose = helpersLoose(player);
+        boolean helpersFull = loose >= HELPER_STACKS * 64;
         if (helpersFull && repairDrops.isEmpty()) return false;
+        // With a stack or more left, a dropped helper block is worth a step or two, not a walk: one block back doesn't
+        // pay for the time. Really short of them, it is.
+        boolean helpersShort = loose < 64;
         List<ItemEntity> drops = player.level().getEntitiesOfClass(ItemEntity.class, player.getBoundingBox().inflate(8, 4, 8),
                 item -> (!helpersFull && isHelper(item.getItem()) || repairDrops.contains(item.getItem().getItem()))
                         && !pickupTried.contains(item.getId()));
         drops.sort(Comparator.comparingDouble(item -> item.distanceToSqr(player)));
         Navigator.Node start = Navigator.standingAt(player.level(), player);
         for (ItemEntity drop : drops) {
+            int most = helpersShort || repairDrops.contains(drop.getItem().getItem()) ? 12 : 3;
+            // Further off than that, it is left for now, for when the player passes by.
+            if (drop.distanceTo(player) > most + 2) continue;
             pickupTried.add(drop.getId());
             AABB item = drop.getBoundingBox();
             // Picked up within a block of the body sideways and half a block up or down, as vanilla does.
             Navigator.Path path = navigator(player, false).limit(1500).find(start, node -> new AABB(node.x() + 0.2, node.feet(),
                     node.z() + 0.2, node.x() + 0.8, node.feet() + 1.8, node.z() + 0.8).inflate(1, 0.5, 1).intersects(item) ? 1 : 0);
-            if (path == null || path.nodes().size() < 2 || path.nodes().size() > 13 || dropsIntoTrap(player, path)) continue;
+            if (path == null || path.nodes().size() < 2 || dropsIntoTrap(player, path)) continue;
+            if (path.nodes().size() - 1 > most) {
+                pickupTried.remove(drop.getId());
+                continue;
+            }
             releaseKeys(client);
             walker.start(path.nodes());
             show("Picking up " + name(drop.getItem().getItem()) + " dropped nearby", false);
