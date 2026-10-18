@@ -258,13 +258,15 @@ public final class PlacementSolver {
     }
 
     /**
-     * The outline of a block a bucket can be emptied against, or null: air and water have none, and a block that takes
-     * water itself, such as a chest, would fill instead of the spot in front of it.
+     * The outline of a block a bucket can be emptied against, or null: air and water have none, and a block that holds
+     * water itself is never clicked. One that takes more, such as a chest, would fill instead of the spot in front of it;
+     * one that is full, such as kelp, has the bucket look past it for a spot, which goes by the server's own trace of the
+     * look and can pour somewhere else.
      */
     private static AABB pourFace(Level level, BlockPos clicked, Fluid fluid, LocalPlayer player) {
         BlockState state = level.getBlockState(clicked);
         if (state.isAir()) return null;
-        if (state.getBlock() instanceof LiquidBlockContainer container && container.canPlaceLiquid(player, level, clicked, state, fluid)) return null;
+        if (state.getBlock() instanceof LiquidBlockContainer) return null;
         VoxelShape shape = state.getShape(level, clicked);
         return shape.isEmpty() ? null : shape.bounds();
     }

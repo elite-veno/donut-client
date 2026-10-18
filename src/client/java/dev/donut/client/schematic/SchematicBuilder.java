@@ -59,6 +59,7 @@ import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.level.block.SignBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -181,6 +182,9 @@ public final class SchematicBuilder {
      * through an open fence gate: walks never end there. Kept as long as {@link #shutIn}.
      */
     private final Set<Long> traps = new HashSet<>();
+    /** A cell water or lava was just poured into, and when to see, for the log, whether it holds it. */
+    private BlockPos pourCheck;
+    private long pourCheckAt;
     /**
      * Water and lava poured, and cells opened beside water by taking a block away, by position, with the tick: for a
      * while water there still spreads, where settled water runs no further.
@@ -461,6 +465,17 @@ public final class SchematicBuilder {
         }
         if (player.isUsingItem() || player.isSleeping()) { show("Waiting while you use an item", false); return; }
         if (tick % 10 == 0) updatePreview(player);
+        if (pourCheck != null && tick >= pourCheckAt) {
+            if (debug()) {
+                StringBuilder around = new StringBuilder();
+                for (BlockPos near : BlockPos.betweenClosed(pourCheck.offset(-1, -1, -1), pourCheck.offset(1, 1, 1))) {
+                    FluidState fluid = player.level().getFluidState(near);
+                    if (fluid.isSource()) around.append(' ').append(near.toShortString());
+                }
+                LOGGER.info("Poured at {}: it holds {}; sources around:{}", pourCheck.toShortString(), player.level().getBlockState(pourCheck), around);
+            }
+            pourCheck = null;
+        }
         if (!plan.swept()) { show("Reading the build site", false); return; }
         if (!shortageReported) reportShortage(client, player);
         if (breaking != null) {
@@ -1321,7 +1336,11 @@ public final class SchematicBuilder {
             }
             case PLACE, POUR -> {
                 if (plan.target(i).getBlock() instanceof SignBlock) signPlacedAt = tick;
-                if (planned.act() == Act.POUR) pours.put(planned.at().asLong(), tick);
+                if (planned.act() == Act.POUR) {
+                    pours.put(planned.at().asLong(), tick);
+                    pourCheck = planned.at();
+                    pourCheckAt = tick + 10;
+                }
                 placedSincePit = true;
                 sealsLifted = false;
                 orderLifted = false;
