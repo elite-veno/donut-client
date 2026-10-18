@@ -47,6 +47,9 @@ fabricApi {
 
 // Builds a schematic in a normal game window to watch: gradlew runWatch -PwatchFile=C:/path/to/file.litematic
 // (-PwatchDelay=0.2,0.5 for a quicker build than the 0.65 to 2.3 s a real one waits between blocks).
+// Game tests and the watch window open at a player's window size, 1920x1080 (-PgameSize=2560x1440 for another):
+// a client game test draws at the size it was opened with, whatever the window is resized to.
+def gameSize = (project.findProperty('gameSize') ?: '1920x1080').toString().split('x')
 loom {
     runs {
         watch {
@@ -56,6 +59,10 @@ loom {
             vmArg "-Ddonut.watch=${project.findProperty('watchFile') ?: ''}"
             vmArg "-Ddonut.watch.delay=${project.findProperty('watchDelay') ?: ''}"
             vmArg "-Ddonut.schematic.debug=true"
+            programArgs '--width', gameSize[0], '--height', gameSize[1]
+        }
+        clientGameTest {
+            programArgs '--width', gameSize[0], '--height', gameSize[1]
         }
     }
 }

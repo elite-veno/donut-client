@@ -84,8 +84,9 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                 settings.rotation = 0;
                 settings.mirror = 0;
                 settings.setMinDelay(0.05);
-                // Breaks are for building in front of others; the test times the building itself.
-                settings.breaks = false;
+                // Breaks are for building in front of others; the test times the building itself, unless
+                // DONUT_SCHEMATIC_BREAKS=1 asks to watch them too.
+                settings.breaks = "1".equals(System.getenv("DONUT_SCHEMATIC_BREAKS"));
                 settings.setMaxDelay(0.05);
                 settings.redstoneLast = true;
                 settings.walk = true;
