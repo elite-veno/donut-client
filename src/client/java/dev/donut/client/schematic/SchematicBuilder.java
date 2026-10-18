@@ -223,8 +223,8 @@ public final class SchematicBuilder {
     /** The cells the way out from where the player stands passes through, worked out at tick {@code exitTick}; null for none. */
     private Set<Long> exitCells;
     private long exitTick = -1;
-    /** When the builder last placed a sign, whose editor it then closes. */
-    private long signPlacedAt = -1000;
+    /** When the builder last placed a sign, whose editor it then closes, and the tick it does: a moment later, as a hand. */
+    private long signPlacedAt = -1000, signDoneAt;
     /** While eating: since when, and what was in hand then and how many; {@code eatingSince} is -1 when not eating. */
     private long eatingSince = -1;
     private Item eatingItem;
@@ -662,8 +662,9 @@ public final class SchematicBuilder {
             return;
         }
         if (client.gui.screen() instanceof AbstractSignEditScreen editor && tick - signPlacedAt < 100) {
-            // A sign the builder placed opens its editor. The schematic's text isn't written: Done, a moment later.
-            if (tick - signPlacedAt >= 4) editor.onClose();
+            // A sign the builder placed opens its editor. The schematic's text isn't written: Done, a moment later, as long
+            // as a player takes to see the editor and close it.
+            if (tick >= signDoneAt) editor.onClose();
             return;
         }
         if (client.gui.screen() != null) {
@@ -2272,7 +2273,10 @@ public final class SchematicBuilder {
                 show(layer + "setting " + planned.before().getBlock().getName().getString(), false);
             }
             case PLACE, POUR -> {
-                if (plan.target(i).getBlock() instanceof SignBlock) signPlacedAt = tick;
+                if (plan.target(i).getBlock() instanceof SignBlock) {
+                    signPlacedAt = tick;
+                    signDoneAt = tick + 10 + ThreadLocalRandom.current().nextInt(19);
+                }
                 if (planned.act() == Act.POUR) {
                     pours.put(planned.at().asLong(), tick);
                     pourCheck = planned.at();
@@ -3999,8 +4003,9 @@ public final class SchematicBuilder {
         swapFrom = from;
         swapTo = to;
         swapTicks = 0;
-        swapAt = 3 + ThreadLocalRandom.current().nextInt(4);
-        swapClose = swapAt + 2 + ThreadLocalRandom.current().nextInt(4);
+        // A moment to find the item and point at it, the number key, and a moment more to shut the inventory again.
+        swapAt = 5 + ThreadLocalRandom.current().nextInt(6);
+        swapClose = swapAt + 3 + ThreadLocalRandom.current().nextInt(4);
         client.gui.setScreen(new InventoryScreen(player));
     }
 
@@ -4343,11 +4348,11 @@ public final class SchematicBuilder {
             }
             case OPENED -> {
                 if (player.containerMenu instanceof ShulkerBoxMenu) {
-                    // Its items arrive just after it opens.
+                    // Its items arrive just after it opens; the first click comes once a player has looked them over.
                     if (restockTicks >= 3) {
                         restock = Restock.TAKE;
                         restockTicks = 0;
-                        nextTake = 2;
+                        nextTake = 4 + ThreadLocalRandom.current().nextInt(6);
                         swapClicks.clear();
                         soon = soonNeeds(level);
                     }
@@ -4365,7 +4370,7 @@ public final class SchematicBuilder {
                 Integer swap = swapClicks.poll();
                 if (swap != null) {
                     client.gameMode.handleContainerInput(menu.containerId, swap, 0, ContainerInput.PICKUP, player);
-                    nextTake = restockTicks + 2 + ThreadLocalRandom.current().nextInt(4);
+                    nextTake = restockTicks + takePause();
                     return;
                 }
                 int slot = nextToDeposit(menu, player);
@@ -4388,7 +4393,7 @@ public final class SchematicBuilder {
                     return;
                 }
                 client.gameMode.handleContainerInput(menu.containerId, slot, 0, ContainerInput.QUICK_MOVE, player);
-                nextTake = restockTicks + 2 + ThreadLocalRandom.current().nextInt(4);
+                nextTake = restockTicks + takePause();
             }
             case BREAK -> {
                 if (!placed) {
@@ -4500,6 +4505,12 @@ public final class SchematicBuilder {
             }
             case NONE -> { }
         }
+    }
+
+    /** Ticks to the next click in a box: a quick hand mostly, now and then a moment to look for what comes next. */
+    private static int takePause() {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        return 2 + random.nextInt(4) + (random.nextInt(5) == 0 ? 3 + random.nextInt(6) : 0);
     }
 
     /**
