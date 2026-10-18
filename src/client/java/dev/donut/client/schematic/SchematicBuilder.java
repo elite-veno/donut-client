@@ -203,7 +203,7 @@ public final class SchematicBuilder {
      */
     private int restingTicks, restFor = 1;
     /** How many misplaced blocks the log has been told of. */
-    private int misplacedLogged;
+    private int misplacedLogged, wrongLogged;
     /** The block whose missing place to stand was last explained in the log, and when: once in ten seconds is enough. */
     private int lastExplained = -1;
     private long explainedAt;
@@ -3741,17 +3741,20 @@ public final class SchematicBuilder {
 
     private void updateProgress(int layerNumber) {
         if (plan == null) return;
-        int misplaced = plan.count(BuildPlan.Status.MISPLACED);
-        if (debug() && misplaced > misplacedLogged) {
-            // Which block went in the wrong way, as it stands, against what was wanted.
+        int misplaced = plan.count(BuildPlan.Status.MISPLACED), wrongNow = plan.count(BuildPlan.Status.WRONG);
+        if (debug() && (misplaced > misplacedLogged || wrongNow > wrongLogged)) {
+            // Which block went in the wrong way, or which spot holds another block, as it stands, against what was wanted.
             Level level = Minecraft.getInstance().level;
             for (int i = 0; i < plan.size() && level != null; i++) {
-                if (plan.status(i) == BuildPlan.Status.MISPLACED) {
-                    LOGGER.info("Misplaced at {}: {} instead of {}", plan.pos(i).toShortString(), level.getBlockState(plan.pos(i)), plan.target(i));
+                BuildPlan.Status st = plan.status(i);
+                if (st == BuildPlan.Status.MISPLACED || st == BuildPlan.Status.WRONG) {
+                    LOGGER.info("{} at {}: {} instead of {}", st == BuildPlan.Status.WRONG ? "Wrong block" : "Misplaced",
+                            plan.pos(i).toShortString(), level.getBlockState(plan.pos(i)), plan.target(i));
                 }
             }
         }
         misplacedLogged = misplaced;
+        wrongLogged = wrongNow;
         int left = plan.count(BuildPlan.Status.PENDING) + plan.count(BuildPlan.Status.UNLOADED);
         progress = new Progress(plan.placeable(), plan.count(BuildPlan.Status.DONE), left, plan.count(BuildPlan.Status.WRONG),
                 plan.count(BuildPlan.Status.FAILED), plan.count(BuildPlan.Status.MISPLACED), plan.count(BuildPlan.Status.SKIPPED),
