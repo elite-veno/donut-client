@@ -165,6 +165,8 @@ public final class SchematicBuilder {
     private int walkFailures;
     /** Places tried and found useless since the last block went in, so the next walk goes somewhere else. */
     private final Set<Long> uselessSpots = new HashSet<>();
+    /** Steps that failed when walked, by {@link Navigator#stepKey}, this layer: walks go another way. */
+    private final Set<Long> badSteps = new HashSet<>();
     /**
      * Places to stand that a block would shut the player in from, by the block's index: placed from any of them, it
      * leaves no way out, so walks for that block go somewhere else. Worked out when {@link #wayOut} holds it back.
@@ -496,6 +498,7 @@ public final class SchematicBuilder {
         uselessSpots.clear();
         shutIn.clear();
         traps.clear();
+        badSteps.clear();
         missedHere.clear();
         noClickHere.clear();
         helpers.clear();
@@ -597,6 +600,7 @@ public final class SchematicBuilder {
                 sealsLifted = false;
                 shutIn.clear();
                 traps.clear();
+                badSteps.clear();
             }
             layerY = entry.getKey();
             layerNumber = number;
@@ -1397,7 +1401,7 @@ public final class SchematicBuilder {
                 && !BlockRules.interactive(view.getBlockState(cell.below()).getBlock()), key -> {
             int i = plan.indexOf(key);
             return i >= 0 && plan.status(i) == BuildPlan.Status.PENDING;
-        });
+        }).avoidSteps(badSteps);
     }
 
     /**
@@ -1617,6 +1621,9 @@ public final class SchematicBuilder {
             nextAction = System.nanoTime();
         } else if (state == Walker.State.FAILED) {
             if (debug()) LOGGER.info("Walk failed at {}: {}", player.position(), walker.failure());
+            // The same step would fail the same way: the next walk goes around it.
+            Navigator.Node[] step = walker.failedStep();
+            if (step != null) badSteps.add(Navigator.stepKey(step[0], step[1]));
             if (++walkFailures >= 8) {
                 finish(client, "stopped: it can't find a way to walk to the next blocks.", true);
                 return;

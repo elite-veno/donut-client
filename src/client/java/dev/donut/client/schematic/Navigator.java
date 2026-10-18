@@ -6,6 +6,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
+import java.util.Set;
 import java.util.function.LongPredicate;
 import java.util.function.Predicate;
 import net.minecraft.core.BlockPos;
@@ -69,6 +70,8 @@ public final class Navigator {
     private final Predicate<BlockPos> pillarAllowed;
     /** Spots best not stood in, such as blocks still to be placed: they cost more, so another way is taken if there is one. */
     private final LongPredicate avoid;
+    /** Steps that failed when walked, by {@link #stepKey}: the search takes another way. */
+    private Set<Long> badSteps = Set.of();
     /** Feet heights already worked out in this search, NaN where nothing can be stood on. */
     private final Map<Long, Double> standing = new HashMap<>();
 
@@ -84,6 +87,15 @@ public final class Navigator {
         climbCeiling = feet;
         return this;
     }
+
+    /** Never takes these steps, by {@link #stepKey}: they failed when walked. */
+    public Navigator avoidSteps(Set<Long> steps) {
+        badSteps = steps;
+        return this;
+    }
+
+    /** A step from one place to stand to the next, as one number. */
+    public static long stepKey(Node from, Node to) { return from.key() * 31 + to.key(); }
 
     /** Looks at no more than {@code nodes} places to stand, for a quick search. */
     public Navigator limit(int nodes) {
@@ -198,16 +210,22 @@ public final class Navigator {
                 if (feet == null) continue;
                 double rise = feet - from.feet();
                 if (rise > JUMP || rise < -DROP) continue;
-                double top = Math.max(feet, from.feet()) + BODY;
+                // Into or out of a bowl, as a hopper's or a composter's, the feet get over its rim on the way, higher
+                // than where they rest: a step that looks small can take a jump.
+                double over = Math.max(rise, Math.max(rim(nx, ny, nz), rim(from.x(), from.y(), from.z())) - from.feet());
+                if (over > JUMP) continue;
+                double top = Math.max(feet, from.feet() + Math.max(over, 0)) + BODY;
                 // The way across: the new spot's column is clear from its feet to the head at the higher of the two;
                 // a jump needs the head room above the old spot too, and a diagonal both corners clear.
                 if (!clear(nx, nz, feet, top, ny)) continue;
-                if (rise > STEP && !clear(from.x(), from.z(), from.feet(), from.feet() + rise + BODY, from.y())) continue;
+                if (over > STEP && !clear(from.x(), from.z(), from.feet(), from.feet() + over + BODY, from.y())) continue;
                 if (diagonal && (!clear(from.x() + d[0], from.z(), Math.max(feet, from.feet()), top, Integer.MIN_VALUE)
                         || !clear(from.x(), from.z() + d[1], Math.max(feet, from.feet()), top, Integer.MIN_VALUE))) continue;
-                if (diagonal && Math.abs(rise) > STEP) continue;
-                Move move = rise > STEP ? Move.JUMP : rise < -STEP ? Move.DROP : Move.WALK;
-                out.add(new Node(nx, ny, nz, feet, move));
+                if (diagonal && (over > STEP || rise < -STEP)) continue;
+                Move move = over > STEP ? Move.JUMP : rise < -STEP ? Move.DROP : Move.WALK;
+                Node next = new Node(nx, ny, nz, feet, move);
+                if (!badSteps.isEmpty() && badSteps.contains(stepKey(from, next))) continue;
+                out.add(next);
             }
         }
         // Climbing: jump and place a block where the feet were, then stand on it.
@@ -216,9 +234,17 @@ public final class Navigator {
                 && pillarAllowed.test(cell)
                 && clear(from.x(), from.z(), from.feet() + 1, from.feet() + 1 + BODY, Integer.MIN_VALUE)
                 && seeThrough(from.x(), from.z(), cell.getY(), cell.getY() + 2)) {
-            out.add(new Node(cell.getX(), cell.getY(), cell.getZ(), from.feet() + 1, Move.PILLAR));
+            Node next = new Node(cell.getX(), cell.getY(), cell.getZ(), from.feet() + 1, Move.PILLAR);
+            if (badSteps.isEmpty() || !badSteps.contains(stepKey(from, next))) out.add(next);
         }
         return out;
+    }
+
+    /** The height of the highest part of the block at x, y, z: a bowl's rim, above where the feet rest in it. */
+    private double rim(int x, int y, int z) {
+        BlockPos pos = new BlockPos(x, y, z);
+        VoxelShape shape = level.getBlockState(pos).getCollisionShape(level, pos);
+        return shape.isEmpty() ? Double.NEGATIVE_INFINITY : y + shape.max(Direction.Axis.Y);
     }
 
     /**

@@ -40,6 +40,8 @@ final class Walker {
     /** The pitch a climbing step looks down with. */
     private float climbLook;
     private String failure = "";
+    /** The step being walked when the walk failed, from and to; null when it failed otherwise. */
+    private Navigator.Node[] failedStep;
 
     void start(List<Navigator.Node> path) {
         this.path = path;
@@ -188,6 +190,7 @@ final class Walker {
 
     private State fail(Minecraft client, String why) {
         failure = why;
+        failedStep = path != null && index >= 1 && index < path.size() ? new Navigator.Node[] {path.get(index - 1), path.get(index)} : null;
         release(client);
         path = null;
         return State.FAILED;
@@ -195,6 +198,9 @@ final class Walker {
 
     /** Why the last walk failed. */
     String failure() { return failure; }
+
+    /** The step the last walk failed on, from and to, or null. */
+    Navigator.Node[] failedStep() { return failedStep; }
 
     void stop(Minecraft client) {
         if (path != null) release(client);
