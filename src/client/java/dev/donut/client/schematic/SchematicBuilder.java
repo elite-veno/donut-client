@@ -2407,6 +2407,10 @@ public final class SchematicBuilder {
                         + pos.getZ(), false);
             }
         }
+        // What most clicks did is in the world already, as the client shows it (a bucket poured into a block, and a note
+        // block, lever or daylight detector clicked, wait for the server): read back now rather than with the plan's
+        // refresh, a few ticks behind on a big build, so a walk planned before then doesn't count on this block once more.
+        plan.update(Minecraft.getInstance().level, i);
         updateProgress(layerNumber);
     }
 
@@ -3353,7 +3357,8 @@ public final class SchematicBuilder {
         if (plan.soaking(i)) return !floods(level, pos, feet) && PlacementSolver.fill(player, eye, pos, reach) != null ? 2 : 0;
         if (plan.needsPour(i)) return !floods(level, pos, feet) && PlacementSolver.pour(level, player, eye, pos, Fluids.WATER, reach) != null ? 2 : 0;
         if (current.getBlock() == target.getBlock() && BlockRules.missing(current, target) == 0) {
-            return PlacementSolver.use(player, eye, pos, reach, target) != null ? 2 : 0;
+            // Already in as it should be, with a status not yet read again: worth a walk only when a click still sets something.
+            return BlockRules.adjustClicks(current, target) > 0 && PlacementSolver.use(player, eye, pos, reach, target) != null ? 2 : 0;
         }
         Item item = BlockRules.item(target);
         if (item == null) return 0;
