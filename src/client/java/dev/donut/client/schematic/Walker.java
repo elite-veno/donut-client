@@ -209,11 +209,17 @@ final class Walker {
             climb.crouch(crouchHere);
             edgeCrouch = crouchHere;
         }
+        // On ice a step where the way turns, or one beside a drop, is come to rest at as the walk's end is: a slide carries
+        // a player walking on past the corner and off the side of a walkway one block wide, as a player who knows ice
+        // slows down for the bend.
+        boolean onIce = player.onGround() && slippery(player);
+        boolean settle = last || onIce && (turnsAfter(index) || !open(player, to));
         // The last step ends standing; one on the way also counts passed over mid-hop, close above where it stands. On a
         // narrow top over a drop, one on the way is passed only close to its middle, so the next step starts on the line.
         boolean there = last ? player.onGround() && Math.abs(at.y - to.feet()) < 0.6
                 : (player.onGround() ? Math.abs(at.y - to.feet()) < 0.6 : at.y >= to.feet() - 0.05 && at.y - to.feet() < 0.45);
-        if (there && distance < (last ? (player.onGround() && slippery(player) ? 0.4 : 0.25) : narrow ? 0.2 : 0.45)) {
+        if (!last && settle && slide(player) > 0.3) there = false;
+        if (there && distance < (last ? (onIce ? 0.4 : 0.25) : settle ? 0.4 : narrow ? 0.2 : 0.45)) {
             if (bridgeCrouch) {
                 // On the block put down: standing up again.
                 climb.crouch(false);
@@ -236,7 +242,7 @@ final class Walker {
         // On ice the last step lets go once the slide alone carries the player to the spot, and taps the keys the other
         // way if it would carry them past, as a player does, rather than slide on into the next block. The view keeps on
         // what the walk is for.
-        if (last && player.onGround() && slippery(player) && slide(player) > distance) {
+        if (settle && onIce && slide(player) > distance) {
             release(client);
             brake(client, player);
             if (lookAt != null) {
@@ -318,7 +324,7 @@ final class Walker {
         // Near the end of the path, let go a little early: friction carries the rest, much further on ice, where a
         // player who has come to a stop short of the spot steps on again.
         boolean slippery = player.onGround() && slippery(player);
-        double letGo = last ? (slippery ? 0.9 : 0.2) : slippery ? 0.35 : 0.05;
+        double letGo = last ? (slippery ? 0.9 : 0.2) : slippery ? (settle ? 0.9 : 0.35) : 0.05;
         boolean stopped = player.getDeltaMovement().horizontalDistanceSqr() < 0.02 * 0.02;
         client.options.keyDown.setDown(false);
         client.options.keyLeft.setDown(false);
@@ -518,6 +524,13 @@ final class Walker {
     private static double keep(LocalPlayer player) {
         BlockPos below = BlockPos.containing(player.getX(), player.getY() - 0.05, player.getZ());
         return player.level().getBlockState(below).getBlock().getFriction() * 0.91;
+    }
+
+    /** Whether the way turns at step {@code step}: the step after it goes another way than it came. */
+    private boolean turnsAfter(int step) {
+        if (step + 1 >= path.size()) return false;
+        Navigator.Node from = path.get(step - 1), at = path.get(step), next = path.get(step + 1);
+        return at.x() - from.x() != next.x() - at.x() || at.z() - from.z() != next.z() - at.z();
     }
 
     /** Whether the feet at {@code at} are within the block of the place to stand, seen from above. */
