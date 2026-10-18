@@ -284,6 +284,8 @@ public final class SchematicBuilder {
     private final Set<Integer> pickupTried = new HashSet<>();
     /** Walks planned to a dropped box since it broke, a few at a time; and whether the player was asked to pick it up. */
     private int boxWalks;
+    /** Walks to where the placed box can be seen, and rounds of trying to get at it, since this box was placed. */
+    private int boxViewWalks, boxRounds;
     private boolean boxAsked;
     /** What the layers being built need, worked out when a box opens, so taking and putting back agree. */
     private Map<Item, Integer> soon = Map.of();
@@ -2869,6 +2871,7 @@ public final class SchematicBuilder {
             return;
         }
         restock = Restock.PLACE;
+        boxViewWalks = boxRounds = 0;
         restockWalks = 0;
         restockItem = item;
         box = spot;
@@ -2955,12 +2958,20 @@ public final class SchematicBuilder {
                     if (restockTicks > 40) restockFailed(client, "the shulker box wasn't placed");
                     return;
                 }
+                if (walker.active()) {
+                    walk(client, player);
+                    return;
+                }
                 if (player.isShiftKeyDown()) {
                     setCrouch(client, false);
                     return;
                 }
                 PlacementSolver.Click open = PlacementSolver.use(player, player.getEyePosition(), box, player.blockInteractionRange(), at);
-                if (open == null) { restockFailed(client, "the shulker box is out of view"); return; }
+                if (open == null) {
+                    if (stepToBox(client, player)) return;
+                    restockFailed(client, "the shulker box is out of view");
+                    return;
+                }
                 if (restockTicks < 4 || !looked(player, open.yaw(), open.pitch())) return;
                 BlockHitResult hit = crosshair(player);
                 if (hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(box)) return;
@@ -3031,12 +3042,19 @@ public final class SchematicBuilder {
                     return;
                 }
                 if (client.gui.screen() != null) return;
+                if (walker.active()) {
+                    walk(client, player);
+                    if (!walker.active()) restockTicks = 0;
+                    return;
+                }
                 if (player.isShiftKeyDown()) setCrouch(client, false);
                 if (restockTicks == 1 && !holdTool(client, player, at)) {
                     restockTicks = 0;
                     return;
                 }
                 if (!mine(client, player, box) && restockTicks > 40) {
+                    client.gameMode.stopDestroyBlock();
+                    if (stepToBox(client, player)) return;
                     restockFailed(client, "the shulker box is out of view");
                     return;
                 }
@@ -3117,6 +3135,28 @@ public final class SchematicBuilder {
             }
             case NONE -> { }
         }
+    }
+
+    /**
+     * With the box placed but out of view from here, as when a rim or a wall stands in the line, a few steps to where
+     * it can be seen and reached, as a player steps round to it. False when there is no such place, or after a few tries.
+     */
+    private boolean stepToBox(Minecraft client, LocalPlayer player) {
+        if (!settings().walk || boxViewWalks >= 3) return false;
+        boxViewWalks++;
+        Level level = player.level();
+        BlockState state = level.getBlockState(box);
+        double reach = player.blockInteractionRange() - 0.2;
+        Navigator.Path path = navigator(player, false).limit(3000).find(Navigator.standingAt(level, player),
+                node -> PlacementSolver.use(player, node.eye(), box, reach, state) != null ? 1 : 0);
+        if (debug()) {
+            LOGGER.info("Shulker box at {} out of view from eye {}: {}", box.toShortString(), player.getEyePosition(),
+                    path == null ? "no place to see it from" : "walking " + (path.nodes().size() - 1) + " steps");
+        }
+        if (path == null || path.nodes().size() < 2 || dropsIntoTrap(player, path)) return false;
+        releaseKeys(client);
+        walker.start(path.nodes(), Vec3.atCenterOf(box));
+        return true;
     }
 
     private void startBreaking() {
@@ -3284,7 +3324,17 @@ public final class SchematicBuilder {
         LocalPlayer player = client.player;
         if (player != null && player.containerMenu instanceof ShulkerBoxMenu) player.closeContainer();
         if (client.level != null && client.level.getBlockState(box).getBlock() instanceof ShulkerBoxBlock) {
-            // Get the box back before anything else.
+            if (debug() && player != null) {
+                LOGGER.info("Shulker box at {}: {}, from eye {}, {} m", box.toShortString(), why, player.getEyePosition(),
+                        Math.round(Math.sqrt(player.getEyePosition().distanceToSqr(Vec3.atCenterOf(box))) * 10) / 10.0);
+            }
+            // Get the box back before anything else; one it can't get at after a few rounds is left to the player.
+            if (++boxRounds > 3) {
+                restock = Restock.NONE;
+                finish(client, "stopped: it can't get at your shulker box at " + box.getX() + " " + box.getY() + " " + box.getZ()
+                        + "; pick it up and start again.", true);
+                return;
+            }
             startBreaking();
             return;
         }
