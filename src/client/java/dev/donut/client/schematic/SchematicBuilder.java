@@ -144,6 +144,11 @@ public final class SchematicBuilder {
     private ClientLevel planLevel;
     private boolean active, shortageReported;
     private long tick, nextAction;
+    /**
+     * The yaw at the start of each of the last few ticks, as the movement packets of those ticks carried it to the
+     * server; NaN before there is one.
+     */
+    private final float[] recentYaws = {Float.NaN, Float.NaN, Float.NaN};
     private int buildSlot = -1;
 
     private volatile String status = "Idle";
@@ -510,6 +515,7 @@ public final class SchematicBuilder {
             if (settings().enabled || active) reset();
             return;
         }
+        recentYaws[(int) Math.floorMod(tick, (long) recentYaws.length)] = player.getYRot();
         if (!settings().enabled) {
             if (active) finish(client, "stopped.", false);
             return;
@@ -1429,10 +1435,8 @@ public final class SchematicBuilder {
 
     /**
      * Turns the camera toward a look a little each tick, quickly at first and slowing as it closes in, as a hand on a
-     * mouse does; true once it has rested there for as many ticks as set, and one more. A tick counts only when the
-     * look stayed put through it. The server judges which way a block faces by the player's head, which follows the
-     * look a tick behind: a click right after the look comes to rest is judged by where it was a tick before, on the
-     * way, a few degrees off.
+     * mouse does; true once it has rested there for as many ticks as set. A tick counts only when the look stayed put
+     * through it: the server judges a click by the look the player had at the end of the tick before.
      */
     private boolean looked(LocalPlayer player, float yaw, float pitch) {
         float yawBefore = player.getYRot(), pitchBefore = player.getXRot();
@@ -1443,7 +1447,7 @@ public final class SchematicBuilder {
             return false;
         }
         if (restingTicks == 0) restFor = settings().settle + (ThreadLocalRandom.current().nextInt(4) == 0 ? 1 : 0);
-        return ++restingTicks > restFor;
+        return ++restingTicks >= restFor;
     }
 
     /** What the crosshair is on: the same trace the game makes for a click. */
@@ -1483,6 +1487,7 @@ public final class SchematicBuilder {
         if (!looked(player, aimed[0], aimed[1])) return;
         // The camera turned during the wait since the last click; the click itself waits for its time.
         if (System.nanoTime() - nextClick < 0) return;
+        if (planned.act() == Act.PLACE && !headAgrees(player, planned)) return;
         aim = null;
         BlockHitResult hit = crosshair(player);
         if (hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(click.hit().getBlockPos())
@@ -1512,6 +1517,25 @@ public final class SchematicBuilder {
             player.swing(InteractionHand.MAIN_HAND);
         }
         clicked(planned, hit);
+    }
+
+    /**
+     * Whether the looks of the last few ticks, as the server may still have them for the player's head, all place the
+     * planned block too. The server turns an observer, a piston or a dispenser by the head, which takes on the look in
+     * the player's own tick, after the packets that bring it: a click that comes with the look that came to rest, or
+     * close behind it, is judged by a look a tick or two older, the last step of the turn. While one of those would
+     * place the block another way the click waits, a tick or two at most, and only then; most clicks never do.
+     */
+    private boolean headAgrees(LocalPlayer player, Aim planned) {
+        ItemStack stack = new ItemStack(planned.item());
+        BlockState target = plan.target(planned.index());
+        for (float yaw : recentYaws) {
+            if (Float.isNaN(yaw)) continue;
+            BlockState placed = PlacementSolver.simulate(player, planned.at(), stack, planned.click().hit(), yaw, player.getXRot(),
+                    player.isShiftKeyDown(), false);
+            if (placed == null || !BlockRules.placementMatches(placed, target)) return false;
+        }
+        return true;
     }
 
     /**
