@@ -1,11 +1,13 @@
 package dev.donut.client.gametest;
 
 import dev.donut.client.config.SchematicSettings;
+import dev.donut.client.schematic.BlockRules;
 import dev.donut.client.schematic.LitematicFile;
 import dev.donut.client.schematic.Schematic;
 import dev.donut.client.schematic.SchematicBuilder;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -104,21 +106,35 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
             });
             Map<Item, Integer> bill = new LinkedHashMap<>(context.computeOnClient(client -> builder.bill()));
             // DONUT_SCHEMATIC_PREPLACE names blocks (deepslate, say) set in place before the build: a plain fill that
-            // teaches the builder nothing and takes long. They count as built, and none of them is handed out.
+            // teaches the builder nothing and takes long. DONUT_SCHEMATIC_FROM_Y sets every block below that height in
+            // place, so a run starts at the layer where the last one went wrong. Either way they count as built, and
+            // what they take isn't handed out.
             Set<Block> preplace = preplaced();
-            if (!preplace.isEmpty()) {
+            String fromText = System.getenv("DONUT_SCHEMATIC_FROM_Y");
+            int fromY = fromText == null || fromText.isBlank() ? Integer.MIN_VALUE : Integer.parseInt(fromText.strip());
+            if (!preplace.isEmpty() || fromY != Integer.MIN_VALUE) {
+                Map<Item, Integer> taken = new HashMap<>();
                 int placed = server.computeOnServer(s -> {
                     int n = 0;
+                    BlockState air = Blocks.AIR.defaultBlockState();
                     for (int i = 0; i < schematic.size(); i++) {
                         BlockState target = Schematic.place(schematic.state(i), Mirror.NONE, Rotation.NONE);
-                        if (!preplace.contains(target.getBlock())) continue;
-                        s.overworld().setBlock(Schematic.place(schematic.pos(i), ORIGIN, Mirror.NONE, Rotation.NONE), target, Block.UPDATE_CLIENTS);
+                        BlockPos pos = Schematic.place(schematic.pos(i), ORIGIN, Mirror.NONE, Rotation.NONE);
+                        if (!preplace.contains(target.getBlock()) && pos.getY() >= fromY) continue;
+                        BlockRules.Kind kind = BlockRules.kind(target);
+                        if (kind == BlockRules.Kind.UNPLACEABLE) continue;
+                        s.overworld().setBlock(pos, target, Block.UPDATE_CLIENTS);
+                        Item item = BlockRules.item(target);
+                        if (item != null) taken.merge(item, kind == BlockRules.Kind.FLUID ? 1 : BlockRules.itemsNeeded(air, target), Integer::sum);
                         n++;
                     }
                     return n;
                 });
-                for (Block block : preplace) bill.remove(block.asItem());
-                LOGGER.info("Set {} blocks of {} in place before the build", placed, preplace);
+                for (Map.Entry<Item, Integer> e : taken.entrySet()) {
+                    bill.computeIfPresent(e.getKey(), (item, count) -> count > e.getValue() ? count - e.getValue() : null);
+                }
+                LOGGER.info("Set {} blocks in place before the build ({}{})", placed, preplace.isEmpty() ? "" : preplace + " ",
+                        fromY == Integer.MIN_VALUE ? "" : "everything below y " + fromY);
                 context.waitTicks(20);
             }
             giveInShulkers(server, bill);
