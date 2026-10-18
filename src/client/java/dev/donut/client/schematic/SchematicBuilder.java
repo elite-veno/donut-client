@@ -2466,6 +2466,8 @@ public final class SchematicBuilder {
         long leaning = ThreadLocalRandom.current().nextLong();
         // The nearest block a real look reaches from each place to stand, to turn toward on arriving there.
         Map<Long, Integer> firstFrom = new HashMap<>();
+        // For the log: what each place to stand is expected to place, the looks checked and the blocks in a row after them.
+        Map<Long, String> expected = debug() ? new HashMap<>() : null;
         Navigator.Goal goal = node -> {
             seen[0]++;
             if (uselessSpots.contains(node.key()) || traps.contains(node.key()) || carriedFrom.contains(node.key())) return 0;
@@ -2507,7 +2509,13 @@ public final class SchematicBuilder {
             if (good > 0) {
                 seen[2]++;
                 firstFrom.put(node.key(), placeable.getFirst());
-                good += chained(player, node, reach, placeable, pool, budget);
+                int more = chained(player, node, reach, placeable, pool, budget);
+                good += more;
+                if (expected != null) {
+                    StringBuilder text = new StringBuilder();
+                    for (int i : placeable) text.append(text.isEmpty() ? "" : "; ").append(plan.pos(i).toShortString());
+                    expected.put(node.key(), placeable.size() + " (" + text + ") +" + more + " in a row, " + inReach.size() + " in reach");
+                }
             }
             if (good == 0) return 0;
             // A little leaning toward some places over others, its own each walk: not always the very same spot.
@@ -2560,7 +2568,8 @@ public final class SchematicBuilder {
         Integer first = firstFrom.get(end.key());
         walker.start(path.nodes(), first == null ? null : Vec3.atCenterOf(plan.pos(first)));
         show("Layer " + layerNumber + " of " + plan.layers().size() + ": walking to " + end.x() + " " + Math.round(end.feet()) + " " + end.z(), false);
-        if (debug()) LOGGER.info("Walking {} steps to {} {} {}", path.nodes().size() - 1, end.x(), end.feet(), end.z());
+        if (debug()) LOGGER.info("Walking {} steps to {} {} {} for {}", path.nodes().size() - 1, end.x(), end.feet(), end.z(),
+                expected.get(end.key()));
         return true;
     }
 
@@ -2686,6 +2695,11 @@ public final class SchematicBuilder {
         });
         if (state != Walker.State.WALKING) climbCrouch = false;
         if (state == Walker.State.ARRIVED) {
+            if (debug()) {
+                Navigator.Node end = Navigator.standingAt(player.level(), player);
+                LOGGER.info("Arrived at {} {} {}, {} off the middle", end.x(), end.feet(), end.z(), String.format(Locale.ROOT, "%.2f",
+                        Math.hypot(player.getX() - end.x() - 0.5, player.getZ() - end.z() - 0.5)));
+            }
             walkFailures = 0;
             nextAction = System.nanoTime();
         } else if (state == Walker.State.FAILED) {
