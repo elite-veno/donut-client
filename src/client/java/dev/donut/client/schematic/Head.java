@@ -14,15 +14,17 @@ final class Head {
      * The fastest a turn goes, in degrees a tick, picked for each turn between these. Not below 8: a walk setting off
      * facing the other way turns about on the spot first, and must be round well within Walker's ticks for being stuck.
      */
-    private static final float PEAK_MIN = 8, PEAK_MAX = 15;
+    static final float PEAK_MIN = 10, PEAK_MAX = 18;
     /** How quickly a turn speeds up and slows down, in degrees a tick per tick, picked the same way. */
-    private static final float PUSH_MIN = 2.2f, PUSH_MAX = 3.6f;
+    static final float PUSH_MIN = 2.8f, PUSH_MAX = 4.4f;
     /** A target further than this from the last one starts a new turn. */
     private static final float NEW_TURN = 8;
     /** Close enough to the target, in degrees, to come to rest on it. */
     private static final float THERE = 0.3f;
 
     private float yawSpeed, pitchSpeed;
+    /** The settings' share of the usual pace, and a share more for a brisk turn, as on the spot before setting off. */
+    private float pace = 1, boost = 1;
     private float peak = 11, push = 3, pitchPart = 0.8f;
     private float lastYaw = Float.NaN, lastPitch = Float.NaN;
 
@@ -31,8 +33,8 @@ final class Head {
         pitch = Mth.clamp(pitch, -90, 90);
         if (Float.isNaN(lastYaw) || Math.abs(Mth.wrapDegrees(yaw - lastYaw)) > NEW_TURN || Math.abs(pitch - lastPitch) > NEW_TURN) {
             ThreadLocalRandom random = ThreadLocalRandom.current();
-            peak = PEAK_MIN + random.nextFloat() * (PEAK_MAX - PEAK_MIN);
-            push = PUSH_MIN + random.nextFloat() * (PUSH_MAX - PUSH_MIN);
+            peak = (PEAK_MIN + random.nextFloat() * (PEAK_MAX - PEAK_MIN)) * pace;
+            push = (PUSH_MIN + random.nextFloat() * (PUSH_MAX - PUSH_MIN)) * pace;
             pitchPart = 0.65f + random.nextFloat() * 0.3f;
         }
         lastYaw = yaw;
@@ -43,8 +45,9 @@ final class Head {
             yawSpeed = pitchSpeed = 0;
             return true;
         }
-        yawSpeed = speed(dyaw, yawSpeed, peak, push);
-        pitchSpeed = speed(dpitch, pitchSpeed, peak * pitchPart, push * pitchPart);
+        float quick = boost;
+        yawSpeed = speed(dyaw, yawSpeed, peak * quick, push * quick);
+        pitchSpeed = speed(dpitch, pitchSpeed, peak * pitchPart * quick, push * pitchPart * quick);
         set(player, player.getYRot() + yawSpeed, player.getXRot() + pitchSpeed);
         return false;
     }
@@ -53,6 +56,14 @@ final class Head {
     boolean turnYaw(LocalPlayer player, float yaw) {
         return turn(player, yaw, player.getXRot());
     }
+
+    /** Turns from the next turn on at {@code pace} times the usual pace. */
+    void pace(float pace) { this.pace = pace; }
+
+    /**
+     * Turns {@code boost} times quicker until set back to 1: still picking up speed and easing off, only a brisker hand.
+     */
+    void boost(float boost) { this.boost = boost; }
 
     /** Forgets the speed of the last turn, as after the view was set some other way. */
     void rest() {

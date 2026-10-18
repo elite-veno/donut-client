@@ -1,6 +1,8 @@
 package dev.donut.client.schematic;
 
+import java.util.ArrayDeque;
 import java.util.List;
+import java.util.Locale;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -33,6 +35,20 @@ final class Walker {
     private static final double CENTRED = 0.25;
     /** Facing further than this from the next step, the player turns on the spot before walking on. */
     private static final float TURN_FIRST = 35;
+    /**
+     * The same near an edge, as on a walkway one block wide: a turn takes a few ticks, and the line walked meanwhile
+     * swings out by as much as half a block, over the edge.
+     */
+    private static final float TURN_FIRST_NARROW = 8;
+    /**
+     * How much quicker a turn on the spot goes than one on the way: standing, it swings no one off an edge, and a player
+     * about to set off turns round briskly.
+     */
+    private static final float TURN_ROUND = 1.4f;
+    /** Sprinting only above this food level; the builder eats at it. */
+    private static final int SPRINT_FOOD = 14;
+    /** How many ticks of the walk the log gets when it fails. */
+    private static final int TRAIL = 12;
 
     private final Head head;
     private List<Navigator.Node> path;
@@ -54,10 +70,22 @@ final class Walker {
     /** The pitch a climbing step looks down with. */
     private float climbLook;
     private String failure = "";
+    /** The last few ticks of the walk, for the log when it fails: the step, where the player was and faced, the keys held. */
+    private final ArrayDeque<String> trail = new ArrayDeque<>();
     /** The step being walked when the walk failed, from and to; null when it failed otherwise. */
     private Navigator.Node[] failedStep;
 
+    /** Of every hundred walks, how many start with a moment of standing still; and whether longer ones are sprinted. */
+    private int hesitateChance = 12;
+    private boolean sprints = true;
+
     Walker(Head head) { this.head = head; }
+
+    /** The pace the settings ask for, from the next walk on. */
+    void pace(int hesitateChance, boolean sprints) {
+        this.hesitateChance = hesitateChance;
+        this.sprints = sprints;
+    }
 
     void start(List<Navigator.Node> path) { start(path, null); }
 
@@ -69,8 +97,9 @@ final class Walker {
         for (int i = 0; i < path.size(); i++) {
             offsets[i] = new double[] {(random.nextDouble() * 2 - 1) * WANDER, (random.nextDouble() * 2 - 1) * WANDER};
         }
-        hesitate = random.nextInt(5) == 0 ? 4 + random.nextInt(18) : 0;
+        hesitate = random.nextInt(100) < hesitateChance ? 3 + random.nextInt(8) : 0;
         sidestep = null;
+        trail.clear();
         index = 1;
         stuck = climbTicks = climbTries = jumpTicks = placedAt = 0;
         closest = Double.MAX_VALUE;
@@ -91,8 +120,9 @@ final class Walker {
                 float[] look = PlacementSolver.look(player.getEyePosition(), lookAt);
                 head.turn(player, look[0], look[1]);
             }
-            // Wait until the player has as good as come to rest, so a block placed next is aimed from where they stand.
-            if (player.onGround() && restsWithin(player, 0.05)) {
+            // Wait until the player has as good as come to rest, so a block placed next is aimed from where they stand: a
+            // last few centimetres of slide the aim follows, as it is worked out again from the eye each tick.
+            if (player.onGround() && restsWithin(player, 0.1)) {
                 path = null;
                 return State.ARRIVED;
             }
@@ -100,6 +130,10 @@ final class Walker {
         }
         Navigator.Node from = path.get(index - 1), to = path.get(index);
         Vec3 at = player.position();
+        if (trail.size() >= TRAIL) trail.removeFirst();
+        trail.add(String.format(Locale.ROOT, "%d %.2f %.2f %.2f %.0f%s%s%s%s%s%s", index, at.x, at.y, at.z, player.getYRot(),
+                client.options.keyUp.isDown() ? "^" : "", client.options.keyDown.isDown() ? "v" : "", client.options.keyLeft.isDown() ? "<" : "",
+                client.options.keyRight.isDown() ? ">" : "", client.options.keyJump.isDown() ? "J" : "", client.options.keySprint.isDown() ? "S" : ""));
         if (at.y < Math.min(from.feet(), to.feet()) - 1.5) return fail(client, "fell below the path");
         if (hesitate > 0) {
             hesitate--;
@@ -129,10 +163,12 @@ final class Walker {
             closest = Double.MAX_VALUE;
             return State.WALKING;
         }
+        // Wading is slow, against a current slower still: it gets longer before it counts as stuck.
+        boolean wading = player.isInWater();
         if (distance < closest - 0.03) {
             closest = distance;
             stuck = 0;
-        } else if (++stuck > STUCK_TICKS) {
+        } else if (++stuck > (wading ? STUCK_TICKS * 2 : STUCK_TICKS)) {
             return fail(client, "stuck on the way to " + to + (player.onGround() ? ", on the ground" : ", in the air") + ", moving "
                     + player.getDeltaMovement() + (client.options.keyJump.isDown() ? ", jumping" : ""));
         }
@@ -147,18 +183,45 @@ final class Walker {
             client.options.keySprint.setDown(false);
             return State.WALKING;
         }
+        // Turning on the spot, about to set off, as worked out below once turned this tick.
+        boolean wayOpen = to.move() == Navigator.Move.WALK && open(player, to) && open(player, from);
+        float turnFirst = wayOpen ? 100 : open(player, from) && open(player, to) ? TURN_FIRST : TURN_FIRST_NARROW;
+        float offNow = Math.abs(Mth.wrapDegrees((float) Math.toDegrees(Math.atan2(-dx, dz)) - player.getYRot()));
+        head.boost(offNow > turnFirst && player.onGround() && !wading && distance >= 0.5 ? TURN_ROUND : 1);
         turnToward(player, dx, dz);
+        head.boost(1);
+        // Close to the spot with it well off to the side, a step that way rather than walking round it: a calm turn
+        // can't tighten enough to reach a point less than a block off, and would circle it.
+        float aside = Math.abs(Mth.wrapDegrees((float) Math.toDegrees(Math.atan2(-dx, dz)) - player.getYRot()));
+        if (distance < 1.0 && aside > 20 && player.onGround() && !wading && to.move() == Navigator.Move.WALK) {
+            boolean near = distance > (last ? 0.2 : 0.05) || player.getDeltaMovement().horizontalDistanceSqr() < 0.02 * 0.02 && distance > 0.12;
+            strafe(client, player, dx, dz, near);
+            client.options.keyJump.setDown(false);
+            client.options.keySprint.setDown(false);
+            return State.WALKING;
+        }
         // Facing well away from the next step, a player on the ground turns first and walks after, as on a ledge: walking
         // while turning swings them out sideways, off a narrow top or over the edge of a walkway.
         float off = Math.abs(Mth.wrapDegrees((float) Math.toDegrees(Math.atan2(-dx, dz)) - player.getYRot()));
-        boolean facing = off <= TURN_FIRST || !player.onGround() || distance < 0.5;
+        // In water the current carries a player who stands to turn: there they walk on while turning. On open ground,
+        // with no edge to swing out over, they walk on while turning too; near an edge they turn all but fully first.
+        boolean openWay = wayOpen;
+        boolean facing = off <= turnFirst || !player.onGround() || wading || distance < 0.5;
         // Near the end of the path, let go a little early: friction carries the rest, much further on ice, where a
         // player who has come to a stop short of the spot steps on again.
         boolean slippery = player.onGround() && slippery(player);
         double letGo = last ? (slippery ? 0.9 : 0.2) : slippery ? 0.35 : 0.05;
         boolean stopped = player.getDeltaMovement().horizontalDistanceSqr() < 0.02 * 0.02;
+        client.options.keyDown.setDown(false);
+        client.options.keyLeft.setDown(false);
+        client.options.keyRight.setDown(false);
         client.options.keyUp.setDown(facing && (distance > letGo || stopped && distance > (last ? 0.2 : 0.05)));
-        client.options.keySprint.setDown(false);
+        // A longer way over open ground is sprinted, as a player does, and let go of two steps before the end, so the
+        // player comes to rest where the walk ends rather than past it. Sprinting makes hungry: only with the food bar
+        // well up, so what is left heals rather than runs.
+        boolean sprint = sprints && openWay && !wading && off <= 15 && path.size() - 1 - index >= 2 && player.onGround()
+                && player.getFoodData().getFoodLevel() > SPRINT_FOOD;
+        client.options.keySprint.setDown(sprint);
         // A step up from where the player really is, though the path planned it from elsewhere, slid off ice say.
         // Only while the feet are still below the step: hopping on once up there, the player never settles on the spot.
         boolean jump = facing && (to.move() == Navigator.Move.JUMP && to.feet() - at.y > 0.1 || to.feet() - at.y > Navigator.STEP)
@@ -308,7 +371,15 @@ final class Walker {
     }
 
     private State fail(Minecraft client, String why) {
-        failure = why;
+        StringBuilder steps = new StringBuilder();
+        if (path != null) {
+            for (Navigator.Node node : path) {
+                steps.append(steps.isEmpty() ? "" : ", ").append(node.x()).append(' ').append(node.feet()).append(' ').append(node.z())
+                        .append(' ').append(node.move());
+            }
+        }
+        failure = why + (Boolean.TRUE.equals(sidestep) ? ", sidestepping" : "") + " (step " + index + " of " + steps
+                + "; last ticks, as step x y z yaw keys: " + String.join(" | ", trail) + ")";
         failedStep = path != null && index >= 1 && index < path.size() ? new Navigator.Node[] {path.get(index - 1), path.get(index)} : null;
         release(client);
         path = null;

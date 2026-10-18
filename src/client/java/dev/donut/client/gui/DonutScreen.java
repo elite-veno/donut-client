@@ -629,6 +629,12 @@ public final class DonutScreen extends Screen {
                     () -> s.minDelay, s::setMinDelay, 0.05, 10, 0.05, v -> String.format(Locale.ROOT, "%.2f s", v));
             c.slider("maxDelay", "Longest delay", "Set both the same for a fixed delay", () -> s.maxDelay, s::setMaxDelay,
                     0.05, 10, 0.05, v -> String.format(Locale.ROOT, "%.2f s", v));
+            c.slider("turnSpeed", "Turn speed", "How quickly the view turns to the next block: 1x is a player's usual pace, always a smooth turn",
+                    () -> s.turnSpeed, v -> s.turnSpeed = v, 0.8, 2, 0.05, v -> String.format(Locale.ROOT, "%.2fx", v));
+            c.slider("reaction", "Reaction time", "After a click, the longest moment before turning on; each is a third of it to all of it",
+                    () -> s.reaction, v -> s.reaction = v, 0, 0.5, 0.01, v -> Math.round(v * 1000) + " ms");
+            c.slider("settle", "Aim settle", "Ticks the crosshair rests on a spot before clicking, now and then one more",
+                    () -> s.settle, v -> s.settle = (int) Math.round(v), 1, 6, 1, v -> Math.round(v) + (Math.round(v) == 1 ? " tick" : " ticks"));
             c.toggle("breaks", "Breaks", "Stops now and then for a while and looks about, as a player does",
                     () -> s.breaks, () -> s.breaks = !s.breaks);
             if (s.breaks) {
@@ -640,6 +646,12 @@ public final class DonutScreen extends Screen {
             c.section("Moving");
             c.toggle("walk", "Walk", "Walks, jumps and climbs to each block by itself, as a player on foot; off, you walk and it places what comes in reach",
                     () -> s.walk, () -> s.walk = !s.walk);
+            if (s.walk) {
+                c.toggle("sprint", "Sprint", "Sprints longer walks over open ground; never near an edge",
+                        () -> s.sprint, () -> s.sprint = !s.sprint);
+                c.slider("hesitate", "Hesitation", "How many walks in a hundred start with a moment of standing still",
+                        () -> s.hesitate, v -> s.hesitate = (int) Math.round(v), 0, 50, 1, v -> Math.round(v) + "%");
+            }
             c.field("helpers", "Helper blocks", "Put down to climb on or place a block against, then taken away; the build's own blocks are never used",
                     () -> s.helperBlocks, v -> s.helperBlocks = v, false, 512);
             c.section("Materials");

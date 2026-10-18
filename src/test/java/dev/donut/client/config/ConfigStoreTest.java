@@ -149,6 +149,25 @@ class ConfigStoreTest {
     }
 
     @Test
+    void builderDelaysStillAtTheOldDefaultsMoveToAPlayersPace() throws IOException {
+        Path old = directory.resolve("old.json"), set = directory.resolve("set.json");
+        Files.writeString(old, """
+                {"schemaVersion":2,"schematic":{"minDelay":0.65,"maxDelay":2.3}}
+                """);
+        Files.writeString(set, """
+                {"schemaVersion":2,"schematic":{"minDelay":0.65,"maxDelay":3.0}}
+                """);
+
+        ClientConfig migrated = new ConfigStore(old).load();
+        ClientConfig kept = new ConfigStore(set).load();
+
+        assertEquals(SchematicSettings.DEFAULT_MIN_DELAY, migrated.schematic.minDelay);
+        assertEquals(SchematicSettings.DEFAULT_MAX_DELAY, migrated.schematic.maxDelay);
+        assertEquals(0.65, kept.schematic.minDelay, "delays set by hand stay");
+        assertEquals(3.0, kept.schematic.maxDelay);
+    }
+
+    @Test
     void oneBadSectionResetsOnlyThatModule() throws IOException {
         Path path = directory.resolve("donut-client.json");
         Files.writeString(path, """

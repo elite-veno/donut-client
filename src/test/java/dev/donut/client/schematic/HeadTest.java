@@ -26,6 +26,19 @@ class HeadTest {
     }
 
     @Test
+    void evenTheQuickestTurnIsNoFlick() {
+        float left = 90, speed = 0;
+        int ticks = 0;
+        while (left > 1e-3f && ticks < 60) {
+            speed = Head.speed(left, speed, Head.PEAK_MAX, Head.PUSH_MAX);
+            assertTrue(speed <= Head.PEAK_MAX + 1e-4f, "never faster than its peak");
+            left -= speed;
+            ticks++;
+        }
+        assertTrue(ticks >= 7, "a quarter turn still takes over a third of a second: " + ticks + " ticks");
+    }
+
+    @Test
     void aSmallCorrectionIsQuick() {
         float left = 4, speed = 0;
         int ticks = 0;

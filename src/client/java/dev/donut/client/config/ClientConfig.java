@@ -5,7 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class ClientConfig {
-    public static final int SCHEMA_VERSION = 2;
+    public static final int SCHEMA_VERSION = 3;
     /** Landings kept; older ones are forgotten first. */
     public static final int MAX_RTP_ZONES = 64;
     public int schemaVersion = SCHEMA_VERSION;
@@ -108,6 +108,12 @@ public final class ClientConfig {
         if (savedVersion < 2) {
             debris.enabled = false;
             debris.seedEstimates = false;
+        }
+        // Version 3: the builder's delays between blocks came down from 0.65 to 2.3 s to a player's pace; delays still at
+        // the old defaults move with them, ones set by hand stay.
+        if (savedVersion < 3 && schematic != null && schematic.minDelay == 0.65 && schematic.maxDelay == 2.3) {
+            schematic.minDelay = SchematicSettings.DEFAULT_MIN_DELAY;
+            schematic.maxDelay = SchematicSettings.DEFAULT_MAX_DELAY;
         }
         schemaVersion = SCHEMA_VERSION;
     }

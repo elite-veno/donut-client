@@ -32,6 +32,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -41,6 +42,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.ShulkerBoxMenu;
 import net.minecraft.world.item.BlockItem;
@@ -92,12 +94,17 @@ public final class SchematicBuilder {
     private static final long FILE_CHECK_NANOS = 1_000_000_000;
     private static final int PREVIEW_RANGE = 48, PREVIEW_MAX = 1500;
     private static final int RESTOCK_FAILURES = 3;
+    /** Food level at or under which the builder eats, with food carried: most food then fills up with little waste. */
+    private static final int EAT_AT = 14;
+    /** Food level at or under which, with nothing to eat, the builder waits: a player this hungry can't sprint, and starves on. */
+    private static final int HUNGRY = 6;
+    /** Food the builder never eats for hunger: what harms, teleports or is worth more than a meal. */
+    private static final Set<Item> NOT_EATEN = Set.of(Items.ROTTEN_FLESH, Items.SPIDER_EYE, Items.POISONOUS_POTATO, Items.PUFFERFISH,
+            Items.CHICKEN, Items.CHORUS_FRUIT, Items.SUSPICIOUS_STEW, Items.GOLDEN_APPLE, Items.ENCHANTED_GOLDEN_APPLE);
     /** Stacks of each helper block kept on the player, out of the boxes: climbs and helper blocks use them up quickly. */
     private static final int HELPER_STACKS = 2;
     /** With fewer helper blocks than this left outside the boxes, more are taken out of one. */
     private static final int HELPERS_LOW = 16;
-    /** Ticks a look rests on its spot before the click, so the server has the head turned the same way. */
-    private static final int REST_TICKS = 2;
     /** How many of the nearest blocks a walk checks a real look for at each place it considers. */
     private static final int VERIFY = 3;
     private static SchematicBuilder instance;
@@ -156,12 +163,22 @@ public final class SchematicBuilder {
     private long exitTick = -1;
     /** When the builder last placed a sign, whose editor it then closes. */
     private long signPlacedAt = -1000;
+    /** While eating: since when, and what was in hand then and how many; {@code eatingSince} is -1 when not eating. */
+    private long eatingSince = -1;
+    private Item eatingItem;
+    private int eatingCount;
+    /** When eating last came to nothing, as with food that wouldn't be eaten: not tried again for half a minute. */
+    private long eatFailedAt = -100_000;
     /** Since when, and last when, the builder found nothing to do from where the player is, for {@link #stepDown}. */
     private long idleSince = -1000, idleLast = -1000;
     private Vec3 noClickFrom;
     private boolean noClickCrouch;
     private long noClickTick;
-    private int restingTicks;
+    /**
+     * Ticks a look has rested on its spot, and is to rest before the click, so the server has the head turned the same
+     * way: as many as set, now and then one more, as a hand doesn't click on the very same beat each time.
+     */
+    private int restingTicks, restFor = 1;
     /** The block whose missing place to stand was last explained in the log, and when: once in ten seconds is enough. */
     private int lastExplained = -1;
     private long explainedAt;
@@ -260,6 +277,8 @@ public final class SchematicBuilder {
     private boolean boxAsked;
     /** What the layers being built need, worked out when a box opens, so taking and putting back agree. */
     private Map<Item, Integer> soon = Map.of();
+    /** Slots of the open box's menu still to click, one at a time: a stack swapped for one in a full box. */
+    private final ArrayDeque<Integer> swapClicks = new ArrayDeque<>();
     /** Whether the builder holds the forward key, walking to a dropped shulker box. */
     private boolean walking;
 
@@ -457,6 +476,8 @@ public final class SchematicBuilder {
         if (schematic == null) { finish(client, "stopped: " + loadProblem + ".", true); return; }
         if (!planKey.equals(key())) preparePlan(client);
         plan.refresh(client.level, REFRESH_BUDGET);
+        head.pace((float) settings().turnSpeed);
+        walker.pace(settings().hesitate, settings().sprint);
         if (swapFrom >= 0) {
             swapTick(client, player);
             return;
@@ -510,6 +531,8 @@ public final class SchematicBuilder {
         if (takingBreak(client, player)) return;
         if (System.nanoTime() - nextAction < 0) return;
         decide(client, player);
+        // The turn toward the block picked starts on the tick it was picked.
+        if (aim != null && !walker.active() && pit == null && breaking == null && swapFrom < 0 && restock == Restock.NONE) fire(client, player);
     }
 
     /**
@@ -669,6 +692,7 @@ public final class SchematicBuilder {
         Materials materials = Materials.of(player.getInventory());
         // Every look and walk is worked out from where the player stands: in the air after a jump, they land first.
         if (!player.onGround() && !player.isInWater() && !player.onClimbable()) return;
+        if (!creative && eat(client, player)) return;
         if (removeUsedHelper(client, player)) return;
         if (refill(client, player, false)) return;
         if (restockAfterWalk != null) {
@@ -1329,7 +1353,8 @@ public final class SchematicBuilder {
             restingTicks = 0;
             return false;
         }
-        return ++restingTicks > REST_TICKS;
+        if (restingTicks == 0) restFor = settings().settle + (ThreadLocalRandom.current().nextInt(4) == 0 ? 1 : 0);
+        return ++restingTicks > restFor;
     }
 
     /** What the crosshair is on: the same trace the game makes for a click. */
@@ -1472,7 +1497,8 @@ public final class SchematicBuilder {
     private void paceAfterClick(long wait) {
         long now = System.nanoTime();
         nextClick = now + wait;
-        nextAction = now + Math.min(wait, ThreadLocalRandom.current().nextLong(60_000_000L, 160_000_000L));
+        long react = (long) (settings().reaction * 1_000_000_000L);
+        nextAction = now + Math.min(wait, react <= 0 ? 0 : ThreadLocalRandom.current().nextLong(react / 3, react + 1));
     }
 
     /** A short wait for clicks that follow each other: a repeater set right after placing it, a helper taken away. */
@@ -1742,7 +1768,7 @@ public final class SchematicBuilder {
         if (face == null) return false;
         if (!looked(player, face.yaw(), face.pitch())) return true;
         // Keep the crosshair on the face while mining; a small drift of the aim would start over.
-        restingTicks = REST_TICKS + 1;
+        restingTicks = restFor + 1;
         BlockHitResult hit = crosshair(player);
         if (hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(pos)) return true;
         if (client.gameMode.continueDestroyBlock(pos, hit.getDirection())) player.swing(InteractionHand.MAIN_HAND);
@@ -2323,6 +2349,10 @@ public final class SchematicBuilder {
         aim = null;
         walker.stop(client);
         releaseKeys(client);
+        if (eatingSince >= 0) {
+            client.options.keyUse.setDown(false);
+            eatingSince = -1;
+        }
         if ((breaking != null || pit != null) && client.gameMode != null) client.gameMode.stopDestroyBlock();
         breaking = null;
         pit = null;
@@ -2332,6 +2362,59 @@ public final class SchematicBuilder {
         preview = List.of();
         show(text.substring(0, 1).toUpperCase(Locale.ROOT) + text.substring(1), warn);
         message(client, text, warn ? ChatFormatting.YELLOW : ChatFormatting.GREEN);
+    }
+
+    /**
+     * Eats when hungry, as a player does between blocks: the most filling food carried, use held while crouching, so a
+     * chest or hopper in the crosshair stays shut. Out of food and very hungry, it waits for some rather than starve on.
+     * True while it eats or waits.
+     */
+    private boolean eat(Minecraft client, LocalPlayer player) {
+        if (eatingSince >= 0) {
+            if (!client.options.keyUse.isDown()) {
+                // Crouched first, then use: the crouch is in when the click goes out.
+                if (!player.isShiftKeyDown() && tick - eatingSince < 20) return true;
+                client.options.keyUse.setDown(true);
+                nextAction = System.nanoTime() + 250_000_000L;
+                return true;
+            }
+            // Eaten, or never begun: use is let go either way.
+            client.options.keyUse.setDown(false);
+            setCrouch(client, false);
+            ItemStack hand = player.getMainHandItem();
+            if (hand.is(eatingItem) && hand.getCount() >= eatingCount) eatFailedAt = tick;
+            eatingSince = -1;
+            return false;
+        }
+        int food = player.getFoodData().getFoodLevel();
+        if (food > EAT_AT) return false;
+        Map<Item, Integer> needs = plan.needs();
+        Inventory inventory = player.getInventory();
+        Item best = null;
+        int bestNutrition = 0;
+        for (int slot = 0; slot < Materials.SLOTS; slot++) {
+            ItemStack stack = inventory.getItem(slot);
+            FoodProperties properties = stack.get(DataComponents.FOOD);
+            if (properties == null || NOT_EATEN.contains(stack.getItem()) || needs.containsKey(stack.getItem())) continue;
+            if (properties.nutrition() > bestNutrition) {
+                best = stack.getItem();
+                bestNutrition = properties.nutrition();
+            }
+        }
+        if (best == null || tick - eatFailedAt < 600) {
+            if (food > HUNGRY) return false;
+            show("Hungry: put some food in your inventory to go on", true);
+            nextAction = System.nanoTime() + 2_000_000_000L;
+            return true;
+        }
+        if (!holdInHand(client, player, best)) return true;
+        show("Eating " + name(best), false);
+        setCrouch(client, true);
+        eatingSince = tick;
+        eatingItem = best;
+        eatingCount = player.getMainHandItem().getCount();
+        nextAction = System.nanoTime() + 100_000_000L;
+        return true;
     }
 
     /** Says once what the inventory and its shulker boxes lack for the whole build. */
@@ -2712,6 +2795,7 @@ public final class SchematicBuilder {
                         restock = Restock.TAKE;
                         restockTicks = 0;
                         nextTake = 2;
+                        swapClicks.clear();
                         soon = soonNeeds(level);
                     }
                 } else if (restockTicks > 40) {
@@ -2725,9 +2809,26 @@ public final class SchematicBuilder {
                     return;
                 }
                 if (restockTicks < nextTake) return;
+                Integer swap = swapClicks.poll();
+                if (swap != null) {
+                    client.gameMode.handleContainerInput(menu.containerId, swap, 0, ContainerInput.PICKUP, player);
+                    nextTake = restockTicks + 2 + ThreadLocalRandom.current().nextInt(4);
+                    return;
+                }
                 int slot = nextToDeposit(menu, player);
                 if (slot < 0) slot = nextToTake(menu, player);
+                if (slot < 0 && swapForRoom(menu, player)) return;
                 if (slot < 0) {
+                    if (!player.hasInfiniteMaterials() && Materials.of(player.getInventory()).loose(restockItem) == 0) {
+                        StringBuilder carried = new StringBuilder();
+                        for (int carriedSlot = 0; carriedSlot < Materials.SLOTS; carriedSlot++) {
+                            ItemStack stack = player.getInventory().getItem(carriedSlot);
+                            if (!stack.isEmpty()) carried.append(' ').append(stack.getCount()).append(' ').append(name(stack.getItem())).append(',');
+                        }
+                        int boxFree = 0;
+                        for (int boxSlot = 0; boxSlot < 27; boxSlot++) if (menu.getSlot(boxSlot).getItem().isEmpty()) boxFree++;
+                        LOGGER.info("No room for {}: {} slots free in the box; carried:{}", name(restockItem), boxFree, carried);
+                    }
                     LOGGER.info("Took what the next layers need out of the shulker box");
                     player.closeContainer();
                     startBreaking();
@@ -2915,6 +3016,31 @@ public final class SchematicBuilder {
         boolean boxHasRoom = false;
         for (int slot = 0; slot < 27; slot++) if (menu.getSlot(slot).getItem().isEmpty()) boxHasRoom = true;
         if (!boxHasRoom) return -1;
+        return toPutBack(menu, player, carried);
+    }
+
+    /**
+     * With no room in the inventory for what the box was opened for, and none in the box to put something back into, a
+     * stack that can go back is swapped for a stack of it: picked up, put down on the box's, and that one put where the
+     * first was, as a player does. False when there is nothing to swap.
+     */
+    private boolean swapForRoom(ShulkerBoxMenu menu, LocalPlayer player) {
+        Materials carried = Materials.of(player.getInventory());
+        if (player.hasInfiniteMaterials() || carried.freeSlots() > 2 || carried.loose(restockItem) > 0) return false;
+        int wanted = -1;
+        for (int slot = 0; slot < 27 && wanted < 0; slot++) if (menu.getSlot(slot).getItem().is(restockItem)) wanted = slot;
+        if (wanted < 0) return false;
+        int back = toPutBack(menu, player, carried);
+        if (back < 0) return false;
+        if (debug()) LOGGER.info("Swapping {} for {} in the full shulker box", menu.getSlot(back).getItem(), menu.getSlot(wanted).getItem());
+        swapClicks.add(back);
+        swapClicks.add(wanted);
+        swapClicks.add(back);
+        return true;
+    }
+
+    /** The slot of the player's inventory, in the box's menu, best put back into the box; -1 when nothing can go back. */
+    private int toPutBack(ShulkerBoxMenu menu, LocalPlayer player, Materials carried) {
         Map<Item, Integer> needs = plan.needs(), now = needsUpTo(player.level(), layerY);
         Map<Item, Integer> helperKept = new HashMap<>();
         int best = -1, bestRank = Integer.MAX_VALUE;
