@@ -732,7 +732,7 @@ public final class SchematicBuilder {
         glanceYaw = player.getYRot();
         glancePitch = player.getXRot();
         releaseKeys(client);
-        if (player.isShiftKeyDown()) setCrouch(client, false);
+        if (player.isShiftKeyDown() && !onNarrowEdge(player)) setCrouch(client, false);
         if (debug()) LOGGER.info("A break of {} s", Math.round(seconds));
         return true;
     }
@@ -2149,7 +2149,7 @@ public final class SchematicBuilder {
                 // roofed over with water poured onto it, out of reach by the end. Taken away once the player is out, the
                 // top of its column first, while they still have a way out without it.
                 if (helpers.containsKey(at.above().asLong()) || tick - escapeChecked < 20 || missedMining(player, at)
-                        || !inView(player, player.getEyePosition(), at, reach)) continue;
+                        || !inView(player, player.getEyePosition(), at, reach) || !safeToBreak(player, at)) continue;
                 Level level = client.level;
                 if (Navigator.standingAt(level, player).floor().equals(at)) continue;
                 escapeChecked = tick;
@@ -2161,7 +2161,7 @@ public final class SchematicBuilder {
             }
             // A block placed against it that only waits for its water is done with it.
             if (serves < 0 || plan.update(client.level, serves) == BuildPlan.Status.PENDING && !plan.soaking(serves)) continue;
-            if (!missedMining(player, at) && inView(player, player.getEyePosition(), at, reach)) {
+            if (!missedMining(player, at) && inView(player, player.getEyePosition(), at, reach) && safeToBreak(player, at)) {
                 startBreak(at);
                 return true;
             }
@@ -2283,11 +2283,22 @@ public final class SchematicBuilder {
 
     /**
      * Whether breaking the block at {@code pos} leaves the player on their feet: it isn't the one they stand on, or it
-     * has ground right under it, as in a pillar. A bridge block hangs over a gap, and the player would fall.
+     * has ground right under it, as in a pillar. A bridge block hangs over a gap, and the player would fall. Nor may it
+     * hold back water that would then run where the player stands: a current carries them off a narrow top or a ledge,
+     * as one let loose beside a row of gate tops carried a player down into the pocket under them.
      */
     private static boolean safeToBreak(LocalPlayer player, BlockPos pos) {
         BlockPos under = BlockPos.containing(player.getX(), player.getY() - 0.05, player.getZ());
-        return !pos.equals(under) || groundUnder(player.level(), pos);
+        if (pos.equals(under)) return groundUnder(player.level(), pos);
+        return !holdsBackWater(player.level(), pos) || !floods(player.level(), pos, player.position());
+    }
+
+    /** Whether water stands or runs beside or over the block at {@code pos}, to run into its cell once it is gone. */
+    private static boolean holdsBackWater(BlockGetter level, BlockPos pos) {
+        for (Direction side : Direction.values()) {
+            if (side != Direction.DOWN && !level.getFluidState(pos.relative(side)).isEmpty()) return true;
+        }
+        return false;
     }
 
     /** Whether something solid is right under the block at {@code pos}. */
@@ -2481,7 +2492,8 @@ public final class SchematicBuilder {
             nextAction = System.nanoTime() + quick();
             return;
         }
-        if (player.isShiftKeyDown()) setCrouch(client, false);
+        // On a narrow top over a drop the player stays crouched while mining, as anywhere they could be nudged off.
+        if (player.isShiftKeyDown() && !onNarrowEdge(player)) setCrouch(client, false);
         if (breakTicks == 1 && !holdTool(client, player, state)) {
             breakTicks = 0;
             return;
@@ -3964,7 +3976,7 @@ public final class SchematicBuilder {
                     if (!walker.active()) restockTicks = 0;
                     return;
                 }
-                if (player.isShiftKeyDown()) setCrouch(client, false);
+                if (player.isShiftKeyDown() && !onNarrowEdge(player)) setCrouch(client, false);
                 if (restockTicks == 1 && !holdTool(client, player, at)) {
                     restockTicks = 0;
                     return;
