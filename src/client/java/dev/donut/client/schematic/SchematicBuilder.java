@@ -4491,6 +4491,10 @@ public final class SchematicBuilder {
                 int count = plan.kind(i) == BlockRules.Kind.FLUID || plan.soaking(i) ? 1
                         : BlockRules.itemsNeeded(level.getBlockState(plan.pos(i)), plan.target(i));
                 needs.merge(item, count, Integer::sum);
+                // Broken to go in again into water: the block itself goes in once the water is poured, so the one picked up
+                // isn't put back into a box while fetching the bucket.
+                Item own = plan.needsPour(i) ? BlockRules.item(plan.target(i)) : null;
+                if (own != null) needs.merge(own, 1, Integer::sum);
             }
         }
         return needs;

@@ -281,6 +281,8 @@ public final class BuildPlan {
                         : level.getBlockState(pos(cursor));
                 boolean bucket = soaking(cursor) || needsPour(cursor);
                 int need = kinds[cursor] == BlockRules.Kind.FLUID || bucket ? 1 : BlockRules.itemsNeeded(current, targets[cursor]);
+                // Broken to go in again into water, a block takes a bucket now and itself after.
+                if (needsPour(cursor) && item != null) needsBuilding.merge(item, 1, Integer::sum);
                 if (bucket) item = Items.WATER_BUCKET;
                 if (item != null && need > 0) needsBuilding.merge(item, need, Integer::sum);
             }
