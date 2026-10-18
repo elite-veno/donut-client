@@ -235,6 +235,11 @@ final class Walker {
     /** Stands still over the spot, looks down at it, jumps, and at the top has the block placed where the feet were. */
     private State climb(Minecraft client, LocalPlayer player, Navigator.Node from, Navigator.Node to, Climb climb) {
         client.options.keyUp.setDown(false);
+        // A step taken sideways or back on the way here, or a sprint, ends here: a climb only steps forward.
+        client.options.keyDown.setDown(false);
+        client.options.keyLeft.setDown(false);
+        client.options.keyRight.setDown(false);
+        client.options.keySprint.setDown(false);
         BlockPos cell = from.feetCell();
         if (player.onGround() && Math.abs(player.getY() - to.feet()) < 0.05) {
             // Standing on the new block.

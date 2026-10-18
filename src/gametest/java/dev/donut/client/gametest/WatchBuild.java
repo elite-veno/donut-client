@@ -181,8 +181,8 @@ public final class WatchBuild implements ClientModInitializer {
                 settings.setMaxDelay(Double.parseDouble(parts[1].strip()));
                 settings.setMinDelay(Double.parseDouble(parts[0].strip()));
             } else {
-                settings.setMaxDelay(2.3);
-                settings.setMinDelay(0.65);
+                settings.setMaxDelay(SchematicSettings.DEFAULT_MAX_DELAY);
+                settings.setMinDelay(SchematicSettings.DEFAULT_MIN_DELAY);
             }
         } catch (IOException | RuntimeException e) {
             LOGGER.error("Could not read {}", file, e);
