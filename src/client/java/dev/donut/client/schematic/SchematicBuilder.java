@@ -4288,6 +4288,8 @@ public final class SchematicBuilder {
         // A moment to find the item and point at it, the number key, and a moment more to shut the inventory again.
         swapAt = 5 + ThreadLocalRandom.current().nextInt(6);
         swapClose = swapAt + 3 + ThreadLocalRandom.current().nextInt(4);
+        if (debug()) LOGGER.info("Hotbar swap: {} from slot {} into slot {}, for {}", player.getInventory().getItem(from).getItem(), from, to,
+                restock != Restock.NONE ? "a restock" : breaking != null || pit != null ? "a tool" : "the next block");
         // Right after a swap, a block broken or a box picked up, the inventory opens no sooner than the hands are free.
         swapOpening = System.nanoTime() - handsAt < 0;
         if (!swapOpening) client.gui.setScreen(new InventoryScreen(player));
