@@ -2121,7 +2121,7 @@ public final class SchematicBuilder {
         }
         int[] budget = {CHAIN_LOOKS};
         Navigator.Node start = Navigator.standingAt(level, player);
-        Map<Long, Boolean> verified = new HashMap<>();
+        Map<Long, Integer> verified = new HashMap<>();
         int[] seen = new int[3];
         List<Navigator.Node> sample = new ArrayList<>();
         Map<Long, Boolean> wetCells = new HashMap<>();
@@ -2149,17 +2149,19 @@ public final class SchematicBuilder {
             if (debug() && sample.size() < 400) sample.add(node);
             // Close enough by distance; whether a real look reaches them from here is checked for the nearest few.
             inReach.sort(Comparator.comparingDouble(i -> Vec3.atCenterOf(plan.pos(i)).distanceToSqr(eye)));
-            int good = 0;
+            double good = 0;
             List<Integer> placeable = new ArrayList<>();
             for (int i : inReach.subList(0, Math.min(VERIFY, inReach.size()))) {
                 long key = node.key() * 31 + i;
-                Boolean ok = verified.get(key);
+                Integer ok = verified.get(key);
                 if (ok == null) {
                     ok = placeableFrom(player, feet, i, reach);
                     verified.put(key, ok);
                 }
-                if (ok) {
-                    good++;
+                if (ok > 0) {
+                    // A look that only works from the very middle of the block counts for little: the walk comes to rest
+                    // a little off it, and from there the look misses, and the walk was for nothing.
+                    good += ok == 2 ? 1 : 0.25;
                     placeable.add(i);
                 }
             }
@@ -2266,28 +2268,53 @@ public final class SchematicBuilder {
         return more;
     }
 
-    /** Whether block {@code i} could go in, with a real look, from a place to stand with the feet at {@code feet}. */
-    private boolean placeableFrom(LocalPlayer player, Vec3 feet, int i, double reach) {
+    /** How far off the middle of a block a walk may come to rest, along each axis: where it ends, give or take the slide. */
+    private static final double REST_SPREAD = 0.25;
+
+    /**
+     * Whether block {@code i} could go in, with a real look, from a place to stand with the feet at {@code feet}: 2 when
+     * the click's spot is still hit from wherever the walk there may come to rest, 1 when only from the very middle of
+     * the block, as a steep look up at the side of a block, 0 when not at all.
+     */
+    private int placeableFrom(LocalPlayer player, Vec3 feet, int i, double reach) {
         Level level = player.level();
         BlockPos pos = plan.pos(i);
         BlockState target = plan.target(i), current = level.getBlockState(pos);
         Vec3 eye = feet.add(0, PlacementSolver.STAND_EYE, 0);
         if (plan.kind(i) == BlockRules.Kind.FLUID) {
-            return !floods(level, pos, feet) && PlacementSolver.pour(level, player, eye, pos, target.getFluidState().getType(), reach) != null;
+            return !floods(level, pos, feet) && PlacementSolver.pour(level, player, eye, pos, target.getFluidState().getType(), reach) != null ? 2 : 0;
         }
         if (current.getBlock() == target.getBlock() && BlockRules.missing(current, target) == 0) {
-            return PlacementSolver.use(player, eye, pos, reach, target) != null;
+            return PlacementSolver.use(player, eye, pos, reach, target) != null ? 2 : 0;
         }
         Item item = BlockRules.item(target);
-        if (item == null) return false;
+        if (item == null) return 0;
         BlockPos helper = helperSpot.get(i);
         if (helper != null && level.getBlockState(helper).canBeReplaced()) {
             BlockState helperState = Block.byItem(helperItem(player) == null ? Items.DIRT : helperItem(player)).defaultBlockState();
             return PlacementSolver.fromSpot(player, feet, helper, helperState, new ItemStack(helperState.getBlock()), reach,
-                    helpers::containsKey) != null;
+                    helpers::containsKey) != null ? 2 : 0;
         }
         LongPredicate unclickable = at -> unclickable(at, i);
-        return PlacementSolver.fromSpot(player, feet, pos, target, new ItemStack(item), reach, unclickable) != null;
+        PlacementSolver.Click click = PlacementSolver.fromSpot(player, feet, pos, target, new ItemStack(item), reach, unclickable);
+        return click == null ? 0 : steadyFrom(player, feet, click, reach) ? 2 : 1;
+    }
+
+    /** Whether the click's spot, aimed at from {@code feet} give or take {@link #REST_SPREAD}, is hit first, on its face. */
+    private static boolean steadyFrom(LocalPlayer player, Vec3 feet, PlacementSolver.Click click, double reach) {
+        Vec3 point = click.hit().getLocation();
+        double height = click.crouch() ? PlacementSolver.CROUCH_EYE : PlacementSolver.STAND_EYE;
+        for (double dx : new double[] {-REST_SPREAD, REST_SPREAD}) {
+            for (double dz : new double[] {-REST_SPREAD, REST_SPREAD}) {
+                Vec3 eye = feet.add(dx, height, dz);
+                if (eye.distanceTo(point) > reach) return false;
+                Vec3 end = eye.add(point.subtract(eye).normalize().scale(eye.distanceTo(point) + 0.5));
+                BlockHitResult hit = player.level().clip(new ClipContext(eye, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
+                if (hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(click.hit().getBlockPos())
+                        || hit.getDirection() != click.hit().getDirection()) return false;
+            }
+        }
+        return true;
     }
 
     private void walk(Minecraft client, LocalPlayer player) {
