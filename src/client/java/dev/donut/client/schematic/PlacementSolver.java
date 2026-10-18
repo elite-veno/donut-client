@@ -12,6 +12,7 @@ import java.util.function.Predicate;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.item.BlockItem;
@@ -91,11 +92,13 @@ public final class PlacementSolver {
             return Result.failed(Problem.NO_SUPPORT);
         }
         boolean crouching = player.isShiftKeyDown();
-        Click click = look(player, level, player.getEyePosition(), crouching, pos, target, stack, reach, unclickable);
+        // From where the player stands, the spot nearest the crosshair first: the hand moves no further than it must.
+        Vec3 view = player.getViewVector(1.0f);
+        Click click = look(player, level, player.getEyePosition(), crouching, pos, target, stack, reach, unclickable, view);
         if (click != null) return Result.of(click);
         Vec3 feet = player.position();
         Vec3 otherEye = feet.add(0, crouching ? STAND_EYE : CROUCH_EYE, 0);
-        click = look(player, level, otherEye, !crouching, pos, target, stack, reach, unclickable);
+        click = look(player, level, otherEye, !crouching, pos, target, stack, reach, unclickable, view);
         if (click != null) return new Result(click, Problem.STANCE);
         return Result.failed(supported(player, pos, target, stack, unclickable) ? Problem.OUT_OF_REACH : Problem.NO_SUPPORT);
     }
@@ -111,8 +114,8 @@ public final class PlacementSolver {
                                  double reach, LongPredicate unclickable) {
         AABB body = new AABB(feet.x - 0.3, feet.y, feet.z - 0.3, feet.x + 0.3, feet.y + 1.8, feet.z + 0.3);
         if (inTheWay(body, player.level(), pos, target)) return null;
-        Click click = look(player, view, feet.add(0, STAND_EYE, 0), false, pos, target, stack, reach, unclickable);
-        return click != null ? click : look(player, view, feet.add(0, CROUCH_EYE, 0), true, pos, target, stack, reach, unclickable);
+        Click click = look(player, view, feet.add(0, STAND_EYE, 0), false, pos, target, stack, reach, unclickable, null);
+        return click != null ? click : look(player, view, feet.add(0, CROUCH_EYE, 0), true, pos, target, stack, reach, unclickable, null);
     }
 
     /**
@@ -132,7 +135,7 @@ public final class PlacementSolver {
         if (target.getBlock() instanceof FallingBlock && FallingBlock.isFree(player.level().getBlockState(pos.below()))) return false;
         Level level = player.level();
         boolean partnerReady = partnerReady(level, pos, target);
-        List<Spot> spots = spots(view, pos, target, Vec3.atCenterOf(pos), Double.POSITIVE_INFINITY, unclickable, null);
+        List<Spot> spots = spots(view, pos, target, Vec3.atCenterOf(pos), Double.POSITIVE_INFINITY, unclickable, null, null);
         for (boolean crouch : new boolean[] {false, true}) {
             for (float[] look : looks(target)) {
                 Vec3 direction = Vec3.directionFromRotation(look[1], look[0]);
@@ -276,14 +279,17 @@ public final class PlacementSolver {
         return shape.isEmpty() ? null : shape.bounds();
     }
 
-    /** The first spot in view from {@code eye} that, looked at straight on, places the target, in the given stance. */
+    /**
+     * The first spot in view from {@code eye} that, looked at straight on, places the target, in the given stance; with
+     * {@code aim}, the way the player looks now, the spots nearest the crosshair are tried first.
+     */
     private static Click look(LocalPlayer player, BlockGetter view, Vec3 eye, boolean crouch, BlockPos pos, BlockState target,
-                              ItemStack stack, double reach, LongPredicate unclickable) {
+                              ItemStack stack, double reach, LongPredicate unclickable, Vec3 aim) {
         Level level = player.level();
         boolean partnerReady = partnerReady(level, pos, target);
         // The faces to click are those of the view: with blocks not placed yet put in, theirs count too.
-        Click fallback = null;
-        for (Spot spot : spots(view, pos, target, eye, reach, unclickable, eye)) {
+        Click fallback = null, grazing = null;
+        for (Spot spot : spots(view, pos, target, eye, reach, unclickable, eye, aim)) {
             if (!spot.facesEye() || !allowed(view, spot, pos, crouch)) continue;
             Vec3 point = spot.hit().getLocation();
             BlockHitResult seen = seen(view, player, eye, point, spot.hit().getDirection());
@@ -297,12 +303,35 @@ public final class PlacementSolver {
             // drift of the aim: one that keeps its facing a few degrees off either way is taken if there is one, else
             // one that keeps it at least a little off. One right on the edge never: the server may make the other
             // facing of it.
-            if (steady(player, pos, stack, seen, look, crouch, planned, target, partnerReady, STEADY, NUDGE)) return click;
+            if (steady(player, pos, stack, seen, look, crouch, planned, target, partnerReady, STEADY, NUDGE)) {
+                // Aimed for real, a spot the look only just reaches past an edge is kept for last: the crosshair a hair
+                // off lands on the edge instead, and the click is aimed all over again.
+                if (aim == null || clear(view, player, eye, look, seen)) return click;
+                if (grazing == null) grazing = click;
+                continue;
+            }
             if (fallback == null && steady(player, pos, stack, seen, look, crouch, planned, target, partnerReady, MARGIN, NUDGE / 2)) {
                 fallback = click;
             }
         }
-        return fallback;
+        return grazing != null ? grazing : fallback;
+    }
+
+    /** How far off a look may be, in degrees, and still meet the face it is aimed at: about two mouse steps. */
+    private static final float GRAZE = 0.25f;
+
+    /** Whether looks {@link #GRAZE} off either way, and up or down, still meet the same face of the same block. */
+    private static boolean clear(BlockGetter level, LocalPlayer player, Vec3 eye, float[] look, BlockHitResult seen) {
+        double range = player.blockInteractionRange();
+        for (float[] off : new float[][] {{GRAZE, 0}, {-GRAZE, 0}, {0, GRAZE}, {0, -GRAZE}}) {
+            Vec3 direction = Vec3.directionFromRotation(Math.clamp(look[1] + off[1], -90, 90), look[0] + off[0]);
+            BlockHitResult hit = level.clip(new ClipContext(eye, eye.add(direction.scale(range)), ClipContext.Block.OUTLINE,
+                    ClipContext.Fluid.NONE, player));
+            if (hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(seen.getBlockPos()) || hit.getDirection() != seen.getDirection()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -339,6 +368,9 @@ public final class PlacementSolver {
     /** How far, in blocks, the spot a click lands on may be off along the face and still place the same block. */
     private static final double NUDGE = 0.06;
 
+    /** Degrees within which spots by the crosshair count as about as near, and are tried in no set order. */
+    private static final double AIM_MIX = 3;
+
     /** How far a look may drift, in degrees, and still give a steady click the same facing. */
     static final float STEADY = 4;
     /**
@@ -353,7 +385,7 @@ public final class PlacementSolver {
         Level level = player.level();
         int all = 0, facing = 0, allowed = 0, inView = 0, placeable = 0;
         String last = "none";
-        for (Spot spot : spots(level, pos, target, eye, reach, unclickable, eye)) {
+        for (Spot spot : spots(level, pos, target, eye, reach, unclickable, eye, null)) {
             all++;
             if (!spot.facesEye()) continue;
             facing++;
@@ -410,10 +442,11 @@ public final class PlacementSolver {
 
     /**
      * Every spot worth clicking: the faces of the blocks around {@code pos} that face it, and, for a block that takes
-     * more of its item, the block itself; the nearest to {@code eye} first, those facing it before the rest.
+     * more of its item, the block itself; those facing it before the rest, and of those the nearest to {@code eye}
+     * first, or, with {@code aim}, the way the eye looks, those the least turn away.
      */
     private static List<Spot> spots(BlockGetter level, BlockPos pos, BlockState target, Vec3 eye, double reach,
-                                    LongPredicate unclickable, Vec3 facing) {
+                                    LongPredicate unclickable, Vec3 facing, Vec3 aim) {
         List<Spot> spots = new ArrayList<>();
         BlockState here = level.getBlockState(pos);
         boolean adding = BlockRules.sameBlock(here.getBlock(), target.getBlock());
@@ -421,10 +454,17 @@ public final class PlacementSolver {
             if (!unclickable.test(pos.relative(side).asLong())) addSpots(spots, level, pos.relative(side), side.getOpposite(), eye, reach, facing);
             if (adding) addSpots(spots, level, pos, side, eye, reach, facing);
         }
-        // Nearest first, give or take: a click doesn't aim at the very same spot, at the very same angle, each time.
+        // Nearest first, give or take: a click doesn't aim at the very same spot, at the very same angle, each time. By
+        // the turn, spots a few degrees apart are as near as each other, so the nearest of them isn't always the one.
         Map<Spot, Double> order = new IdentityHashMap<>();
         ThreadLocalRandom random = ThreadLocalRandom.current();
-        for (Spot spot : spots) order.put(spot, spot.hit().getLocation().distanceToSqr(eye) * (0.8 + 0.4 * random.nextDouble()));
+        for (Spot spot : spots) {
+            Vec3 to = spot.hit().getLocation().subtract(eye);
+            double away = aim == null ? to.lengthSqr() * (0.8 + 0.4 * random.nextDouble())
+                    : Math.toDegrees(Math.acos(Mth.clamp(aim.dot(to.normalize()), -1, 1))) * (0.8 + 0.4 * random.nextDouble())
+                            + AIM_MIX * random.nextDouble();
+            order.put(spot, away);
+        }
         spots.sort(Comparator.comparing((Spot s) -> !s.facesEye()).thenComparingDouble(order::get));
         return spots;
     }
