@@ -2573,14 +2573,15 @@ public final class SchematicBuilder {
                     show("Took " + name(restockItem) + " out of a shulker box", false);
                     return;
                 }
-                // A box that rolled, slid or fell out of reach is walked to for as long as it can be seen, along a way
-                // there when it is further off or lower down, else straight at it: a server that lags drops it late.
+                // A box that rolled, slid or fell out of reach is walked to for as long as it can be seen: along a way
+                // there, which goes through the middle of a gap a straight walk catches its shoulder on, and straight at
+                // it only once in its block.
                 ItemEntity dropped = restockTicks >= 10 ? droppedBox(level, player) : null;
                 if (restockTicks % 400 == 399) boxWalks = 0;
                 if (dropped != null || walker.active()) {
                     if (walker.active()) {
                         walk(client, player);
-                    } else if (dropped != null && boxWalks < 3 && (Math.abs(dropped.getY() - player.getY()) > 1 || dropped.distanceToSqr(player) > 9)) {
+                    } else if (dropped != null && boxWalks < 3 && !dropped.blockPosition().equals(player.blockPosition())) {
                         boxWalks++;
                         Navigator.Path path = navigator(player, false).find(Navigator.standingAt(level, player), node -> {
                             Vec3 stand = node.standing();
