@@ -3006,8 +3006,11 @@ public final class SchematicBuilder {
                 startBreak(at);
                 return true;
             }
-            if (serves < 0 && runOut && reclaimable(player, at, reach)) {
-                if (debug()) LOGGER.info("Short of helper blocks: taking back the one an earlier walk put down at {}", at.toShortString());
+            // One in a spot the build shuts in comes away while it can: once closed round, nothing reaches it, not the cleanup
+            // either.
+            if (serves < 0 && (runOut || plan.enclosed(at)) && reclaimable(player, at, reach)) {
+                if (debug()) LOGGER.info("{}: taking back the helper block an earlier walk put down at {}",
+                        runOut ? "Short of helper blocks" : "Shut in by the build later", at.toShortString());
                 startBreak(at);
                 return true;
             }

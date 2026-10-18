@@ -51,6 +51,29 @@ class BuildPlanTest {
     }
 
     @Test
+    void airShutInByBlocksAndWaterIsEnclosed() {
+        // A 5x4x3 box of stone with two air cells inside, one of them walled off from the rest by water only, and an
+        // air cell open to the outside through a hole in the wall.
+        Map<BlockPos, BlockState> blocks = new LinkedHashMap<>();
+        for (int x = 0; x < 5; x++) for (int y = 0; y < 3; y++) for (int z = 0; z < 4; z++) blocks.put(new BlockPos(x, y, z), Blocks.STONE.defaultBlockState());
+        BlockPos inside = new BlockPos(1, 1, 1), behindWater = new BlockPos(3, 1, 1), water = new BlockPos(2, 1, 1);
+        BlockPos open = new BlockPos(1, 1, 2), hole = new BlockPos(1, 1, 3);
+        blocks.remove(inside);
+        blocks.remove(behindWater);
+        blocks.put(water, Blocks.WATER.defaultBlockState());
+        blocks.remove(open);
+        blocks.remove(hole);
+        blocks.put(new BlockPos(1, 1, 2), Blocks.STONE.defaultBlockState());
+        BuildPlan plan = BuildPlan.of(blocks, true);
+
+        assertTrue(plan.enclosed(inside), "air with stone all round");
+        assertTrue(plan.enclosed(behindWater), "water doesn't open it");
+        assertFalse(plan.enclosed(hole), "a hole in the outer wall is outside");
+        assertFalse(plan.enclosed(new BlockPos(9, 9, 9)), "outside the build");
+        assertFalse(plan.enclosed(new BlockPos(2, 1, 1)), "a block of the build itself");
+    }
+
+    @Test
     void waterWaitsOnlyForTheSolidBlocksOfItsOwnLayerAndThoseBelow() {
         Map<BlockPos, BlockState> blocks = new LinkedHashMap<>();
         BlockPos lowWater = new BlockPos(1, 0, 0), stone = new BlockPos(0, 1, 0), highWater = new BlockPos(1, 1, 0);

@@ -1,6 +1,7 @@
 package dev.donut.client.schematic;
 
 import dev.donut.client.finder.LoadedChunks;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -201,6 +202,58 @@ public final class BuildPlan {
     public int indexOf(BlockPos pos) { return indexOf(pos.asLong()); }
 
     public int indexOf(long pos) { return index.getOrDefault(pos, -1); }
+
+    /** See {@link #enclosed}; worked out on first use. */
+    private boolean[] enclosed;
+
+    /**
+     * Whether the spot is open in the finished build, air there, but shut off from the outside by it: by its blocks and
+     * its water, which a player can't stand in to reach past. A helper block left there is out of reach once the build
+     * closes round it, as in a tunnel under a farm's floor.
+     */
+    public boolean enclosed(BlockPos pos) {
+        int x0 = (int) bounds.minX - 1, y0 = (int) bounds.minY - 1, z0 = (int) bounds.minZ - 1;
+        int sx = (int) bounds.getXsize() + 2, sy = (int) bounds.getYsize() + 2, sz = (int) bounds.getZsize() + 2;
+        int x = pos.getX() - x0, y = pos.getY() - y0, z = pos.getZ() - z0;
+        if (x <= 0 || y <= 0 || z <= 0 || x >= sx - 1 || y >= sy - 1 || z >= sz - 1) return false;
+        if (enclosed == null) {
+            // Flooded from the shell round the build through the spots it leaves air; what the flood doesn't reach is shut in.
+            boolean[] reached = new boolean[sx * sy * sz];
+            ArrayDeque<Integer> queue = new ArrayDeque<>();
+            for (int cx = 0; cx < sx; cx++) {
+                for (int cy = 0; cy < sy; cy++) {
+                    for (int cz = 0; cz < sz; cz++) {
+                        if (cx > 0 && cy > 0 && cz > 0 && cx < sx - 1 && cy < sy - 1 && cz < sz - 1) continue;
+                        int k = (cx * sy + cy) * sz + cz;
+                        reached[k] = true;
+                        queue.add(k);
+                    }
+                }
+            }
+            int[][] steps = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+            while (!queue.isEmpty()) {
+                int k = queue.poll();
+                int cx = k / (sy * sz), cy = k / sz % sy, cz = k % sz;
+                for (int[] step : steps) {
+                    int nx = cx + step[0], ny = cy + step[1], nz = cz + step[2];
+                    if (nx < 0 || ny < 0 || nz < 0 || nx >= sx || ny >= sy || nz >= sz) continue;
+                    int nk = (nx * sy + ny) * sz + nz;
+                    if (reached[nk]) continue;
+                    int i = indexOf(BlockPos.asLong(nx + x0, ny + y0, nz + z0));
+                    if (i >= 0 && !targets[i].isAir()) continue;
+                    reached[nk] = true;
+                    queue.add(nk);
+                }
+            }
+            enclosed = new boolean[sx * sy * sz];
+            for (int k = 0; k < reached.length; k++) {
+                if (reached[k]) continue;
+                int i = indexOf(BlockPos.asLong(k / (sy * sz) + x0, k / sz % sy + y0, k % sz + z0));
+                enclosed[k] = i < 0 || targets[i].isAir();
+            }
+        }
+        return enclosed[(x * sy + y) * sz + z];
+    }
 
     /**
      * The blocks of an earlier group than block {@code i} in its layer, at most {@link #NEAR} blocks away across it: with
