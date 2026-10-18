@@ -645,7 +645,7 @@ public final class SchematicBuilder {
         candidates.sort(Comparator.comparingInt((Integer i) -> Vec3.atCenterOf(plan.pos(i)).distanceToSqr(eye) > inReach ? 2
                         : creative || atHand.contains(BlockRules.item(plan.target(i))) ? 0 : 1)
                 .thenComparingDouble(i -> Vec3.atCenterOf(plan.pos(i)).distanceToSqr(eye)));
-        if (settings().walk && wet(player.level(), player.blockPosition())) {
+        if (settings().walk && wetSoon(player.level(), player.blockPosition(), new HashMap<>())) {
             // Water running past pushes the player about and spoils every look: out of it first, onto dry ground.
             nextAction = System.nanoTime() + 250_000_000L;
             if (planWalk(client, player, candidates, materials, layerNumber, lift)) return;
@@ -939,9 +939,45 @@ public final class SchematicBuilder {
         return state.canBeReplaced() || !state.getFluidState().isEmpty();
     }
 
-    /** Whether water is where a player standing with the feet in {@code feet} has their feet or head. */
-    private static boolean wet(Level level, BlockPos feet) {
-        return !level.getFluidState(feet).isEmpty() || !level.getFluidState(feet.above()).isEmpty();
+    /**
+     * Whether water is where a player standing with the feet in {@code feet} has their feet or head, or soon will be: a
+     * flow runs a block every few ticks, so water on that level within a flow's length, with open cells between, gets
+     * there while they stand and work, as does water just above the head. Worked out once a cell, in {@code known}.
+     */
+    static boolean wetSoon(BlockGetter level, BlockPos feet, Map<Long, Boolean> known) {
+        Boolean cached = known.get(feet.asLong());
+        if (cached != null) return cached;
+        boolean wet = reaches(level, feet) || reaches(level, feet.above());
+        for (int up = 2; !wet && up <= 4; up++) {
+            BlockPos above = feet.above(up);
+            if (!runsInto(level, above)) break;
+            wet = !level.getFluidState(above).isEmpty();
+        }
+        known.put(feet.asLong(), wet);
+        return wet;
+    }
+
+    /** Whether water could run along the level into the cell at {@code start} from water a flow's length away at most. */
+    private static boolean reaches(BlockGetter level, BlockPos start) {
+        if (!level.getFluidState(start).isEmpty()) return true;
+        if (!runsInto(level, start)) return false;
+        Map<Long, Integer> run = new HashMap<>();
+        ArrayDeque<BlockPos> open = new ArrayDeque<>();
+        run.put(start.asLong(), 0);
+        open.add(start);
+        while (!open.isEmpty()) {
+            BlockPos pos = open.poll();
+            int steps = run.get(pos.asLong());
+            if (steps >= 7) continue;
+            for (Direction side : Direction.Plane.HORIZONTAL) {
+                BlockPos next = pos.relative(side);
+                if (run.containsKey(next.asLong()) || !runsInto(level, next)) continue;
+                if (!level.getFluidState(next).isEmpty()) return true;
+                run.put(next.asLong(), steps + 1);
+                open.add(next);
+            }
+        }
+        return false;
     }
 
     /**
@@ -1207,12 +1243,28 @@ public final class SchematicBuilder {
             return;
         }
         if (planned.act() != Act.ADJUST && !player.getMainHandItem().is(planned.item()) && !player.hasInfiniteMaterials()) return;
+        if (planned.act() == Act.PLACE && !placesTarget(player, planned, hit)) {
+            // On the face, but a hair off where the click was worked out, on the other side of a door's middle say, which
+            // hinges it the other way: worked out again, from another spot on the face.
+            if (debug()) LOGGER.info("A click at {} wouldn't give {}: aiming again", hit.getLocation(), plan.target(planned.index()));
+            if (!player.blockPosition().equals(missedAt)) missedHere.clear();
+            missedAt = player.blockPosition();
+            missedHere.add(planned.index());
+            return;
+        }
         InteractionResult result = planned.act() == Act.POUR ? client.gameMode.useItem(player, InteractionHand.MAIN_HAND)
                 : client.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
         if (result instanceof InteractionResult.Success success && success.swingSource() == InteractionResult.SwingSource.CLIENT) {
             player.swing(InteractionHand.MAIN_HAND);
         }
         clicked(planned, hit);
+    }
+
+    /** Whether clicking where the crosshair is, as the player looks and stands now, places the planned block. */
+    private boolean placesTarget(LocalPlayer player, Aim planned, BlockHitResult hit) {
+        BlockState placed = PlacementSolver.simulate(player, planned.at(), new ItemStack(planned.item()), hit, player.getYRot(),
+                player.getXRot(), player.isShiftKeyDown(), false);
+        return placed != null && BlockRules.placementMatches(placed, plan.target(planned.index()));
     }
 
     /** Whether a look places the planned block just as the look it was worked out with does. */
@@ -1510,11 +1562,12 @@ public final class SchematicBuilder {
         Map<Long, Boolean> verified = new HashMap<>();
         int[] seen = new int[3];
         List<Navigator.Node> sample = new ArrayList<>();
+        Map<Long, Boolean> wetCells = new HashMap<>();
         Navigator.Goal goal = node -> {
             seen[0]++;
             if (uselessSpots.contains(node.key()) || traps.contains(node.key())) return 0;
             // Waded through, never stood in: water would push the player off every look.
-            if (wet(player.level(), node.feetCell())) return 0;
+            if (wetSoon(player.level(), node.feetCell(), wetCells)) return 0;
             Vec3 feet = node.standing(), eye = node.eye();
             AABB body = new AABB(node.x() + 0.2, node.feet(), node.z() + 0.2, node.x() + 0.8, node.feet() + 1.8, node.z() + 0.8);
             List<Integer> inReach = new ArrayList<>();

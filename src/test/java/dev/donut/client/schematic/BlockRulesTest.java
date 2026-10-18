@@ -246,4 +246,18 @@ class BlockRulesTest {
         assertFalse(BlockRules.holdsFluid(Blocks.OAK_SLAB.defaultBlockState().setValue(BlockStateProperties.WATERLOGGED, true), water),
                 "a waterlogged slab is a slab");
     }
+
+    @Test
+    void glowLichenGoesOnTheFacesTheTargetHas() {
+        BlockState floor = Blocks.GLOW_LICHEN.defaultBlockState().setValue(BlockStateProperties.DOWN, true);
+        BlockState wall = Blocks.GLOW_LICHEN.defaultBlockState().setValue(BlockStateProperties.WEST, true);
+        BlockState both = floor.setValue(BlockStateProperties.WEST, true);
+        assertFalse(BlockRules.placementMatches(wall, floor), "on the wall where the target has it on the floor");
+        assertTrue(BlockRules.placementMatches(floor, floor));
+        assertTrue(BlockRules.placementMatches(floor, both), "one of its faces so far");
+        assertEquals(1, BlockRules.missing(floor, both), "the other face still goes in");
+        assertEquals(2, BlockRules.itemsNeeded(Blocks.AIR.defaultBlockState(), both));
+        assertFalse(BlockRules.satisfied(floor, both));
+        assertTrue(BlockRules.satisfied(both, both));
+    }
 }

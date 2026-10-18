@@ -28,6 +28,7 @@ import net.minecraft.world.level.block.HopperBlock;
 import net.minecraft.world.level.block.LeverBlock;
 import net.minecraft.world.level.block.LightningRodBlock;
 import net.minecraft.world.level.block.LiquidBlock;
+import net.minecraft.world.level.block.MultifaceBlock;
 import net.minecraft.world.level.block.NoteBlock;
 import net.minecraft.world.level.block.ObserverBlock;
 import net.minecraft.world.level.block.PoweredBlock;
@@ -165,6 +166,12 @@ public final class BlockRules {
      */
     public static boolean placementMatches(BlockState placed, BlockState target, boolean partnerReady) {
         if (!sameBlock(placed.getBlock(), target.getBlock())) return false;
+        // Glow lichen and the like grow on the faces they were clicked onto: one on a face the target leaves bare is wrong.
+        if (target.getBlock() instanceof MultifaceBlock) {
+            for (Direction side : Direction.values()) {
+                if (on(placed, side) && !on(target, side)) return false;
+            }
+        }
         for (Property<?> property : target.getProperties()) {
             if (!placed.hasProperty(property)) continue;
             Object want = target.getValue(property), got = placed.getValue(property);
@@ -199,10 +206,28 @@ public final class BlockRules {
         return placementMatches(current, target) && missing(current, target) == 0 && adjustClicks(current, target) == 0;
     }
 
-    /** How many more of the item still go in the same spot: candles, sea pickles, snow layers, the second slab. */
+    /** Whether a glow lichen or the like grows on {@code side} of its spot. */
+    private static boolean on(BlockState state, Direction side) {
+        return state.hasProperty(MultifaceBlock.getFaceProperty(side)) && state.getValue(MultifaceBlock.getFaceProperty(side));
+    }
+
+    /** How many faces of its spot a glow lichen or the like grows on. */
+    private static int faces(BlockState state) {
+        int faces = 0;
+        for (Direction side : Direction.values()) if (on(state, side)) faces++;
+        return faces;
+    }
+
+    /**
+     * How many more of the item still go in the same spot: candles, sea pickles, snow layers, the second slab, a glow
+     * lichen's other faces.
+     */
     public static int missing(BlockState current, BlockState target) {
         if (current.getBlock() != target.getBlock()) return 0;
         int missing = 0;
+        if (target.getBlock() instanceof MultifaceBlock) {
+            for (Direction side : Direction.values()) if (on(target, side) && !on(current, side)) missing++;
+        }
         for (IntegerProperty count : COUNTS) {
             if (target.hasProperty(count)) missing += Math.max(0, target.getValue(count) - current.getValue(count));
         }
@@ -215,6 +240,7 @@ public final class BlockRules {
     public static int itemsNeeded(BlockState current, BlockState target) {
         if (current.getBlock() == target.getBlock()) return missing(current, target);
         for (IntegerProperty count : COUNTS) if (target.hasProperty(count)) return target.getValue(count);
+        if (target.getBlock() instanceof MultifaceBlock) return Math.max(1, faces(target));
         boolean doubleSlab = target.hasProperty(BlockStateProperties.SLAB_TYPE)
                 && target.getValue(BlockStateProperties.SLAB_TYPE) == SlabType.DOUBLE;
         return doubleSlab ? 2 : 1;

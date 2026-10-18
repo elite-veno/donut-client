@@ -67,4 +67,16 @@ class FloodTest {
         for (int z = -10; z <= 10; z++) walled.put(new BlockPos(1, 65, z), Blocks.STONE.defaultBlockState());
         assertFalse(SchematicBuilder.floods(world(walled), new BlockPos(3, 65, 0), new Vec3(0.5, 65, 0.5)));
     }
+
+    @Test
+    void waterOnTheSameLevelNearbyRunsToWhereThePlayerWouldStand() {
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        blocks.put(new BlockPos(3, 65, 0), Blocks.WATER.defaultBlockState());
+        assertTrue(SchematicBuilder.wetSoon(world(blocks), new BlockPos(0, 65, 0), new HashMap<>()), "three blocks off, on open ground");
+        assertFalse(SchematicBuilder.wetSoon(world(blocks), new BlockPos(0, 66, 0), new HashMap<>()), "standing a block higher");
+        blocks.put(new BlockPos(2, 65, 0), Blocks.STONE.defaultBlockState());
+        blocks.put(new BlockPos(2, 66, 0), Blocks.STONE.defaultBlockState());
+        for (int z = -8; z <= 8; z++) blocks.put(new BlockPos(2, 65, z), Blocks.STONE.defaultBlockState());
+        assertFalse(SchematicBuilder.wetSoon(world(blocks), new BlockPos(0, 65, 0), new HashMap<>()), "behind a wall");
+    }
 }

@@ -294,15 +294,29 @@ public final class PlacementSolver {
         return fallback;
     }
 
-    /** Whether the click places the same block with the look a few degrees off in every direction. */
+    /**
+     * Whether the click places the same block with the look a few degrees off in every direction, and with the spot
+     * clicked a little off along the face: a door's hinge, a slab's or a stair's half, goes by which side of the middle
+     * of the face the click lands on.
+     */
     private static boolean steady(LocalPlayer player, BlockPos pos, ItemStack stack, BlockHitResult hit, float[] look, boolean crouch,
                                   boolean planned, BlockState target, boolean partnerReady) {
         for (float[] off : new float[][] {{STEADY, 0}, {-STEADY, 0}, {0, STEADY}, {0, -STEADY}}) {
             BlockState placed = simulate(player, pos, stack, hit, look[0] + off[0], Math.clamp(look[1] + off[1], -90, 90), crouch, planned);
             if (placed == null || !BlockRules.placementMatches(placed, target, partnerReady)) return false;
         }
+        for (Direction along : Direction.values()) {
+            if (along.getAxis() == hit.getDirection().getAxis()) continue;
+            Vec3 moved = hit.getLocation().add(along.getStepX() * NUDGE, along.getStepY() * NUDGE, along.getStepZ() * NUDGE);
+            BlockHitResult nudged = new BlockHitResult(moved, hit.getDirection(), hit.getBlockPos(), hit.isInside());
+            BlockState placed = simulate(player, pos, stack, nudged, look[0], look[1], crouch, planned);
+            if (placed == null || !BlockRules.placementMatches(placed, target, partnerReady)) return false;
+        }
         return true;
     }
+
+    /** How far, in blocks, the spot a click lands on may be off along the face and still place the same block. */
+    private static final double NUDGE = 0.06;
 
     /** How far a look may drift, in degrees, and still give a steady click the same facing. */
     static final float STEADY = 4;
