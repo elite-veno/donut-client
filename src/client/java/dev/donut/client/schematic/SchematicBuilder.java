@@ -809,6 +809,8 @@ public final class SchematicBuilder {
             nextAction = System.nanoTime();
             return;
         }
+        // Last, from the top of a pillar of helper blocks with nothing in reach: down a block.
+        if (settings().walk && stepDown(player)) return;
         next = nearest < 0 ? null : plan.pos(nearest);
         nextIndex = nearest;
         String where = " in layer " + layerNumber + " of " + plan.layers().size() + " (y " + layerY + ")";
@@ -983,9 +985,12 @@ public final class SchematicBuilder {
         return wet;
     }
 
-    /** Where water or lava went in, or a cell was opened, over the last ten seconds: water there may still be spreading. */
+    /**
+     * Where water or lava went in, or a cell was opened, over the last four seconds: water there may still be spreading.
+     * It runs a block every five ticks, a flow's length in under two seconds.
+     */
     private List<BlockPos> recentPours() {
-        pours.values().removeIf(at -> tick - at > 200);
+        pours.values().removeIf(at -> tick - at > 80);
         List<BlockPos> recent = new ArrayList<>(pours.size());
         for (long key : pours.keySet()) recent.add(BlockPos.of(key));
         return recent;
@@ -1099,6 +1104,19 @@ public final class SchematicBuilder {
      * opens one: the builder's own blocks, which come away at the end anyway. False when the player isn't shut in, or
      * no helper block in reach would let them out.
      */
+    /**
+     * When no place to stand is found from where the player is, and they stand on a helper block, as on top of a pillar
+     * they climbed, takes that block away, as a player digs down a pillar: a block lower, other places may be reached.
+     */
+    private boolean stepDown(LocalPlayer player) {
+        BlockPos under = BlockPos.containing(player.getX(), player.getY() - 0.05, player.getZ());
+        if (!player.onGround() || !helpers.containsKey(under.asLong())) return false;
+        if (!inView(player, player.getEyePosition(), under, player.blockInteractionRange() - 0.25)) return false;
+        if (debug()) LOGGER.info("No place to stand from up here: taking away the helper block underfoot at {}", under.toShortString());
+        startBreak(under);
+        return true;
+    }
+
     private boolean breakOut(LocalPlayer player) {
         Level level = player.level();
         if (exitFrom(player, level, Navigator.standingAt(level, player), null) != null) return false;
