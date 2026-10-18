@@ -206,6 +206,14 @@ final class Walker {
         // In water the current carries a player who stands to turn: there they walk on while turning. On open ground,
         // with no edge to swing out over, they walk on while turning too; near an edge they turn all but fully first.
         boolean openWay = wayOpen;
+        // There, facing well away, a player sets off at once, stepping back or sideways while they turn toward the way,
+        // rather than turning on the spot first.
+        if (openWay && off > 45 && player.onGround() && !wading && distance >= 0.5) {
+            strafe(client, player, dx, dz, true);
+            client.options.keyJump.setDown(false);
+            client.options.keySprint.setDown(false);
+            return State.WALKING;
+        }
         boolean facing = off <= turnFirst || !player.onGround() || wading || distance < 0.5;
         // Near the end of the path, let go a little early: friction carries the rest, much further on ice, where a
         // player who has come to a stop short of the spot steps on again.
@@ -291,7 +299,10 @@ final class Walker {
         if (climbLook == 0) climbLook = 88 + ThreadLocalRandom.current().nextFloat() * 2;
         float want = climbLook;
         if (Math.abs(want - player.getXRot()) > 1) {
+            // Standing still over the spot, the look down is as brisk as a turn round before setting off.
+            head.boost(TURN_ROUND);
             tilt(player, want);
+            head.boost(1);
             client.options.keyJump.setDown(false);
             return State.WALKING;
         }
