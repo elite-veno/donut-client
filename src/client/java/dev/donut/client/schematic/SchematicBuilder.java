@@ -3168,6 +3168,11 @@ public final class SchematicBuilder {
         if (cleanupTarget != null) {
             BlockPos target = cleanupTarget;
             cleanupTarget = null;
+            if (!tops.contains(target) && helpers.containsKey(target.asLong())) {
+                // Covered on the way by a helper block of the climb itself: a miss, as the climb didn't bring it in reach.
+                cleanupFailed.add(target.asLong() * 31 + here.key());
+                cleanupMisses.merge(target.asLong(), 1, Integer::sum);
+            }
             if (tops.contains(target)) {
                 if (!missedMining(player, target) && inView(player, player.getEyePosition(), target, reach) && safeToBreak(player, target)) {
                     startBreak(target);
@@ -3220,7 +3225,10 @@ public final class SchematicBuilder {
                     if (cleanupBridges >= CLEANUP_BRIDGES) navigator.noBridges();
                     boolean missedHere = missedMining(player, top);
                     long topKey = top.asLong();
+                    // Never from up on its own column: a climb there puts a helper block on top of it, which is then the
+                    // top, and comes away under the player's feet, again and again.
                     path = navigator.find(here, node -> node.floor().equals(top) && !groundUnder(player.level(), top)
+                            || node.x() == top.getX() && node.z() == top.getZ() && node.feet() > top.getY() + 1
                             || missedHere && node.key() == here.key() || cleanupFailed.contains(topKey * 31 + node.key()) ? 0
                             : viewScore(player, node.eye(), top, reach));
                 }
