@@ -2232,7 +2232,9 @@ public final class SchematicBuilder {
      * while it goes on; false when no face is in view from here.
      */
     private boolean mine(Minecraft client, LocalPlayer player, BlockPos pos) {
-        PlacementSolver.Click face = PlacementSolver.use(player, player.getEyePosition(), pos, player.blockInteractionRange() + 0.5,
+        // Within the reach the crosshair itself traces, not beyond it: a face half a block further looks fine to the
+        // search and leaves the crosshair on nothing.
+        PlacementSolver.Click face = PlacementSolver.use(player, player.getEyePosition(), pos, player.blockInteractionRange(),
                 client.level.getBlockState(pos));
         if (face == null) return false;
         if (!pos.equals(minePos)) {
