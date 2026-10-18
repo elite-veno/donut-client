@@ -1,5 +1,6 @@
 package dev.donut.client.schematic;
 
+import java.util.Arrays;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.random.RandomGenerator;
 import net.minecraft.client.Minecraft;
@@ -11,8 +12,9 @@ import net.minecraft.util.Mth;
  * never a jump of the camera from one spot to the next. Yaw and pitch keep their own speeds, so the view curves a
  * little on its way, and every turn has a pace of its own. A longer turn goes quicker than a short one, as a hand
  * sweeping further does, rather than at one top speed. On its way it moves by whole mouse steps of the player's
- * sensitivity, a little unsteadily, and it comes to rest exactly on the target; an aim at a block now and then lands a
- * little off first and corrects.
+ * sensitivity, a little unsteadily, and comes to rest by whole mouse steps too, as near the target as they go: an aim
+ * at a block on the nearest look that still clicks it as planned. An aim at a block now and then lands a little off first
+ * and corrects.
  */
 final class Head {
     /**
@@ -61,27 +63,56 @@ final class Head {
     private int way;
     /**
      * Whether the view rests on the target. It then holds still while the look worked out again from the eye of a
-     * player still sliding stays within {@link #HOLD} of it: a click goes out only after a tick the look stayed put, as
-     * the server judges it by the look of the tick before. Further off, it follows onto it exactly.
+     * player still sliding stays as near as a mouse step gets it, or for an aim with a check, while the look it rests
+     * on still passes: a click goes out only after a tick the look stayed put, as the server judges it by the look of
+     * the tick before. Further off, it follows on in whole mouse steps.
      */
     private boolean resting;
-    /** How far, in degrees, a target may creep from a view resting on it before the view follows. */
+    /** The least, in degrees, a target may creep from a view resting on it before the view follows. */
     private static final float HOLD = 0.05f;
+    /**
+     * How many mouse steps either way of an aim's target a landing looks for a look that passes its check: a look that
+     * only just clears an edge has one on the open side a step or two away.
+     */
+    private static final int LANDING_STEPS = 3;
+    /** Landings with no look in whole mouse steps that passed their check, which went onto the target exactly instead. */
+    private int offGrid;
 
-    /** One tick of turning toward {@code yaw} and {@code pitch}, straight there; true once the view rests on them. */
-    boolean turn(LocalPlayer player, float yaw, float pitch) { return move(player, yaw, pitch, false); }
+    /**
+     * Whether a look, as yaw and pitch, does what an aim is for: the crosshair on the face meant, the block it places
+     * the one planned.
+     */
+    @FunctionalInterface
+    interface Check {
+        boolean ok(float yaw, float pitch);
+    }
+
+    /**
+     * One tick of turning toward {@code yaw} and {@code pitch}, straight there; true once the view rests on them, as
+     * near as whole mouse steps go.
+     */
+    boolean turn(LocalPlayer player, float yaw, float pitch) { return move(player, yaw, pitch, false, null); }
 
     /**
      * One tick of aiming at a spot to click, the target of {@link #turn}: some aims land a little off first and
      * correct, and a turn about may go the long way round. Not for turns while walking, which an overshoot would swing
-     * off a narrow path. True once the view rests on the spot itself.
+     * off a narrow path. True once the view rests on the spot, as near as whole mouse steps go.
      */
-    boolean aim(LocalPlayer player, float yaw, float pitch) { return move(player, yaw, pitch, true); }
+    boolean aim(LocalPlayer player, float yaw, float pitch) { return move(player, yaw, pitch, true, null); }
+
+    /**
+     * {@link #aim}, coming to rest on the look in whole mouse steps nearest the spot that passes {@code check}, and
+     * holding still while the look it rests on still passes.
+     */
+    boolean aim(LocalPlayer player, float yaw, float pitch, Check check) { return move(player, yaw, pitch, true, check); }
 
     /** One tick of turning the yaw toward {@code yaw}, the pitch staying where it is; true once there. */
     boolean turnYaw(LocalPlayer player, float yaw) {
         return turn(player, yaw, player.getXRot());
     }
+
+    /** How many landings so far found no look in whole mouse steps that passed their check. */
+    int offGrid() { return offGrid; }
 
     /** Turns from the next turn on at {@code pace} times the usual pace. */
     void pace(float pace) { this.pace = pace; }
@@ -103,18 +134,23 @@ final class Head {
         resting = false;
     }
 
-    private boolean move(LocalPlayer player, float yaw, float pitch, boolean aiming) {
+    private boolean move(LocalPlayer player, float yaw, float pitch, boolean aiming, Check check) {
         float[] view = {player.getYRot(), player.getXRot()};
-        boolean there = step(view, yaw, pitch, aiming, mouseStep(), ThreadLocalRandom.current());
+        boolean there = step(view, yaw, pitch, aiming, check, mouseStep(), ThreadLocalRandom.current());
         set(player, view[0], view[1]);
         return there;
     }
 
-    /**
-     * One tick of turning {@code view}, as {yaw, pitch}, toward {@code yaw} and {@code pitch}: on the way by whole
-     * multiples of {@code mouse} degrees, the last of it exactly; true once it rests on them.
-     */
     boolean step(float[] view, float yaw, float pitch, boolean aiming, float mouse, RandomGenerator random) {
+        return step(view, yaw, pitch, aiming, null, mouse, random);
+    }
+
+    /**
+     * One tick of turning {@code view}, as {yaw, pitch}, toward {@code yaw} and {@code pitch}, by whole multiples of
+     * {@code mouse} degrees, the landing too; true once it rests on them, or with a {@code check}, on a look by them
+     * that passes it.
+     */
+    boolean step(float[] view, float yaw, float pitch, boolean aiming, Check check, float mouse, RandomGenerator random) {
         pitch = Mth.clamp(pitch, -90, 90);
         if (Float.isNaN(lastYaw) || Math.abs(Mth.wrapDegrees(yaw - lastYaw)) > NEW_TURN || Math.abs(pitch - lastPitch) > NEW_TURN) {
             begin(Mth.wrapDegrees(yaw - view[0]), pitch - view[1], aiming, random);
@@ -125,16 +161,17 @@ final class Head {
         float dyaw = Mth.wrapDegrees(yaw + missYaw - view[0]), dpitch = Mth.clamp(pitch + missPitch, -90, 90) - view[1];
         // The long way round, until what is left of it is the shorter way too.
         if (way != 0 && Math.signum(dyaw) == -way && Math.abs(dyaw) > 90) dyaw += 360 * way;
-        if (resting && Math.abs(dyaw) < HOLD && Math.abs(dpitch) < HOLD) return true;
+        if (resting && holds(view, dyaw, dpitch, check, mouse)) return true;
         resting = false;
-        // Close enough, onto it exactly: a look that only just clears an edge must be the look the click was worked out
-        // with.
-        if (Math.abs(dyaw) < THERE && Math.abs(dpitch) < THERE) return land(view, dyaw, dpitch, missing);
+        // Close enough, onto it: as near as whole mouse steps go, on a look the check passes.
+        if (Math.abs(dyaw) < THERE && Math.abs(dpitch) < THERE) return land(view, dyaw, dpitch, missing, check, mouse);
         float quick = boost;
         yawSpeed = speed(dyaw, yawSpeed, peak * quick, push * quick);
         pitchSpeed = speed(dpitch, pitchSpeed, peak * pitchPart * quick, push * pitchPart * quick);
         // Come to rest on the target this tick: there now, not a tick later.
-        if (Math.abs(dyaw - yawSpeed) < THERE && Math.abs(dpitch - pitchSpeed) < THERE) return land(view, dyaw, dpitch, missing);
+        if (Math.abs(dyaw - yawSpeed) < THERE && Math.abs(dpitch - pitchSpeed) < THERE) {
+            return land(view, dyaw, dpitch, missing, check, mouse);
+        }
         // A hand is a little uneven in how far it gets each tick, and aiming a little unsteady across its way, the more
         // so the quicker it goes; the speeds stay as they were, so it doesn't add up, and it never gets past the target.
         // Not across on a walk, whose turns keep the pitch they have, and would wander off with it.
@@ -148,12 +185,23 @@ final class Head {
     }
 
     /**
-     * The last of a movement, onto where it was headed: the target, true; or the spot a little off it an aim landed on
-     * first, false, the correction to follow from rest, as the hand stops before it moves on.
+     * Whether a view resting on its target stays put: while the look it has still passes the check; without one, while
+     * no whole mouse step would bring it nearer the target.
      */
-    private boolean land(float[] view, float dyaw, float dpitch, boolean missing) {
-        view[0] += dyaw;
-        view[1] = Mth.clamp(view[1] + dpitch, -90, 90);
+    private static boolean holds(float[] view, float dyaw, float dpitch, Check check, float mouse) {
+        if (check != null) return check.ok(view[0], view[1]);
+        float near = Math.max(HOLD, mouse * 0.5f + 1e-4f);
+        return Math.abs(dyaw) <= near && Math.abs(dpitch) <= near;
+    }
+
+    /**
+     * The last of a movement, onto where it was headed, in whole mouse steps: the target, true; or the spot a little off
+     * it an aim landed on first, false, the correction to follow from rest, as the hand stops before it moves on.
+     */
+    private boolean land(float[] view, float dyaw, float dpitch, boolean missing, Check check, float mouse) {
+        float[] onto = landing(view, dyaw, dpitch, missing ? null : check, mouse);
+        view[0] += onto[0];
+        view[1] = Mth.clamp(view[1] + onto[1], -90, 90);
         yawSpeed = pitchSpeed = 0;
         if (missing) {
             missYaw = missPitch = 0;
@@ -164,6 +212,32 @@ final class Head {
         way = 0;
         resting = true;
         return true;
+    }
+
+    /**
+     * How far to move to land {@code dyaw}, {@code dpitch} away, as yaw and pitch: by whole mouse steps, as a mouse
+     * moves the view, the nearest such look to the target; with a {@code check}, the nearest that passes it. Only when
+     * none a few steps round passes, exactly onto the target, the look the click was worked out with.
+     */
+    private float[] landing(float[] view, float dyaw, float dpitch, Check check, float mouse) {
+        if (mouse <= 0) return new float[] {dyaw, dpitch};
+        int yawSteps = Math.round(dyaw / mouse), pitchSteps = Math.round(dpitch / mouse);
+        if (check == null) return new float[] {yawSteps * mouse, pitchSteps * mouse};
+        int side = 2 * LANDING_STEPS + 1;
+        Integer[] order = new Integer[side * side];
+        float[] off = new float[side * side];
+        for (int n = 0; n < order.length; n++) {
+            order[n] = n;
+            float y = (yawSteps + n / side - LANDING_STEPS) * mouse - dyaw, p = (pitchSteps + n % side - LANDING_STEPS) * mouse - dpitch;
+            off[n] = y * y + p * p;
+        }
+        Arrays.sort(order, (a, b) -> Float.compare(off[a], off[b]));
+        for (int n : order) {
+            float y = (yawSteps + n / side - LANDING_STEPS) * mouse, p = (pitchSteps + n % side - LANDING_STEPS) * mouse;
+            if (check.ok(view[0] + y, Mth.clamp(view[1] + p, -90, 90))) return new float[] {y, p};
+        }
+        offGrid++;
+        return new float[] {dyaw, dpitch};
     }
 
     /** Picks the pace of a turn {@code dyaw}, {@code dpitch} long, and for an aim whether it lands off first. */
@@ -228,8 +302,8 @@ final class Head {
 
     /** How far one mouse count turns the camera with the player's sensitivity, as Minecraft's mouse handler works it out. */
     static float mouseStep() {
-        double f = Minecraft.getInstance().options.sensitivity().get() * 0.6 + 0.2;
-        return (float) (f * f * f * 8.0 * 0.15);
+        double f = Minecraft.getInstance().options.sensitivity().get() * 0.6F + 0.2F;
+        return (float) (f * f * f * 8.0) * 0.15F;
     }
 
     private static void set(LocalPlayer player, float yaw, float pitch) {

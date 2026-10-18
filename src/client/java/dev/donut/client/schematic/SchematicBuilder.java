@@ -2022,11 +2022,16 @@ public final class SchematicBuilder {
     /**
      * Turns the camera toward a look a little each tick, quickly at first and slowing as it closes in, as a hand on a
      * mouse does; true once it has rested there for as many ticks as set. A tick counts only when the look stayed put
-     * through it: the server judges a click by the look the player had at the end of the tick before.
+     * through it: the server judges a click by the look the player had at the end of the tick before. The view moves by
+     * whole mouse steps, as a mouse moves it, and comes to rest on the nearest such look that passes {@code check}.
      */
-    private boolean looked(LocalPlayer player, float yaw, float pitch) {
+    private boolean looked(LocalPlayer player, float yaw, float pitch, Head.Check check) {
         float yawBefore = player.getYRot(), pitchBefore = player.getXRot();
-        boolean there = head.aim(player, yaw, pitch);
+        int offGrid = head.offGrid();
+        boolean there = head.aim(player, yaw, pitch, check);
+        if (debug() && head.offGrid() != offGrid) {
+            LOGGER.info("No look in whole mouse steps near {} {} passed; landed on it exactly, from {} {}", yaw, pitch, yawBefore, pitchBefore);
+        }
         boolean moved = Math.abs(player.getYRot() - yawBefore) > 1e-3f || Math.abs(player.getXRot() - pitchBefore) > 1e-3f;
         if (!there || moved) {
             restingTicks = 0;
@@ -2041,6 +2046,51 @@ public final class SchematicBuilder {
         Vec3 eye = player.getEyePosition();
         Vec3 end = eye.add(player.getViewVector(1.0f).scale(player.blockInteractionRange()));
         return player.level().clip(new ClipContext(eye, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
+    }
+
+    /** What the crosshair would be on with this look: the same trace, the look put in place for the moment it takes. */
+    private static BlockHitResult crosshair(LocalPlayer player, float yaw, float pitch) {
+        float oldYaw = player.getYRot(), oldPitch = player.getXRot();
+        try {
+            player.setYRot(yaw);
+            player.setXRot(pitch);
+            return crosshair(player);
+        } finally {
+            player.setYRot(oldYaw);
+            player.setXRot(oldPitch);
+        }
+    }
+
+    /** A check that the crosshair, with a look, is on {@code pos}, and on its {@code face} unless that is null. */
+    private static Head.Check onBlock(LocalPlayer player, BlockPos pos, Direction face) {
+        return (yaw, pitch) -> {
+            BlockHitResult hit = crosshair(player, yaw, pitch);
+            return hit.getType() == HitResult.Type.BLOCK && hit.getBlockPos().equals(pos) && (face == null || hit.getDirection() == face);
+        };
+    }
+
+    /**
+     * Whether a click with this look goes where it was planned: the crosshair on the face worked out, a gate opened from
+     * the side that leaves it facing as it should, and a block placed as planned, a margin off any edge between two
+     * facings.
+     */
+    private boolean clicksAsPlanned(LocalPlayer player, Aim planned, float yaw, float pitch) {
+        BlockHitResult planHit = planned.click().hit();
+        if (!onBlock(player, planHit.getBlockPos(), planHit.getDirection()).ok(yaw, pitch)) return false;
+        if (planned.act() == Act.ADJUST && planned.index() >= 0 && plan.target(planned.index()).getBlock() instanceof FenceGateBlock
+                && Direction.fromYRot(yaw) == plan.target(planned.index()).getValue(FenceGateBlock.FACING).getOpposite()) {
+            return false;
+        }
+        if (planned.act() != Act.PLACE) return true;
+        float oldYaw = player.getYRot(), oldPitch = player.getXRot();
+        try {
+            player.setYRot(yaw);
+            player.setXRot(pitch);
+            return placesTarget(player, planned, crosshair(player));
+        } finally {
+            player.setYRot(oldYaw);
+            player.setXRot(oldPitch);
+        }
     }
 
     /** Lines the click up and, once the crosshair rests on the face it was meant for, clicks. */
@@ -2082,7 +2132,7 @@ public final class SchematicBuilder {
                 && Direction.fromYRot(aimed[0]) == plan.target(planned.index()).getValue(FenceGateBlock.FACING).getOpposite()) {
             aimed = new float[] {click.yaw(), click.pitch()};
         }
-        if (!looked(player, aimed[0], aimed[1])) return;
+        if (!looked(player, aimed[0], aimed[1], (yaw, pitch) -> clicksAsPlanned(player, planned, yaw, pitch))) return;
         // The camera turned during the wait since the last click; the click itself waits for its time.
         if (System.nanoTime() - nextClick < 0) return;
         if (planned.act() == Act.PLACE && !headAgrees(player, planned)) return;
@@ -2880,7 +2930,7 @@ public final class SchematicBuilder {
             minePos = pos;
             mineMisses = 0;
         }
-        if (!looked(player, face.yaw(), face.pitch())) return true;
+        if (!looked(player, face.yaw(), face.pitch(), onBlock(player, pos, null))) return true;
         // Keep the crosshair on the face while mining; a small drift of the aim would start over.
         restingTicks = restFor + 1;
         BlockHitResult hit = crosshair(player);
@@ -4208,7 +4258,7 @@ public final class SchematicBuilder {
                     setCrouch(client, boxClick.crouch());
                     return;
                 }
-                if (!looked(player, boxClick.yaw(), boxClick.pitch())) {
+                if (!looked(player, boxClick.yaw(), boxClick.pitch(), onBlock(player, boxClick.hit().getBlockPos(), boxClick.hit().getDirection()))) {
                     if (restockTicks > 60) restockFailed(client, "it couldn't turn to where the shulker box goes");
                     return;
                 }
@@ -4245,7 +4295,7 @@ public final class SchematicBuilder {
                     restockFailed(client, "the shulker box is out of view");
                     return;
                 }
-                if (restockTicks < 4 || !looked(player, open.yaw(), open.pitch())) return;
+                if (restockTicks < 4 || !looked(player, open.yaw(), open.pitch(), onBlock(player, box, null))) return;
                 BlockHitResult hit = crosshair(player);
                 if (hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(box)) return;
                 client.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
