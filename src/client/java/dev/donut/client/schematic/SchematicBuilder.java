@@ -2094,10 +2094,16 @@ public final class SchematicBuilder {
         }
         show((repairing >= 0 ? "Breaking " + plan.target(repairing).getBlock().getName().getString() + " to place it again at "
                 : "Taking away a helper block at ") + breaking.getX() + " " + breaking.getY() + " " + breaking.getZ(), false);
-        if (mine(client, player, breaking) && breakTicks <= 20 * 15) return;
+        // As long as breaking it takes from where the player is, and then some: with the head in water, or off the
+        // ground, a player mines five times slower for each, and a dirt block takes twenty seconds rather than one.
+        float progress = state.getDestroyProgress(player, client.level, breaking);
+        int limit = (int) Math.min(20 * 120, Math.max(20 * 15, 2 / Math.max(progress, 1e-4f) + 40));
+        if (mine(client, player, breaking) && breakTicks <= limit) return;
         // Out of view, or not breaking: it is left for later, from somewhere else.
         client.gameMode.stopDestroyBlock();
-        if (breakTicks > 20 * 15 && repairing < 0) {
+        if (breakTicks > limit && repairing < 0) {
+            if (debug()) LOGGER.info("Leaving the helper block at {}: not broken after {} ticks, at {} of it a tick", breaking.toShortString(),
+                    breakTicks, progress);
             helpersLeft.add(breaking);
             helpers.remove(breaking.asLong());
         }
