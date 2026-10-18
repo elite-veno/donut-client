@@ -54,6 +54,13 @@ final class Head {
     /** The settings' share of the usual pace, and a share more for a brisk turn, as on the spot before setting off. */
     private float pace = 1, boost = 1;
     private float peak = 11, push = 3, pitchPart = 0.8f;
+    /**
+     * How much of its push a turn from a standstill speeds up by this tick: a hand sets off softly, a share at first and
+     * all of it a tick or two later. 1 for a turn already under way.
+     */
+    private float onset = 1;
+    /** The share of the push a turn from rest sets off with, and how much more each tick, at random within these. */
+    private static final float ONSET_MIN = 0.3f, ONSET_MAX = 0.6f, ONSET_RISE_MIN = 0.35f, ONSET_RISE_MAX = 0.5f;
     private float lastYaw = Float.NaN, lastPitch = Float.NaN;
     /** Of every hundred aims long enough, about how many land a little off and correct. */
     private int missChance = 30;
@@ -206,8 +213,9 @@ final class Head {
         // Close enough, onto it: as near as whole mouse steps go, on a look the check passes.
         if (Math.abs(dyaw) < THERE && Math.abs(dpitch) < THERE) return land(view, dyaw, dpitch, missing, check, mouse);
         float quick = boost;
-        yawSpeed = speed(dyaw, yawSpeed, peak * quick, push * quick);
-        pitchSpeed = speed(dpitch, pitchSpeed, peak * pitchPart * quick, push * pitchPart * quick);
+        yawSpeed = speed(dyaw, yawSpeed, peak * quick, push * quick, push * quick * onset);
+        pitchSpeed = speed(dpitch, pitchSpeed, peak * pitchPart * quick, push * pitchPart * quick, push * pitchPart * quick * onset);
+        onset = Math.min(1, onset + ONSET_RISE_MIN + random.nextFloat() * (ONSET_RISE_MAX - ONSET_RISE_MIN));
         // Come to rest on the target this tick: there now, not a tick later.
         if (Math.abs(dyaw - yawSpeed) < THERE && Math.abs(dpitch - pitchSpeed) < THERE) {
             return land(view, dyaw, dpitch, missing, check, mouse);
@@ -287,6 +295,8 @@ final class Head {
         peak = Math.max(PEAK_FLOOR, (PEAK_MIN + random.nextFloat() * (PEAK_MAX - PEAK_MIN)) * share * pace);
         push = (PUSH_MIN + random.nextFloat() * (PUSH_MAX - PUSH_MIN)) * pace;
         pitchPart = 0.65f + random.nextFloat() * 0.3f;
+        // From a standstill a soft start; a turn that changes its target on the way goes on at the speed it has.
+        onset = yawSpeed == 0 && pitchSpeed == 0 ? ONSET_MIN + random.nextFloat() * (ONSET_MAX - ONSET_MIN) : 1;
         missYaw = missPitch = 0;
         way = 0;
         resting = false;
@@ -309,14 +319,17 @@ final class Head {
      * The next tick's turn on one axis, {@code remaining} degrees from the target at {@code speed}: up by {@code push}
      * toward {@code peak}, and down again in time to come to rest on the target rather than past it.
      */
-    static float speed(float remaining, float speed, float peak, float push) {
+    static float speed(float remaining, float speed, float peak, float push) { return speed(remaining, speed, peak, push, push); }
+
+    /** {@link #speed(float, float, float, float)}, speeding up by {@code up} this tick rather than the whole push. */
+    static float speed(float remaining, float speed, float peak, float push, float up) {
         float direction = Math.signum(remaining), distance = Math.abs(remaining);
         if (distance < 1e-3f) return 0;
         // The most speed from which slowing down by push a tick still stops by the target, tick by tick: from v that
         // takes v + (v - push) + ... , about v * v / (2 push) + v / 2, so the last tick of a turn is a short one.
         float most = Math.min(peak, (float) (Math.sqrt(push * push / 4 + 2 * push * distance) - push / 2));
         float along = speed * direction;
-        float next = along < most ? Math.min(most, along + push) : Math.max(most, along - push * 1.5f);
+        float next = along < most ? Math.min(most, along + up) : Math.max(most, along - push * 1.5f);
         // Never less than a crawl toward it, and never past it.
         next = Math.max(next, Math.min(distance, 0.3f));
         return direction * Math.min(next, distance);

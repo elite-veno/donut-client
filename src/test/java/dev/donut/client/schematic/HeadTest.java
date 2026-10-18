@@ -88,6 +88,23 @@ class HeadTest {
     }
 
     @Test
+    void aTurnFromAStandstillSetsOffSoftly() {
+        for (int seed = 0; seed < 200; seed++) {
+            Head head = new Head();
+            head.misses(0);
+            RandomGenerator random = new SplittableRandom(seed);
+            float[] view = {0, 0};
+            head.step(view, 3, 0, true, MOUSE, random);
+            assertTrue(view[0] < 3 - 1e-3f, "even a few degrees take more than one tick: " + view[0]);
+            Head again = new Head();
+            again.misses(0);
+            float[] other = {0, 0};
+            again.step(other, 90, 0, true, MOUSE, random);
+            assertTrue(other[0] <= Head.PUSH_MAX * 0.6f + MOUSE, "the first tick is a share of the push: " + other[0]);
+        }
+    }
+
+    @Test
     void aTurnWhileWalkingGoesStraightThere() {
         for (int seed = 0; seed < 100; seed++) {
             Head head = new Head();
