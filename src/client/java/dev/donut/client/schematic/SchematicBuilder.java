@@ -410,6 +410,13 @@ public final class SchematicBuilder {
      */
     private final Map<Item, long[]> noRoomFor = new HashMap<>();
     private int noRoomDone = -1;
+    /**
+     * Items no spot for their shulker box was found for, from where the player stood or a walk without climbing, by the
+     * tick: their blocks wait {@link #NO_BOX_WAIT} ticks while the build goes on with the rest, rather than ask again
+     * every second from the same place.
+     */
+    private final Map<Item, Long> noBoxSpot = new HashMap<>();
+    private static final int NO_BOX_WAIT = 400;
     /** When helper blocks were last taken out of a box for running low: not tried again for a while, should it fail. */
     private long helperFetchTick = -100_000;
     /**
@@ -795,6 +802,7 @@ public final class SchematicBuilder {
         restockFailures = 0;
         noRoomFor.clear();
         noRoomDone = -1;
+        noBoxSpot.clear();
         restock = Restock.NONE;
         restockAfterWalk = null;
         restockWalks = 0;
@@ -1132,6 +1140,10 @@ public final class SchematicBuilder {
                     continue;
                 }
                 if (!creative && materials.loose(bucket) == 0) {
+                    if (noBoxHere(bucket)) {
+                        if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
+                        continue;
+                    }
                     startRestock(client, player, bucket, materials);
                     return;
                 }
@@ -1196,6 +1208,10 @@ public final class SchematicBuilder {
                     continue;
                 }
                 if (!creative && materials.loose(bucket) == 0) {
+                    if (noBoxHere(bucket)) {
+                        if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
+                        continue;
+                    }
                     startRestock(client, player, bucket, materials);
                     return;
                 }
@@ -1260,7 +1276,7 @@ public final class SchematicBuilder {
                 continue;
             }
             if (!creative && materials.loose(item) == 0) {
-                if (waitsForRoom(item, materials)) continue;
+                if (waitsForRoom(item, materials) || noBoxHere(item)) continue;
                 startRestock(client, player, item, materials);
                 return;
             }
@@ -4026,7 +4042,7 @@ public final class SchematicBuilder {
                 // Somewhere else, where a box goes in with a real look: here none did, though there may be room.
                 Navigator.Node start = Navigator.standingAt(player.level(), player);
                 double reach = player.blockInteractionRange() - 0.2;
-                Navigator.Path path = navigator(player, false).find(start, node -> {
+                Navigator.Goal roomy = node -> {
                     if (node.key() == start.key()) return 0;
                     List<BlockPos> spots = boxSpots(player, node.floor().above(), node.standing());
                     for (BlockPos at : spots.subList(0, Math.min(3, spots.size()))) {
@@ -4034,8 +4050,12 @@ public final class SchematicBuilder {
                                 && boxSeenFrom(player, node.eye(), at) && walksInto(player, node, at)) return 1;
                     }
                     return 0;
-                });
+                };
+                Navigator.Path path = navigator(player, false).find(start, roomy);
+                // Shut in by the build on foot, as on top of a pillar among finished blocks: climbing, or down and out.
+                if (path == null && helperItem(player) != null) path = navigator(player, true).find(start, roomy);
                 if (path != null && path.nodes().size() > 1 && restockWalks < 3) {
+                    if (!climbReady(client, player, path)) return;
                     releaseKeys(client);
                     walker.start(path.nodes());
                     restockAfterWalk = item;
@@ -4045,6 +4065,9 @@ public final class SchematicBuilder {
                 }
             }
             restockWalks = 0;
+            // The build goes on meanwhile with what the player carries: other blocks, a walk elsewhere, from where a box
+            // may well go in. Asked again for this item a while later.
+            noBoxSpot.put(item, tick);
             show("No room beside you to open a shulker box: stand on open, flat ground", true);
             nextAction = System.nanoTime() + 1_000_000_000L;
             return;
@@ -4418,6 +4441,12 @@ public final class SchematicBuilder {
      * Whether a fetch of {@code item} waits, there having been no room for it a moment ago: till a few more blocks are
      * in or slots are free, and no longer than half a minute, after which it is tried again.
      */
+    /** Whether no spot for a shulker box with {@code item} was found a short while ago: blocks of it wait meanwhile. */
+    private boolean noBoxHere(Item item) {
+        Long at = noBoxSpot.get(item);
+        return at != null && tick - at < NO_BOX_WAIT;
+    }
+
     private boolean waitsForRoom(Item item, Materials materials) {
         long[] since = noRoomFor.get(item);
         if (since == null) return false;
