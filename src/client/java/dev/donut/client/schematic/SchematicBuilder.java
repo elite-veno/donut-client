@@ -55,6 +55,7 @@ import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.FenceGateBlock;
 import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
@@ -1409,6 +1410,12 @@ public final class SchematicBuilder {
         // the block its facing; else the look worked out stands.
         float[] aimed = PlacementSolver.look(player.getEyePosition(), click.hit().getLocation());
         if (planned.act() == Act.PLACE && !sameResult(player, planned, aimed)) aimed = new float[] {click.yaw(), click.pitch()};
+        // A gate opened from the side it faces away from swings round to face the player: the look worked out keeps clear
+        // of that side, and one worked out again from here must too.
+        if (planned.act() == Act.ADJUST && planned.index() >= 0 && plan.target(planned.index()).getBlock() instanceof FenceGateBlock
+                && Direction.fromYRot(aimed[0]) == plan.target(planned.index()).getValue(FenceGateBlock.FACING).getOpposite()) {
+            aimed = new float[] {click.yaw(), click.pitch()};
+        }
         if (!looked(player, aimed[0], aimed[1])) return;
         // The camera turned during the wait since the last click; the click itself waits for its time.
         if (System.nanoTime() - nextClick < 0) return;
