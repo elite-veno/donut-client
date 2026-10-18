@@ -3236,7 +3236,11 @@ public final class SchematicBuilder {
         breakTicks++;
         BlockState state = client.level.getBlockState(breaking);
         if (state.isAir() || state.canBeReplaced()) {
-            helpers.remove(breaking.asLong());
+            Helper helper = helpers.remove(breaking.asLong());
+            if (debug() && helper != null) {
+                LOGGER.info("Took away the helper block at {} (serving {}) in {} ticks, {} helper blocks standing", breaking.toShortString(),
+                        helper.serves(), breakTicks, helpers.size());
+            }
             dropEscapeHelper(breaking.asLong());
             pours.put(breaking.asLong(), tick);
             // With the helper gone, a look may reach a block it was in front of, and a way out may open.
@@ -3506,7 +3510,12 @@ public final class SchematicBuilder {
         walker.start(path.nodes(), first == null ? null : Vec3.atCenterOf(plan.pos(first)));
         show("Layer " + layerNumber + " of " + plan.layers().size() + ": walking to " + end.x() + " " + Math.round(end.feet()) + " " + end.z(), false);
         if (debug()) {
-            LOGGER.info("Walking {} steps to {} {} {} for {}", path.nodes().size() - 1, end.x(), end.feet(), end.z(), expected.get(end.key()));
+            LOGGER.info("Walking {} steps to {} {} {} for {}; {} climbs, {} steps on walk helpers standing", path.nodes().size() - 1, end.x(),
+                    end.feet(), end.z(), expected.get(end.key()), path.nodes().stream().filter(node -> node.move() == Navigator.Move.PILLAR).count(),
+                    path.nodes().stream().skip(1).filter(node -> {
+                        Helper helper = helpers.get(node.floor().asLong());
+                        return helper != null && helper.serves() < 0;
+                    }).count());
             walkExpects.clear();
             walkExpects.addAll(expectedBlocks.getOrDefault(end.key(), List.of()));
             walkEnd = end;
@@ -3723,6 +3732,7 @@ public final class SchematicBuilder {
             if (item != was.getBlock().asItem()) refilledOther++;
         } else {
             helpers.put(cell.asLong(), new Helper(-1, Block.byItem(item)));
+            if (debug()) LOGGER.info("Climbing: a helper block at {}, {} helper blocks standing", cell.toShortString(), helpers.size());
             if (escapeWalk || !brokeOut.isEmpty()) addEscapeHelper(cell);
         }
         return true;
