@@ -131,7 +131,9 @@ final class Walker {
         }
         if (!player.onGround()) {
             client.options.keyJump.setDown(false);
-            if (player.getY() >= from.feet() + 1.02) {
+            // Only at the top of the jump this climb made: dropping in from a step before, the feet pass that height
+            // too, before the climb has looked down or jumped. Then it waits to land.
+            if (jumpTicks > 0 && player.getY() >= from.feet() + 1.02) {
                 if (!climb.placeBelow(cell)) return fail(client, "couldn't place the block to climb on at " + cell.toShortString());
                 placedClimb = true;
                 placedAt = climbTicks;

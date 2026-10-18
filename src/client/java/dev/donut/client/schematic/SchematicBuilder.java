@@ -181,6 +181,11 @@ public final class SchematicBuilder {
      * through an open fence gate: walks never end there. Kept as long as {@link #shutIn}.
      */
     private final Set<Long> traps = new HashSet<>();
+    /**
+     * Water and lava poured, and cells opened beside water by taking a block away, by position, with the tick: for a
+     * while water there still spreads, where settled water runs no further.
+     */
+    private final Map<Long, Long> pours = new HashMap<>();
     /** Helper blocks standing in the world, by position. */
     private final Map<Long, Helper> helpers = new HashMap<>();
     /** Where a block that nothing holds can be placed against a helper block, by the block's index. */
@@ -233,8 +238,9 @@ public final class SchematicBuilder {
     private BlockPos box;
     private PlacementSolver.Click boxClick;
     private int restockTicks, nextTake, boxesBefore, restockFailures;
-    /** Walks planned to a dropped box since it broke. */
+    /** Walks planned to a dropped box since it broke, a few at a time; and whether the player was asked to pick it up. */
     private int boxWalks;
+    private boolean boxAsked;
     /** What the layers being built need, worked out when a box opens, so taking and putting back agree. */
     private Map<Item, Integer> soon = Map.of();
     /** Whether the builder holds the forward key, walking to a dropped shulker box. */
@@ -513,6 +519,7 @@ public final class SchematicBuilder {
         shutIn.clear();
         traps.clear();
         badSteps.clear();
+        pours.clear();
         missedHere.clear();
         noClickHere.clear();
         helpers.clear();
@@ -645,7 +652,7 @@ public final class SchematicBuilder {
         candidates.sort(Comparator.comparingInt((Integer i) -> Vec3.atCenterOf(plan.pos(i)).distanceToSqr(eye) > inReach ? 2
                         : creative || atHand.contains(BlockRules.item(plan.target(i))) ? 0 : 1)
                 .thenComparingDouble(i -> Vec3.atCenterOf(plan.pos(i)).distanceToSqr(eye)));
-        if (settings().walk && wetSoon(player.level(), player.blockPosition(), new HashMap<>())) {
+        if (settings().walk && wetSoon(player.level(), player.blockPosition(), recentPours(), new HashMap<>())) {
             // Water running past pushes the player about and spoils every look: out of it first, onto dry ground.
             nextAction = System.nanoTime() + 250_000_000L;
             if (planWalk(client, player, candidates, materials, layerNumber, lift)) return;
@@ -940,21 +947,33 @@ public final class SchematicBuilder {
     }
 
     /**
-     * Whether water is where a player standing with the feet in {@code feet} has their feet or head, or soon will be: a
-     * flow runs a block every few ticks, so water on that level within a flow's length, with open cells between, gets
-     * there while they stand and work, as does water just above the head. Worked out once a cell, in {@code known}.
+     * Whether water is where a player standing with the feet in {@code feet} has their feet or head, or soon will be.
+     * Water that has settled runs no further. Water just poured, at one of {@code poured}, still spreads, a block every
+     * few ticks: on that level within a flow's length, with open cells between, it gets there while they stand and work,
+     * as it does from just above the head. Worked out once a cell, in {@code known}.
      */
-    static boolean wetSoon(BlockGetter level, BlockPos feet, Map<Long, Boolean> known) {
+    static boolean wetSoon(BlockGetter level, BlockPos feet, List<BlockPos> poured, Map<Long, Boolean> known) {
         Boolean cached = known.get(feet.asLong());
         if (cached != null) return cached;
-        boolean wet = reaches(level, feet) || reaches(level, feet.above());
-        for (int up = 2; !wet && up <= 4; up++) {
+        boolean wet = !level.getFluidState(feet).isEmpty() || !level.getFluidState(feet.above()).isEmpty();
+        boolean spreading = poured.stream().anyMatch(at -> Math.abs(at.getX() - feet.getX()) <= 9 && Math.abs(at.getZ() - feet.getZ()) <= 9
+                && at.getY() >= feet.getY() - 1 && at.getY() <= feet.getY() + 5);
+        if (!wet && spreading) wet = reaches(level, feet) || reaches(level, feet.above());
+        for (int up = 2; !wet && spreading && up <= 4; up++) {
             BlockPos above = feet.above(up);
             if (!runsInto(level, above)) break;
             wet = !level.getFluidState(above).isEmpty();
         }
         known.put(feet.asLong(), wet);
         return wet;
+    }
+
+    /** Where water or lava went in, or a cell was opened, over the last ten seconds: water there may still be spreading. */
+    private List<BlockPos> recentPours() {
+        pours.values().removeIf(at -> tick - at > 200);
+        List<BlockPos> recent = new ArrayList<>(pours.size());
+        for (long key : pours.keySet()) recent.add(BlockPos.of(key));
+        return recent;
     }
 
     /** Whether water could run along the level into the cell at {@code start} from water a flow's length away at most. */
@@ -1302,6 +1321,7 @@ public final class SchematicBuilder {
             }
             case PLACE, POUR -> {
                 if (plan.target(i).getBlock() instanceof SignBlock) signPlacedAt = tick;
+                if (planned.act() == Act.POUR) pours.put(planned.at().asLong(), tick);
                 placedSincePit = true;
                 sealsLifted = false;
                 orderLifted = false;
@@ -1463,6 +1483,7 @@ public final class SchematicBuilder {
         BlockState state = client.level.getBlockState(breaking);
         if (state.isAir() || state.canBeReplaced()) {
             helpers.remove(breaking.asLong());
+            pours.put(breaking.asLong(), tick);
             // With the helper gone, a look may reach a block it was in front of, and a way out may open.
             noClickHere.clear();
             shutIn.clear();
@@ -1563,11 +1584,12 @@ public final class SchematicBuilder {
         int[] seen = new int[3];
         List<Navigator.Node> sample = new ArrayList<>();
         Map<Long, Boolean> wetCells = new HashMap<>();
+        List<BlockPos> poured = recentPours();
         Navigator.Goal goal = node -> {
             seen[0]++;
             if (uselessSpots.contains(node.key()) || traps.contains(node.key())) return 0;
             // Waded through, never stood in: water would push the player off every look.
-            if (wetSoon(player.level(), node.feetCell(), wetCells)) return 0;
+            if (wetSoon(player.level(), node.feetCell(), poured, wetCells)) return 0;
             Vec3 feet = node.standing(), eye = node.eye();
             AABB body = new AABB(node.x() + 0.2, node.feet(), node.z() + 0.2, node.x() + 0.8, node.feet() + 1.8, node.z() + 0.8);
             List<Integer> inReach = new ArrayList<>();
@@ -1950,6 +1972,7 @@ public final class SchematicBuilder {
             // With the right tool, so the ground drops itself to fill the pit in again with.
             if (!holdTool(client, player, level.getBlockState(next))) return;
             dug.put(next.asLong(), level.getBlockState(next));
+            pours.put(next.asLong(), tick);
             restingTicks = 0;
             // Ground taken out may open a way out of where a block would have shut the player in.
             shutIn.clear();
@@ -2496,10 +2519,12 @@ public final class SchematicBuilder {
             case BREAK -> {
                 if (!placed) {
                     LOGGER.info("Shulker box broken after {} ticks", restockTicks);
+                    pours.put(box.asLong(), tick);
                     client.gameMode.stopDestroyBlock();
                     restock = Restock.PICKUP;
                     restockTicks = 0;
                     boxWalks = 0;
+                    boxAsked = false;
                     return;
                 }
                 if (client.gui.screen() != null) return;
@@ -2548,10 +2573,11 @@ public final class SchematicBuilder {
                     show("Took " + name(restockItem) + " out of a shulker box", false);
                     return;
                 }
-                // A box that rolled, slid or fell out of reach is walked to for some seconds: along a way there when it
-                // is further off or lower down, else straight at it.
-                if (restockTicks >= 10 && restockTicks < 240) {
-                    ItemEntity dropped = droppedBox(level, player);
+                // A box that rolled, slid or fell out of reach is walked to for as long as it can be seen, along a way
+                // there when it is further off or lower down, else straight at it: a server that lags drops it late.
+                ItemEntity dropped = restockTicks >= 10 ? droppedBox(level, player) : null;
+                if (restockTicks % 400 == 399) boxWalks = 0;
+                if (dropped != null || walker.active()) {
                     if (walker.active()) {
                         walk(client, player);
                     } else if (dropped != null && boxWalks < 3 && (Math.abs(dropped.getY() - player.getY()) > 1 || dropped.distanceToSqr(player) > 9)) {
@@ -2571,11 +2597,19 @@ public final class SchematicBuilder {
                     walker.stop(client);
                     stopWalking(client);
                 }
-                if (restockTicks == 250) {
+                if (debug() && restockTicks % 40 == 39) {
+                    LOGGER.info("Picking up the shulker box: {} free slots, box {}, player at {}", Materials.of(player.getInventory()).freeSlots(),
+                            dropped == null ? "not in sight" : dropped.position() + " " + Math.round(Math.sqrt(dropped.distanceToSqr(player)) * 10) / 10.0 + " m away",
+                            player.position());
+                }
+                // Help is asked for once nothing of the box is in sight, or once a minute has gone by without it.
+                boolean lost = dropped == null && restockTicks >= 250 || restockTicks >= 1200;
+                if (lost && !boxAsked) {
+                    boxAsked = true;
                     message(client, "pick up your shulker box near " + box.getX() + " " + box.getY() + " " + box.getZ()
                             + "; the build goes on once it's back.", ChatFormatting.YELLOW);
                 }
-                if (restockTicks >= 250) show("Waiting for you to pick up the shulker box near " + box.getX() + " " + box.getY() + " " + box.getZ(), true);
+                if (lost) show("Waiting for you to pick up the shulker box near " + box.getX() + " " + box.getY() + " " + box.getZ(), true);
             }
             case NONE -> { }
         }
@@ -2654,7 +2688,7 @@ public final class SchematicBuilder {
      */
     private int nextToDeposit(ShulkerBoxMenu menu, LocalPlayer player) {
         Materials carried = Materials.of(player.getInventory());
-        if (carried.freeSlots() >= 2) return -1;
+        if (carried.freeSlots() >= 3) return -1;
         boolean boxHasRoom = false;
         for (int slot = 0; slot < 27; slot++) if (menu.getSlot(slot).getItem().isEmpty()) boxHasRoom = true;
         if (!boxHasRoom) return -1;
@@ -2691,11 +2725,13 @@ public final class SchematicBuilder {
     /** The next slot of the open box to take: the item it was opened for first, then what the next layers need. */
     private int nextToTake(ShulkerBoxMenu menu, LocalPlayer player) {
         Materials carried = Materials.of(player.getInventory());
-        // One slot stays free for the box itself. Other items only go into room to spare: they would otherwise crowd out
-        // what the box was opened for, be put back for it, and be taken again.
-        if (carried.freeSlots() <= 1) return -1;
+        // Two slots stay free: one for the box itself, and one for whatever is picked up on the way back to it, as a
+        // helper block taken away, which would otherwise take the box's slot and leave it lying there. Other items only
+        // go into room to spare: they would otherwise crowd out what the box was opened for, be put back for it, and be
+        // taken again.
+        if (carried.freeSlots() <= 2) return -1;
         for (boolean first : new boolean[] {true, false}) {
-            if (!first && carried.freeSlots() <= 3) break;
+            if (!first && carried.freeSlots() <= 4) break;
             for (int slot = 0; slot < 27; slot++) {
                 ItemStack stack = menu.getSlot(slot).getItem();
                 if (stack.isEmpty()) continue;
