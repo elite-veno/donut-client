@@ -12,8 +12,6 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.ChestBlock;
-import net.minecraft.world.level.block.KelpBlock;
-import net.minecraft.world.level.block.KelpPlantBlock;
 import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
@@ -63,10 +61,8 @@ final class BuildCheck {
             BlockState actual = level.getBlockState(pos);
             boolean ok;
             if (kind == BlockRules.Kind.FLUID) {
-                // Kelp grows up into the water above it; that is the farm at work.
-                boolean kelp = actual.getBlock() instanceof KelpBlock || actual.getBlock() instanceof KelpPlantBlock;
-                ok = kelp || actual.getBlock() instanceof LiquidBlock && actual.getFluidState().isSource()
-                        && actual.getFluidState().getType().isSame(target.getFluidState().getType());
+                // Kelp grows up into the water above it, the farm at work; water over soul sand bubbles.
+                ok = BlockRules.holdsFluid(actual, target);
             } else if (target.getBlock() instanceof LiquidBlock) {
                 // Flowing water: anything wet will do; where it runs depends on what the machine does.
                 ok = !actual.getFluidState().isEmpty();

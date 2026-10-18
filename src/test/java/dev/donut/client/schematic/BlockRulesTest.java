@@ -9,6 +9,7 @@ import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.Bootstrap;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
@@ -224,5 +225,25 @@ class BlockRulesTest {
         assertEquals(Direction.SOUTH, Schematic.place(east, Mirror.NONE, Rotation.CLOCKWISE_90).getValue(BlockStateProperties.HORIZONTAL_FACING));
         assertEquals(Direction.WEST, Schematic.place(east, Mirror.FRONT_BACK, Rotation.NONE).getValue(BlockStateProperties.HORIZONTAL_FACING));
         assertEquals(2, Schematic.place(east, Mirror.NONE, Rotation.COUNTERCLOCKWISE_90).getValue(BlockStateProperties.DELAY));
+    }
+
+    @Test
+    void bubbleColumnsArePouredAndWaterCountsInWhatIsFullOfIt() {
+        BlockState bubbles = Blocks.BUBBLE_COLUMN.defaultBlockState(), water = Blocks.WATER.defaultBlockState();
+        assertEquals(BlockRules.Kind.FLUID, BlockRules.kind(bubbles), "a bubble column is water poured over soul sand");
+        assertEquals(Items.WATER_BUCKET, BlockRules.item(bubbles));
+        assertTrue(BlockRules.wet(bubbles));
+        assertEquals(BlockRules.group(water), BlockRules.group(bubbles), "poured with the rest of the water");
+
+        assertTrue(BlockRules.holdsFluid(water, water));
+        assertTrue(BlockRules.holdsFluid(Blocks.KELP.defaultBlockState(), water), "kelp grown up into the water");
+        assertTrue(BlockRules.holdsFluid(Blocks.KELP_PLANT.defaultBlockState(), water));
+        assertTrue(BlockRules.holdsFluid(bubbles, water), "water over soul sand bubbles");
+        assertTrue(BlockRules.holdsFluid(water, bubbles), "water where bubbles should rise: they rise once soul sand is under it");
+        assertFalse(BlockRules.holdsFluid(water.setValue(BlockStateProperties.LEVEL, 3), water), "flowing water is no source");
+        assertFalse(BlockRules.holdsFluid(Blocks.STONE.defaultBlockState(), water));
+        assertFalse(BlockRules.holdsFluid(Blocks.LAVA.defaultBlockState(), water));
+        assertFalse(BlockRules.holdsFluid(Blocks.OAK_SLAB.defaultBlockState().setValue(BlockStateProperties.WATERLOGGED, true), water),
+                "a waterlogged slab is a slab");
     }
 }

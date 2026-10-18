@@ -2,6 +2,7 @@ package dev.donut.client.schematic;
 
 import dev.donut.client.finder.LoadedChunks;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -10,11 +11,9 @@ import java.util.TreeMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.AABB;
 
 /**
@@ -63,7 +62,9 @@ public final class BuildPlan {
     private final int[] counts = new int[Status.values().length];
     /** Whether each block is water, lava or what grows in water; and of those, how many have each status. */
     private final boolean[] wet;
-    private final int[] wetCounts = new int[Status.values().length];
+    /** Each block's layer, by its place from the bottom (-1 for none); and the blocks not wet still to go in, by layer. */
+    private final int[] layerOf;
+    private int[] dryLeft = new int[0];
     public final AABB bounds;
     private int cursor;
     private Map<Item, Integer> needs = Map.of();
@@ -82,6 +83,8 @@ public final class BuildPlan {
         supportStamp = new long[n];
         support = new byte[n];
         wet = new boolean[n];
+        layerOf = new int[n];
+        Arrays.fill(layerOf, -1);
         int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
         int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
         Map<Integer, List<Integer>> byY = new TreeMap<>();
@@ -92,7 +95,6 @@ public final class BuildPlan {
             status[i] = placed(i) ? Status.UNLOADED : Status.SKIPPED;
             counts[status[i].ordinal()]++;
             wet[i] = BlockRules.wet(targets[i]);
-            if (wet[i]) wetCounts[status[i].ordinal()]++;
             minX = Math.min(minX, pos.getX());
             minY = Math.min(minY, pos.getY());
             minZ = Math.min(minZ, pos.getZ());
@@ -105,6 +107,15 @@ public final class BuildPlan {
             List<Integer> order = layer.getValue();
             if (redstoneLast) order.sort(Comparator.comparingInt(i -> BlockRules.group(this.targets[i])));
             layers.put(layer.getKey(), order.stream().mapToInt(Integer::intValue).toArray());
+        }
+        dryLeft = new int[layers.size()];
+        int number = 0;
+        for (int[] layer : layers.values()) {
+            for (int i : layer) {
+                layerOf[i] = number;
+                if (!wet[i] && left(status[i])) dryLeft[number]++;
+            }
+            number++;
         }
         bounds = n == 0 ? new AABB(BlockPos.ZERO) : new AABB(minX, minY, minZ, maxX + 1, maxY + 1, maxZ + 1);
         earlierNear = new int[n][];
@@ -178,14 +189,21 @@ public final class BuildPlan {
 
     public int count(Status s) { return counts[s.ordinal()]; }
 
-    /** Whether block {@code i} is water, lava or what grows in water: those go in once everything else is. */
+    /** Whether block {@code i} is water, lava or what grows in water: those go in once the rest of their layer is. */
     public boolean wet(int i) { return wet[i]; }
 
-    /** Whether blocks other than water, lava and what grows in water are still to go in, or not read yet. */
-    public boolean solidsLeft() {
-        int pending = Status.PENDING.ordinal(), unloaded = Status.UNLOADED.ordinal();
-        return counts[pending] + counts[unloaded] > wetCounts[pending] + wetCounts[unloaded];
+    /**
+     * Whether wet block {@code i} still waits: blocks other than water, lava and what grows in water are still to go in,
+     * or not read yet, in its layer or one below it. Water flows sideways and down only, so those are what hold it in;
+     * it goes in before the layer above roofs it over, while it can still be reached from above.
+     */
+    public boolean wetWaits(int i) {
+        if (!wet[i] || layerOf[i] < 0) return false;
+        for (int layer = 0; layer <= layerOf[i]; layer++) if (dryLeft[layer] > 0) return true;
+        return false;
     }
+
+    private static boolean left(Status s) { return s == Status.PENDING || s == Status.UNLOADED; }
 
     /** Blocks the builder places, as opposed to those that come with another or can't be placed. */
     public int placeable() { return targets.length - counts[Status.SKIPPED.ordinal()]; }
@@ -229,9 +247,8 @@ public final class BuildPlan {
         if (now != status[i]) {
             counts[status[i].ordinal()]--;
             counts[now.ordinal()]++;
-            if (wet[i]) {
-                wetCounts[status[i].ordinal()]--;
-                wetCounts[now.ordinal()]++;
+            if (!wet[i] && layerOf[i] >= 0 && left(status[i]) != left(now)) {
+                dryLeft[layerOf[i]] += left(now) ? 1 : -1;
             }
             status[i] = now;
         }
@@ -244,11 +261,9 @@ public final class BuildPlan {
         if (!LoadedChunks.has(level, pos)) return Status.UNLOADED;
         BlockState current = level.getBlockState(pos), target = targets[i];
         if (kinds[i] == BlockRules.Kind.FLUID) {
-            // Only a source counts: water flowing past is no source, and the builder pours over it.
-            FluidState fluid = current.getFluidState();
-            if (current.getBlock() instanceof LiquidBlock && fluid.isSource() && fluid.getType().isSame(target.getFluidState().getType())) {
-                return Status.DONE;
-            }
+            // Only a source counts: water flowing past is no source, and the builder pours over it. Kelp grown up into
+            // it, or a bubble column it turned into, is that water still.
+            if (BlockRules.holdsFluid(current, target)) return Status.DONE;
             if (failed[i]) return Status.FAILED;
             return current.canBeReplaced() ? Status.PENDING : Status.WRONG;
         }

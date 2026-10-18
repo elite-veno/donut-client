@@ -613,12 +613,11 @@ public final class SchematicBuilder {
         }
         Vec3 eye = player.getEyePosition();
         List<Integer> candidates = new ArrayList<>();
-        boolean dryFirst = plan.solidsLeft();
         for (int i : layer) {
             BuildPlan.Status st = plan.status(i);
             if (st != BuildPlan.Status.PENDING && st != BuildPlan.Status.UNLOADED) continue;
-            // Water, lava and kelp wait until every other block of the build is in.
-            if (dryFirst && plan.wet(i)) continue;
+            // Water, lava and kelp wait until every other block of their layer, and of those below, is in.
+            if (plan.wetWaits(i)) continue;
             if (byGroup && !inOrder(player, i, group, lift, started)) continue;
             candidates.add(i);
         }
@@ -781,9 +780,8 @@ public final class SchematicBuilder {
      * shut in a neighbor are passed over.
      */
     private int firstReady(LocalPlayer player, int[] layer, boolean lift, long started) {
-        boolean dryFirst = plan.solidsLeft();
         for (int i : layer) {
-            if (dryFirst && plan.wet(i)) continue;
+            if (plan.wetWaits(i)) continue;
             BuildPlan.Status st = plan.status(i);
             if (st == BuildPlan.Status.PENDING) st = plan.update(player.level(), i);
             if (st == BuildPlan.Status.PENDING) {
@@ -2506,13 +2504,12 @@ public final class SchematicBuilder {
     /** What the layers up to height {@code top} still take, by item: the layer being built and those below it still waiting, at the least. */
     private Map<Item, Integer> needsUpTo(Level level, int top) {
         Map<Item, Integer> needs = new HashMap<>();
-        boolean dryFirst = plan.solidsLeft();
         for (int[] layer : plan.layers().headMap(top, true).values()) {
             for (int i : layer) {
                 BuildPlan.Status st = plan.status(i);
                 if (st != BuildPlan.Status.PENDING && st != BuildPlan.Status.UNLOADED) continue;
-                // Water and kelp wait for every solid block: their buckets, a slot each, stay in the box till then.
-                if (dryFirst && plan.wet(i)) continue;
+                // Water and kelp wait for the solid blocks of their layer: their buckets, a slot each, stay in the box till then.
+                if (plan.wetWaits(i)) continue;
                 Item item = BlockRules.item(plan.target(i));
                 if (item == null) continue;
                 int count = plan.kind(i) == BlockRules.Kind.FLUID ? 1 : BlockRules.itemsNeeded(level.getBlockState(plan.pos(i)), plan.target(i));

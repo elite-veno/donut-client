@@ -47,4 +47,21 @@ class BuildPlanTest {
         BuildPlan anyOrder = BuildPlan.of(blocks, false);
         assertEquals(0, anyOrder.earlierNear(anyOrder.indexOf(piston)).length, "without redstone last nothing waits");
     }
+
+    @Test
+    void waterWaitsOnlyForTheSolidBlocksOfItsOwnLayerAndThoseBelow() {
+        Map<BlockPos, BlockState> blocks = new LinkedHashMap<>();
+        BlockPos lowWater = new BlockPos(1, 0, 0), stone = new BlockPos(0, 1, 0), highWater = new BlockPos(1, 1, 0);
+        BlockPos topKelp = new BlockPos(1, 2, 0);
+        blocks.put(lowWater, Blocks.WATER.defaultBlockState());
+        blocks.put(stone, Blocks.STONE.defaultBlockState());
+        blocks.put(highWater, Blocks.WATER.defaultBlockState());
+        blocks.put(topKelp, Blocks.KELP.defaultBlockState());
+        BuildPlan plan = BuildPlan.of(blocks, true);
+
+        assertFalse(plan.wetWaits(plan.indexOf(lowWater)), "nothing solid in its layer or below: in right away");
+        assertTrue(plan.wetWaits(plan.indexOf(highWater)), "the stone in its layer, not read yet, goes in first");
+        assertTrue(plan.wetWaits(plan.indexOf(topKelp)), "a solid block in a layer below holds it too");
+        assertFalse(plan.wetWaits(plan.indexOf(stone)), "solid blocks never wait for this");
+    }
 }

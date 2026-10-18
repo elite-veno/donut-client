@@ -14,6 +14,7 @@ import net.minecraft.world.level.block.BasePressurePlateBlock;
 import net.minecraft.world.level.block.BaseRailBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.BubbleColumnBlock;
 import net.minecraft.world.level.block.ButtonBlock;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.CopperBulbBlock;
@@ -58,6 +59,7 @@ import net.minecraft.world.level.block.state.properties.RailShape;
 import net.minecraft.world.level.block.state.properties.RedstoneSide;
 import net.minecraft.world.level.block.state.properties.SlabType;
 import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
 
 /**
@@ -114,12 +116,15 @@ public final class BlockRules {
             if (!target.getFluidState().isSource()) return Kind.AUTO;
             return item(target) == null ? Kind.UNPLACEABLE : Kind.FLUID;
         }
+        // A bubble column is water poured over soul sand or magma: it rises by itself once the water is there.
+        if (block instanceof BubbleColumnBlock) return Kind.FLUID;
         if (item(target) == null) return Kind.UNPLACEABLE;
         return Kind.PLACE;
     }
 
     /** The item that places the block: a bucket for water and lava, the plant's tip for a stem; null when none does. */
     public static Item item(BlockState target) {
+        if (target.getBlock() instanceof BubbleColumnBlock) return Items.WATER_BUCKET;
         if (target.getBlock() instanceof LiquidBlock) {
             Fluid fluid = target.getFluidState().getType();
             return fluid.isSame(Fluids.WATER) ? Items.WATER_BUCKET : fluid.isSame(Fluids.LAVA) ? Items.LAVA_BUCKET : null;
@@ -276,7 +281,7 @@ public final class BlockRules {
     public static int group(BlockState state) {
         Block block = state.getBlock();
         // Water and lava go in once their layer's blocks hold them in, and what grows in water after them.
-        if (block instanceof LiquidBlock) return 3;
+        if (block instanceof LiquidBlock || block instanceof BubbleColumnBlock) return 3;
         if (state.getFluidState().isSource() && !state.hasProperty(BlockStateProperties.WATERLOGGED)) return 4;
         if (block instanceof PistonBaseBlock || block instanceof ObserverBlock || block instanceof DispenserBlock
                 || block instanceof CrafterBlock || block instanceof TntBlock) return 2;
@@ -297,6 +302,16 @@ public final class BlockRules {
      */
     public static boolean wet(BlockState state) {
         return state.getBlock() instanceof LiquidBlock || state.getFluidState().isSource() && !state.hasProperty(BlockStateProperties.WATERLOGGED);
+    }
+
+    /**
+     * Whether the world's block is the water or lava the target pours: a source of it, as the liquid itself or in
+     * something wet that is full of it, such as kelp, seagrass or a bubble column. Kelp grows up into the water over it,
+     * and water over soul sand turns into a bubble column.
+     */
+    public static boolean holdsFluid(BlockState current, BlockState target) {
+        FluidState fluid = current.getFluidState();
+        return fluid.isSource() && fluid.getType().isSame(target.getFluidState().getType()) && wet(current);
     }
 
     /**
