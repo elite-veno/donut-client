@@ -2966,7 +2966,16 @@ public final class SchematicBuilder {
             return true;
         }
         if (settings().walk) {
-            for (BlockPos top : tops) {
+            // Walks: the columns close by first, highest first, then the nearest far one. Highest first across the whole
+            // build walked from one far column to another and back, and passed a column right beside the player for one
+            // as high across the build.
+            List<BlockPos> walkOrder = new ArrayList<>(tops);
+            walkOrder.sort(Comparator.comparingDouble((BlockPos pos) -> {
+                double dx = pos.getX() + 0.5 - player.getX(), dz = pos.getZ() + 0.5 - player.getZ();
+                double away = dx * dx + dz * dz;
+                return away > NEAR_COLUMN * NEAR_COLUMN ? away : -1_000_000 - pos.getY();
+            }));
+            for (BlockPos top : walkOrder) {
                 if (cleanupSkipped.contains(top.asLong()) || cleanupMisses.getOrDefault(top.asLong(), 0) >= CLEANUP_MISSES) continue;
                 // Climbing too: the top of a tall pillar is only in reach from up beside it. Each block climbed on is a
                 // helper block too, and comes down under the player's feet after it.
