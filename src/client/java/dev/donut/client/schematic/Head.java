@@ -49,8 +49,9 @@ final class Head {
         yawSpeed = speed(dyaw, yawSpeed, peak * quick, push * quick);
         pitchSpeed = speed(dpitch, pitchSpeed, peak * pitchPart * quick, push * pitchPart * quick);
         set(player, player.getYRot() + yawSpeed, player.getXRot() + pitchSpeed);
-        // Come to rest on the target this tick: there now, not a tick later.
+        // Come to rest on the target this tick, exactly on it: there now, not a tick later.
         if (Math.abs(dyaw - yawSpeed) < THERE && Math.abs(dpitch - pitchSpeed) < THERE) {
+            set(player, player.getYRot() + (dyaw - yawSpeed), pitch);
             yawSpeed = pitchSpeed = 0;
             return true;
         }

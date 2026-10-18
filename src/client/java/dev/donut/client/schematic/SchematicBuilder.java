@@ -1356,15 +1356,19 @@ public final class SchematicBuilder {
 
     /**
      * Turns the camera toward a look a little each tick, quickly at first and slowing as it closes in, as a hand on a
-     * mouse does; true once it has rested there for a couple of ticks.
+     * mouse does; true once it has rested there for as many ticks as set. A tick counts only when the look stayed put
+     * through it: the server judges a click by the look the player had at the end of the tick before.
      */
     private boolean looked(LocalPlayer player, float yaw, float pitch) {
-        if (!head.turn(player, yaw, pitch)) {
+        float yawBefore = player.getYRot(), pitchBefore = player.getXRot();
+        boolean there = head.turn(player, yaw, pitch);
+        boolean moved = Math.abs(player.getYRot() - yawBefore) > 0.05f || Math.abs(player.getXRot() - pitchBefore) > 0.05f;
+        if (!there || moved) {
             restingTicks = 0;
             return false;
         }
         if (restingTicks == 0) restFor = settings().settle + (ThreadLocalRandom.current().nextInt(4) == 0 ? 1 : 0);
-        return ++restingTicks > restFor;
+        return ++restingTicks >= restFor;
     }
 
     /** What the crosshair is on: the same trace the game makes for a click. */
