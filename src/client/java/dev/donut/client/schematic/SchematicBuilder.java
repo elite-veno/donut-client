@@ -175,6 +175,11 @@ public final class SchematicBuilder {
     private Aim aim;
     /** Blocks whose click the crosshair missed from where the player stands, at {@code missedAt}: tried elsewhere first. */
     private final Set<Integer> missedHere = new HashSet<>();
+    /**
+     * Blocks whose click missed from a place to stand, keyed by place and block as planWalk keys them: a walk there no
+     * longer counts on them, so it doesn't walk straight back to try the same look. Forgotten with the layer.
+     */
+    private final Set<Long> missedFrom = new HashSet<>();
     private BlockPos missedAt;
     /**
      * Blocks with no click from where the player stands, and why, worked out at {@code noClickFrom} in that stance: passed
@@ -709,6 +714,7 @@ public final class SchematicBuilder {
         traps.clear();
         badSteps.clear();
         badStepsRetried = -100_000;
+        missedFrom.clear();
         pours.clear();
         missedHere.clear();
         noClickHere.clear();
@@ -838,6 +844,7 @@ public final class SchematicBuilder {
                 shutIn.clear();
                 traps.clear();
                 badSteps.clear();
+                missedFrom.clear();
             }
             layerY = entry.getKey();
             layerNumber = number;
@@ -1028,9 +1035,12 @@ public final class SchematicBuilder {
         // Steps that failed once are left out of every walk in the layer. With no way on without them, they get another
         // try before anything is taken away: what made one fail, a climb begun off the middle or something in the way,
         // may be gone, and it may be the only way out.
-        if (settings().walk && !badSteps.isEmpty() && tick - badStepsRetried > 600) {
-            if (debug()) LOGGER.info("No way on without the {} steps that failed: trying them again", badSteps.size());
+        // Places whose click missed the same: tried again with them, when there is no other.
+        if (settings().walk && (!badSteps.isEmpty() || !missedFrom.isEmpty()) && tick - badStepsRetried > 600) {
+            if (debug()) LOGGER.info("No way on without the {} steps that failed and {} clicks that missed: trying them again",
+                    badSteps.size(), missedFrom.size());
             badSteps.clear();
+            missedFrom.clear();
             badStepsRetried = tick;
             nextAction = System.nanoTime();
             return;
@@ -1551,6 +1561,7 @@ public final class SchematicBuilder {
             if (!player.blockPosition().equals(missedAt)) missedHere.clear();
             missedAt = player.blockPosition();
             missedHere.add(planned.index());
+            missedFrom.add(Navigator.standingAt(player.level(), player).key() * 31 + planned.index());
             return;
         }
         if (planned.act() != Act.ADJUST && !player.getMainHandItem().is(planned.item()) && !player.hasInfiniteMaterials()) return;
@@ -1561,6 +1572,7 @@ public final class SchematicBuilder {
             if (!player.blockPosition().equals(missedAt)) missedHere.clear();
             missedAt = player.blockPosition();
             missedHere.add(planned.index());
+            missedFrom.add(Navigator.standingAt(player.level(), player).key() * 31 + planned.index());
             return;
         }
         InteractionResult result = planned.act() == Act.POUR ? client.gameMode.useItem(player, InteractionHand.MAIN_HAND)
@@ -2330,6 +2342,7 @@ public final class SchematicBuilder {
             List<Integer> placeable = new ArrayList<>();
             for (int i : inReach.subList(0, Math.min(VERIFY, inReach.size()))) {
                 long key = node.key() * 31 + i;
+                if (missedFrom.contains(key)) continue;
                 Integer ok = verified.get(key);
                 if (ok == null) {
                     ok = placeableFrom(player, feet, i, reach);
