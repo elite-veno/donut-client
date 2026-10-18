@@ -32,6 +32,9 @@ final class Walker {
 
         /** Places the helper block against {@code face} of {@code support}, where the crosshair is; false while it isn't. */
         boolean placeBeside(BlockPos support, Direction face);
+
+        /** Whether the hand may use what it holds yet: a moment after another item was taken in hand. */
+        boolean handReady();
     }
 
     /** Ticks without getting closer before the walk counts as stuck. */
@@ -464,7 +467,14 @@ final class Walker {
             if (++climbTries > 3) return fail(client, "jumped without getting the block in");
             jumpTicks = 0;
         }
-        if (jumpTicks == 0) jumpTicks = climbTicks;
+        if (jumpTicks == 0) {
+            // The block is taken in hand a moment before the jump that places it, not in the same breath.
+            if (!climb.handReady()) {
+                client.options.keyJump.setDown(false);
+                return State.WALKING;
+            }
+            jumpTicks = climbTicks;
+        }
         client.options.keyJump.setDown(true);
         return State.WALKING;
     }

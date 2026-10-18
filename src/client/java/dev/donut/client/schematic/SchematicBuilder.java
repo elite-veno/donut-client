@@ -159,6 +159,13 @@ public final class SchematicBuilder {
      */
     private float lastYaw = Float.NaN, lastPitch;
     private int lookChanges, offGridChanges;
+    /**
+     * The hotbar slot and the item last seen in hand, and the tick from which the hand may use it: a moment after either
+     * changes, as a player presses a number key and clicks after.
+     */
+    private int handSlot = -1;
+    private Item handItem;
+    private long handReadyTick;
     private int buildSlot = -1;
 
     private volatile String status = "Idle";
@@ -624,6 +631,7 @@ public final class SchematicBuilder {
         }
         recentYaws[(int) Math.floorMod(tick, (long) recentYaws.length)] = player.getYRot();
         if (debug()) countLookChanges(player);
+        noteHand(player);
         if (!settings().enabled) {
             if (active) finish(client, "stopped.", false);
             return;
@@ -699,6 +707,28 @@ public final class SchematicBuilder {
         decide(client, player);
         // The turn toward the block picked starts on the tick it was picked.
         if (aim != null && !walker.active() && pit == null && breaking == null && swapFrom < 0 && restock == Restock.NONE) fire(client, player);
+    }
+
+    /** Notes a change of hotbar slot, or of the item in hand, and when the hand may first use what it now holds. */
+    private void noteHand(LocalPlayer player) {
+        int slot = player.getInventory().getSelectedSlot();
+        Item item = player.getMainHandItem().getItem();
+        if (slot == handSlot && item == handItem) return;
+        handSlot = slot;
+        handItem = item;
+        double most = settings().itemSwitch;
+        double seconds = ThreadLocalRandom.current().nextDouble(most / 3, most + 1e-9);
+        // Never the tick it was taken: a key pressed and a click within the same tick is no hand's.
+        handReadyTick = tick + Math.max(1, Math.round(seconds * 20));
+    }
+
+    /**
+     * Whether the hand may use what it holds: only a moment after another slot or item was taken, as a player presses a
+     * number key and then clicks.
+     */
+    private boolean handReady(LocalPlayer player) {
+        noteHand(player);
+        return tick >= handReadyTick;
     }
 
     /**
@@ -2135,6 +2165,7 @@ public final class SchematicBuilder {
         if (!looked(player, aimed[0], aimed[1], (yaw, pitch) -> clicksAsPlanned(player, planned, yaw, pitch))) return;
         // The camera turned during the wait since the last click; the click itself waits for its time.
         if (System.nanoTime() - nextClick < 0) return;
+        if (!handReady(player)) return;
         if (planned.act() == Act.PLACE && !headAgrees(player, planned)) return;
         aim = null;
         BlockHitResult hit = crosshair(player);
@@ -2946,6 +2977,7 @@ public final class SchematicBuilder {
             return false;
         }
         mineMisses = 0;
+        if (!handReady(player)) return true;
         if (client.gameMode.continueDestroyBlock(pos, hit.getDirection())) player.swing(InteractionHand.MAIN_HAND);
         return true;
     }
@@ -3245,6 +3277,9 @@ public final class SchematicBuilder {
 
             @Override
             public boolean placeBeside(BlockPos support, Direction face) { return bridgePlace(client, player, support, face); }
+
+            @Override
+            public boolean handReady() { return SchematicBuilder.this.handReady(player); }
         });
         if (state != Walker.State.WALKING) {
             climbCrouch = false;
@@ -3328,6 +3363,7 @@ public final class SchematicBuilder {
             }
             return false;
         }
+        if (!handReady(player)) return false;
         InteractionResult result = client.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
         if (result instanceof InteractionResult.Success success && success.swingSource() == InteractionResult.SwingSource.CLIENT) {
             player.swing(InteractionHand.MAIN_HAND);
@@ -3808,7 +3844,7 @@ public final class SchematicBuilder {
         if (eatingSince >= 0) {
             if (!client.options.keyUse.isDown()) {
                 // Crouched first, then use: the crouch is in when the click goes out.
-                if (!player.isShiftKeyDown() && tick - eatingSince < 20) return true;
+                if ((!player.isShiftKeyDown() || !handReady(player)) && tick - eatingSince < 20) return true;
                 client.options.keyUse.setDown(true);
                 nextAction = System.nanoTime() + 250_000_000L;
                 return true;
@@ -4268,6 +4304,7 @@ public final class SchematicBuilder {
                     restockFailed(client, "the spot for the shulker box went out of view");
                     return;
                 }
+                if (!handReady(player)) return;
                 client.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
                 player.swing(InteractionHand.MAIN_HAND);
                 LOGGER.info("Placing a shulker box at {} for {}", box.toShortString(), name(restockItem));

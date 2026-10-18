@@ -33,6 +33,8 @@ public final class SchematicSettings {
     public double reaction = 0.12;
     /** Ticks the crosshair rests on its spot before the click; now and then one more. */
     public int settle = 1;
+    /** After taking another item in hand, the longest moment before using it, in seconds; each is a third to all of it. */
+    public double itemSwitch = 0.2;
     /** Of every hundred longer turns to a block, about how many land a little off and correct, as a hand does. */
     public int aimCorrections = 30;
     /** Of every hundred walks, about how many start with a moment of standing still. */
@@ -72,6 +74,7 @@ public final class SchematicSettings {
         turnSpeed = Double.isFinite(turnSpeed) ? Math.clamp(turnSpeed, 0.8, 2) : 1;
         reaction = Double.isFinite(reaction) ? Math.clamp(reaction, 0, 0.5) : 0.12;
         settle = Math.clamp(settle, 1, 6);
+        itemSwitch = Double.isFinite(itemSwitch) ? Math.clamp(itemSwitch, 0.05, 0.5) : 0.2;
         aimCorrections = Math.clamp(aimCorrections, 0, 80);
         hesitate = Math.clamp(hesitate, 0, 50);
     }
