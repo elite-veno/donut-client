@@ -1387,7 +1387,7 @@ public final class SchematicBuilder {
         candidates.sort(Comparator.comparingDouble(pos -> new AABB(pos).distanceToSqr(eye)));
         for (BlockPos pos : candidates) {
             BlockState state = level.getBlockState(pos);
-            if (state.canBeReplaced() || !inView(player, eye, pos, reach)) continue;
+            if (state.canBeReplaced() || missedMining(player, pos) || !inView(player, eye, pos, reach)) continue;
             Overlay view = new Overlay(level, Map.of(pos.asLong(), Blocks.AIR.defaultBlockState()));
             if (exitFrom(player, view, Navigator.standingAt(view, player), null) == null) continue;
             if (debug()) LOGGER.info("Shut in: taking away the helper block at {} to get out", pos.toShortString());
@@ -1886,7 +1886,7 @@ public final class SchematicBuilder {
             }
             int serves = entry.getValue().serves();
             if (serves < 0 || plan.update(client.level, serves) == BuildPlan.Status.PENDING) continue;
-            if (inView(player, player.getEyePosition(), at, reach)) {
+            if (!missedMining(player, at) && inView(player, player.getEyePosition(), at, reach)) {
                 startBreak(at);
                 return true;
             }
@@ -1929,7 +1929,7 @@ public final class SchematicBuilder {
             BlockPos target = cleanupTarget;
             cleanupTarget = null;
             if (tops.contains(target)) {
-                if (inView(player, player.getEyePosition(), target, reach) && safeToBreak(player, target)) {
+                if (!missedMining(player, target) && inView(player, player.getEyePosition(), target, reach) && safeToBreak(player, target)) {
                     startBreak(target);
                     return true;
                 }
@@ -1939,7 +1939,7 @@ public final class SchematicBuilder {
             }
         }
         for (BlockPos top : tops) {
-            if (!inView(player, player.getEyePosition(), top, reach) || !safeToBreak(player, top)) continue;
+            if (missedMining(player, top) || !inView(player, player.getEyePosition(), top, reach) || !safeToBreak(player, top)) continue;
             startBreak(top);
             return true;
         }
@@ -1968,8 +1968,9 @@ public final class SchematicBuilder {
                 if (path == null) {
                     Navigator navigator = navigator(player, true).limit(6000);
                     if (cleanupBridges >= CLEANUP_BRIDGES) navigator.noBridges();
-                    path = navigator.find(here, node -> node.floor().equals(top) && !groundUnder(player.level(), top) ? 0
-                            : inView(player, node.eye(), top, reach) ? 1 : 0);
+                    boolean missedHere = missedMining(player, top);
+                    path = navigator.find(here, node -> node.floor().equals(top) && !groundUnder(player.level(), top)
+                            || missedHere && node.key() == here.key() ? 0 : inView(player, node.eye(), top, reach) ? 1 : 0);
                 }
                 if (path != null && path.nodes().size() > 1) {
                     if (!climbReady(client, player, path)) return true;
@@ -2148,6 +2149,25 @@ public final class SchematicBuilder {
         restingTicks = 0;
     }
 
+    /**
+     * Blocks the crosshair couldn't be brought onto to mine, from where the player stood then: passed over from there,
+     * looked for again once the player has moved. The face the look's trace found was hidden behind something after all.
+     */
+    private final Set<Long> mineMissed = new HashSet<>();
+    private BlockPos mineMissedAt;
+    /** The block being mined, and for how many ticks in a row the crosshair has been on something else. */
+    private BlockPos minePos;
+    private int mineMisses;
+
+    /** Whether mining the block at {@code pos} failed from where the player stands, for the crosshair. */
+    private boolean missedMining(LocalPlayer player, BlockPos pos) {
+        if (!player.blockPosition().equals(mineMissedAt)) {
+            mineMissed.clear();
+            mineMissedAt = player.blockPosition();
+        }
+        return mineMissed.contains(pos.asLong());
+    }
+
     /** Looks at the helper block being taken away and mines it, with the best tool in the hotbar. */
     private void breakTick(Minecraft client, LocalPlayer player) {
         breakTicks++;
@@ -2203,11 +2223,26 @@ public final class SchematicBuilder {
         PlacementSolver.Click face = PlacementSolver.use(player, player.getEyePosition(), pos, player.blockInteractionRange() + 0.5,
                 client.level.getBlockState(pos));
         if (face == null) return false;
+        if (!pos.equals(minePos)) {
+            minePos = pos;
+            mineMisses = 0;
+        }
         if (!looked(player, face.yaw(), face.pitch())) return true;
         // Keep the crosshair on the face while mining; a small drift of the aim would start over.
         restingTicks = restFor + 1;
         BlockHitResult hit = crosshair(player);
-        if (hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(pos)) return true;
+        if (hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(pos)) {
+            // The look is there, the crosshair on something else in front of it: from here it isn't mined at all.
+            if (++mineMisses <= 10) return true;
+            if (debug()) LOGGER.info("Can't get the crosshair onto {} to mine it: on {} {} {} instead, eye {}, look {} {}",
+                    pos.toShortString(), hit.getType(), hit.getBlockPos().toShortString(), hit.getDirection(), player.getEyePosition(),
+                    player.getYRot(), player.getXRot());
+            missedMining(player, pos);
+            mineMissed.add(pos.asLong());
+            mineMisses = 0;
+            return false;
+        }
+        mineMisses = 0;
         if (client.gameMode.continueDestroyBlock(pos, hit.getDirection())) player.swing(InteractionHand.MAIN_HAND);
         return true;
     }
