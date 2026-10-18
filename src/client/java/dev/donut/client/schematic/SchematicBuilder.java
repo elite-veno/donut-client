@@ -289,6 +289,8 @@ public final class SchematicBuilder {
      * way: as many as set, now and then one more, as a hand doesn't click on the very same beat each time.
      */
     private int restingTicks, restFor = 1;
+    /** How far, in degrees, the view turned on its way to the look it now rests on, to rest a little longer after a long turn. */
+    private float turned;
     /** How many misplaced blocks the log has been told of. */
     private int misplacedLogged, wrongLogged;
     /** The block whose missing place to stand was last explained in the log, and when: once in ten seconds is enough. */
@@ -2458,6 +2460,7 @@ public final class SchematicBuilder {
         aimFrom = Navigator.standingAt(player.level(), player).key();
         aimFeet = player.position();
         restingTicks = 0;
+        turned = 0;
         next = planned.at();
         nextIndex = planned.index();
     }
@@ -2476,12 +2479,30 @@ public final class SchematicBuilder {
             LOGGER.info("No look in whole mouse steps near {} {} passed; landed on it exactly, from {} {}", yaw, pitch, yawBefore, pitchBefore);
         }
         boolean moved = Math.abs(player.getYRot() - yawBefore) > 1e-3f || Math.abs(player.getXRot() - pitchBefore) > 1e-3f;
+        if (moved) turned += (float) Math.hypot(Mth.wrapDegrees(player.getYRot() - yawBefore), player.getXRot() - pitchBefore);
         if (!there || moved) {
             restingTicks = 0;
             return false;
         }
-        if (restingTicks == 0) restFor = settings().settle + (ThreadLocalRandom.current().nextInt(4) == 0 ? 1 : 0);
+        if (restingTicks == 0) {
+            restFor = settings().settle + extraRest(settings().settleSpread, turned);
+            turned = 0;
+        }
         return ++restingTicks >= restFor;
+    }
+
+    /**
+     * Ticks more than the settle the view rests before a click: none mostly, one or two often, now and then more (a
+     * geometric draw with {@code mean}, at most 5), and after a turn of more than 45 degrees one more half the time, as
+     * an eye takes a moment longer to find a spot it came a long way to.
+     */
+    static int extraRest(double mean, float turned) {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        double more = mean / (1 + mean);
+        int extra = 0;
+        while (extra < 5 && random.nextDouble() < more) extra++;
+        if (turned > 45 && random.nextBoolean()) extra++;
+        return extra;
     }
 
     /** What the crosshair is on: the same trace the game makes for a click. */

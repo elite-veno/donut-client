@@ -35,6 +35,8 @@ public final class SchematicSettings {
     public double reaction = 0.12;
     /** Ticks the crosshair rests on its spot before the click; now and then one more. */
     public int settle = 1;
+    /** On average how many ticks more than that the crosshair rests, at random: mostly none, now and then a few. */
+    public double settleSpread = 0.7;
     /** After taking another item in hand, the longest moment before using it, in seconds; each is a third to all of it. */
     public double itemSwitch = 0.2;
     /** After a block mined breaks, attack stays held while the view turns to the next one, as a player clearing a row does. */
@@ -82,6 +84,7 @@ public final class SchematicSettings {
         reaction = Double.isFinite(reaction) ? Math.clamp(reaction, 0, 0.5) : 0.12;
         settle = Math.clamp(settle, 1, 6);
         itemSwitch = Double.isFinite(itemSwitch) ? Math.clamp(itemSwitch, 0.05, 0.5) : 0.2;
+        settleSpread = Double.isFinite(settleSpread) ? Math.clamp(settleSpread, 0, 2) : 0.7;
         clickSpread = Double.isFinite(clickSpread) ? Math.clamp(clickSpread, 0.06, 0.15) : 0.15;
         aimCorrections = Math.clamp(aimCorrections, 0, 80);
         hesitate = Math.clamp(hesitate, 0, 50);
