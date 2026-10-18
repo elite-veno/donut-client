@@ -88,8 +88,28 @@ public final class Excavator {
         this.room = room;
         this.landings = area;
         this.tiers = room.tiers(area ? 3 : 4);
-        this.tier = tiers.size() - 1;
+        this.tier = site == null ? tiers.size() - 1 : highestLeft(site);
         planApproach(site, start);
+    }
+
+    /**
+     * The highest band with something left to dig. A room dug partly already, such as one started again after a stop,
+     * is entered at the band where the digging got to, not climbed to the top through what is already gone.
+     */
+    private int highestLeft(Site site) {
+        Box b = room.bounds;
+        for (int t = tiers.size() - 1; t > 0; t--) {
+            int[] band = tiers.get(t);
+            for (int x = b.minX(); x <= b.maxX(); x++) {
+                for (int z = b.minZ(); z <= b.maxZ(); z++) {
+                    for (int y = band[0]; y <= band[1]; y++) {
+                        // A block not loaded yet may still be there.
+                        if (room.contains(x, y, z) && (site.flags(x, y, z) & (Site.DIG | Site.UNLOADED)) != 0) return t;
+                    }
+                }
+            }
+        }
+        return 0;
     }
 
     private void planApproach(Site site, BlockPos start) {

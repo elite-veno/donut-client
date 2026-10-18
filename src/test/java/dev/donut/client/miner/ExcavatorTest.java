@@ -260,6 +260,32 @@ final class ExcavatorTest {
     }
 
     @Test
+    void startsAgainAtTheHighestBandLeftInAPartlyDugRoom() {
+        Room room = Room.of(new Box(0, 10, 0, 6, 25, 8), 2, 1, Direction.EAST, 4, 3);
+        for (ToolShape area : new ToolShape[] {null, ToolShape.area(1)}) {
+            List<int[]> tiers = room.tiers(area == null ? 4 : 3);
+            // As if stopped after two bands: everything above the second band from the bottom is gone.
+            int cut = tiers.get(1)[1] + 1;
+            for (boolean inside : new boolean[] {false, true}) {
+                GridSite site = new GridSite(GROUND);
+                Box b = room.bounds;
+                site.fill(new Box(b.minX(), cut, b.minZ(), b.maxX(), b.maxY(), b.maxZ()), GridSite.Block.AIR);
+                BlockPos start = inside ? new BlockPos((int) room.main.centerX(), cut, (int) room.main.centerZ()) : new BlockPos(20, GROUND + 1, 4);
+                Sim sim = new Sim(site, room, start, area, area == null, inside ? 31 : 32);
+                String what = (area == null ? "pickaxe" : "area pickaxe") + (inside ? ", started inside" : ", started outside");
+                try {
+                    sim.run();
+                    sim.assertDug();
+                } catch (AssertionError e) {
+                    throw new AssertionError(what + ": " + e.getMessage(), e);
+                }
+                int highest = inside ? cut : tiers.get(1)[0];
+                assertTrue(sim.highest <= highest, what + ": went up to y " + sim.highest + " in a room dug down to y " + cut);
+            }
+        }
+    }
+
+    @Test
     void digsBigFlatAndTallRooms() {
         // Builds as players bring them, not only small test boxes: a wide farm, a long flat base, a tall narrow tower.
         Box[] schematics = {new Box(0, -20, 0, 30, -9, 30), new Box(0, -10, 0, 47, -5, 19), new Box(0, -30, 0, 8, 17, 8)};
@@ -304,6 +330,8 @@ final class ExcavatorTest {
         int areaSwings, actions, limit = 40_000;
         /** Nanoseconds the excavator spent choosing, in all and at most for one action. */
         long planned, slowest;
+        /** The highest the player stood inside the room. */
+        int highest = Integer.MIN_VALUE;
 
         Sim(GridSite site, Room room, BlockPos start, ToolShape area, boolean single, long seed) {
             this.site = site;
@@ -315,6 +343,7 @@ final class ExcavatorTest {
             this.dig = new Excavator(room, start, area != null, site);
             this.approach = new ArrayList<>(dig.approach());
             walked.add(start);
+            if (room.contains(start)) highest = start.getY();
         }
 
         Swings.Reach reach() {
@@ -424,6 +453,7 @@ final class ExcavatorTest {
                 if (cell.getY() < feet.getY()) assertTrue(site.is(cell.above(2), Site.CLEAR), "walked off a step into rock at " + cell);
                 feet = cell;
                 walked.add(cell);
+                if (room.contains(feet)) highest = Math.max(highest, feet.getY());
                 if (traps.remove(feet.below())) {
                     site.set(feet.below(), GridSite.Block.AIR);
                     holes.add(feet.below());
@@ -447,6 +477,7 @@ final class ExcavatorTest {
             site.set(feet, GridSite.Block.STONE);
             feet = feet.above();
             towers++;
+            if (room.contains(feet)) highest = Math.max(highest, feet.getY());
         }
 
         void fill(BlockPos pos) {

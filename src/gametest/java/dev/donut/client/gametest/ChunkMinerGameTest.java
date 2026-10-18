@@ -44,6 +44,10 @@ import net.minecraft.world.level.block.state.BlockState;
  * makes break 3x3 flat against the face hit. Each time the player starts on the ground beside the room, digs a staircase
  * down to its floor, climbs inside, and digs it from the top down. Afterwards every block of the room is gone, the floor
  * under it is whole, and the staircase can still be walked; the camera never turned faster than the setting allows.
+ *
+ * <p>To start a run where the last one went wrong, as its failure prints: {@code DONUT_MINER_DIGS=amethyst} runs only
+ * that dig (or {@code normal}), and {@code DONUT_MINER_FROM_Y=<y>} has the room dug away from that height up before the
+ * dig, with the player standing in it there, so the miner starts at the band below.
  */
 public final class ChunkMinerGameTest implements FabricClientGameTest {
     private static final String FILE = "donut-miner-test.litematic";
@@ -54,6 +58,8 @@ public final class ChunkMinerGameTest implements FabricClientGameTest {
     private static final Map<UUID, Direction> FACES = new ConcurrentHashMap<>();
     private static volatile boolean areaPickaxe;
     private static boolean registered;
+    private static final List<String> DIGS = List.of(System.getenv().getOrDefault("DONUT_MINER_DIGS", "normal,amethyst").split(","));
+    private static final String FROM_Y = System.getenv("DONUT_MINER_FROM_Y");
 
     @Override
     public void runTest(ClientGameTestContext context) {
@@ -106,10 +112,13 @@ public final class ChunkMinerGameTest implements FabricClientGameTest {
             });
 
             // A normal pickaxe: stone takes two ticks a block.
-            server.runCommand("clear @a");
-            server.runCommand("give @a minecraft:netherite_pickaxe[minecraft:enchantments={\"minecraft:efficiency\":5}]");
-            server.runCommand("give @a minecraft:cobblestone 32");
-            dig(context, server, miner, place, new BlockPos(0, 52, 0), "16.5 65 1.5 90 20", 2, "normal");
+            if (DIGS.contains("normal")) {
+                server.runCommand("clear @a");
+                server.runCommand("give @a minecraft:netherite_pickaxe[minecraft:enchantments={\"minecraft:efficiency\":5}]");
+                server.runCommand("give @a minecraft:cobblestone 32");
+                dig(context, server, miner, place, new BlockPos(0, 52, 0), "16.5 65 1.5 90 20", 2, "normal");
+            }
+            if (!DIGS.contains("amethyst")) return;
 
             // Only an area pickaxe, which breaks 3x3 here.
             areaPickaxe = true;
@@ -154,6 +163,7 @@ public final class ChunkMinerGameTest implements FabricClientGameTest {
         context.waitTicks(2);
         require(context.computeOnClient(client -> miner.isActive() && miner.room() != null), "The miner did not start: "
                 + context.computeOnClient(client -> miner.status()));
+        if (FROM_Y != null) startPartlyDug(context, server, miner, Integer.parseInt(FROM_Y.trim()), name);
         Room room = context.computeOnClient(client -> miner.room());
         // The way in as last planned: an area pickaxe digs into the ground first and plans it again from there.
         List<BlockPos> first = context.computeOnClient(client -> List.copyOf(miner.excavator().approach()));
@@ -162,8 +172,10 @@ public final class ChunkMinerGameTest implements FabricClientGameTest {
         float[] last = context.computeOnClient(client -> new float[] {client.player.getYRot(), client.player.getXRot()});
         double[] fastest = {0};
         int[] ticks = {0};
+        String[] resume = {""};
         try {
             context.waitFor(client -> {
+                if (miner.excavator() != null) resume[0] = resumeHint(miner.excavator(), name);
                 float yaw = client.player.getYRot(), pitch = client.player.getXRot();
                 fastest[0] = Math.max(fastest[0], Math.hypot(Mth.wrapDegrees(yaw - last[0]), pitch - last[1]));
                 last[0] = yaw;
@@ -174,16 +186,50 @@ public final class ChunkMinerGameTest implements FabricClientGameTest {
             }, 20 * 60 * 10);
         } catch (AssertionError e) {
             screenshot(context, "donut-miner-" + name + "-timeout");
+            System.out.println("[miner test] to start the next run there: " + resume[0]);
             throw new AssertionError("Timed out digging with the " + name + " pickaxe; the miner says: "
                     + context.computeOnClient(client -> miner.status()), e);
         }
         screenshot(context, "donut-miner-" + name + "-done");
         String status = context.computeOnClient(client -> miner.status());
+        if (!status.startsWith("Finished")) System.out.println("[miner test] to start the next run there: " + resume[0]);
         require(status.startsWith("Finished"), "The " + name + " dig did not finish: " + status);
         System.out.println("[miner test] " + name + " took " + ticks[0] + " ticks; fastest turn " + Math.round(fastest[0] * 10) / 10.0 + " degrees a tick");
         // The fastest a turn may go, its wobble, and a mouse step of rounding.
         require(fastest[0] <= TURN_SPEED * 1.15 + 1.5, "The camera turned " + fastest[0] + " degrees in a tick");
         check(server, room, List.copyOf(approach.getFirst()), name);
+    }
+
+    /**
+     * Stops the miner, digs its room away from {@code fromY} up with commands, stands the player in it there and starts
+     * the miner again, which then digs only what is left, from the band below.
+     */
+    private static void startPartlyDug(ClientGameTestContext context, TestServerContext server, ChunkMiner miner, int fromY, String name) {
+        Room room = context.computeOnClient(client -> miner.room());
+        require(fromY > room.floorY && fromY < room.topY, "DONUT_MINER_FROM_Y=" + fromY + " is not inside the room, over its floor at y "
+                + room.floorY + " and under its top at y " + room.topY);
+        context.runOnClient(client -> miner.setEnabled(false));
+        for (Box b : room.storage == null ? List.of(room.main) : List.of(room.main, room.storage)) {
+            if (b.maxY() < fromY) continue;
+            server.runCommand("fill %d %d %d %d %d %d minecraft:air".formatted(b.minX(), fromY, b.minZ(), b.maxX(), b.maxY(), b.maxZ()));
+        }
+        server.runCommand("tp @a %d.5 %d %d.5".formatted((int) Math.floor(room.main.centerX()), fromY, (int) Math.floor(room.main.centerZ())));
+        context.waitTicks(10);
+        context.waitFor(client -> client.player.onGround(), 200);
+        context.runOnClient(client -> miner.setEnabled(true));
+        context.waitTicks(2);
+        require(context.computeOnClient(client -> miner.isActive() && miner.room() != null), "The miner did not start again in the "
+                + name + " room: " + context.computeOnClient(client -> miner.status()));
+        System.out.println("[miner test] " + name + ": started in the room at y " + fromY + ", dug away above");
+    }
+
+    /** What a next run sets to start where this one is: at the band being dug, or the whole dig while on the way in. */
+    private static String resumeHint(dev.donut.client.miner.Excavator dig, String name) {
+        int band = dig.tierNumber();
+        List<int[]> tiers = dig.tiers();
+        String only = "DONUT_MINER_DIGS=" + name;
+        if (band <= 1) return only;
+        return only + " DONUT_MINER_FROM_Y=" + (tiers.get(tiers.size() - band)[1] + 1);
     }
 
     /** The room is empty, its floor whole, and every step of the way in still has a floor and room to stand. */
