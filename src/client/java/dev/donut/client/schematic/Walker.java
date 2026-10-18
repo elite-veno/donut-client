@@ -45,6 +45,11 @@ final class Walker {
      * about to set off turns round briskly.
      */
     private static final float TURN_ROUND = 1.4f;
+    /**
+     * How far from the end of a walk over open ground the eyes go ahead of the feet, in blocks: the view turns to the
+     * block the walk is for while the feet step the rest of the way there, sideways or back as needed.
+     */
+    private static final double EYES_AHEAD = 1.5;
     /** Sprinting only above this food level; the builder eats at it. */
     private static final int SPRINT_FOOD = 14;
     /** How many ticks of the walk the log gets when it fails. */
@@ -118,6 +123,8 @@ final class Walker {
         if (path == null) return State.FAILED;
         if (index >= path.size()) {
             release(client);
+            // Still sliding on ice, a player taps the key the other way to stop rather than wait the slide out.
+            if (player.onGround() && slippery(player)) brake(client, player);
             // Sliding to a stop, the player already turns toward what they walked here for, which a turn doesn't slow:
             // the aim after it has less to turn.
             if (lookAt != null) {
@@ -176,7 +183,22 @@ final class Walker {
             return fail(client, "stuck on the way to " + to + (player.onGround() ? ", on the ground" : ", in the air") + ", moving "
                     + player.getDeltaMovement() + (client.options.keyJump.isDown() ? ", jumping" : ""));
         }
-        if (sidestep) {
+        // On ice the last step lets go once the slide alone carries the player to the spot, and taps the keys the other
+        // way if it would carry them past, as a player does, rather than slide on into the next block. The view keeps on
+        // what the walk is for.
+        if (last && player.onGround() && slippery(player) && slide(player) > distance) {
+            release(client);
+            brake(client, player);
+            if (lookAt != null) {
+                float[] look = PlacementSolver.look(player.getEyePosition(), lookAt);
+                head.turn(player, look[0], look[1]);
+            }
+            return State.WALKING;
+        }
+        // The last bit of a walk over open ground, the eyes already on the block it is for.
+        boolean eyesAhead = last && lookAt != null && distance < EYES_AHEAD && player.onGround() && !wading
+                && to.move() == Navigator.Move.WALK && open(player, to) && open(player, from);
+        if (sidestep || eyesAhead) {
             // The view stays on the work, turning calmly toward the block the walk is for; the feet step there sideways
             // or back as needed, as a player building a row does.
             float[] look = PlacementSolver.look(player.getEyePosition(), lookAt);
@@ -375,6 +397,30 @@ final class Walker {
         client.options.keyDown.setDown(go && Math.abs(way) >= 112.5f);
         client.options.keyRight.setDown(go && way >= 22.5f && way <= 157.5f);
         client.options.keyLeft.setDown(go && way <= -22.5f && way >= -157.5f);
+    }
+
+    /**
+     * Holds the keys against the slide while it is quicker than a tick of them takes off on this ground, so it never
+     * sets the player going back: the ground's friction times 0.91 keeps that much of it, and a key adds the player's
+     * speed times 0.216 over that cubed, as the game works it out.
+     */
+    private void brake(Minecraft client, LocalPlayer player) {
+        Vec3 motion = player.getDeltaMovement();
+        double keep = keep(player);
+        double push = player.getSpeed() * 0.21600002 / (keep * keep * keep);
+        if (Math.sqrt(motion.horizontalDistanceSqr()) * keep > push) strafe(client, player, -motion.x, -motion.z, true);
+    }
+
+    /** How much further the player slides with no key held, in blocks. */
+    private static double slide(LocalPlayer player) {
+        double keep = keep(player);
+        return Math.sqrt(player.getDeltaMovement().horizontalDistanceSqr()) * keep / (1 - keep);
+    }
+
+    /** The share of the speed the ground the player stands on keeps each tick: its friction times 0.91. */
+    private static double keep(LocalPlayer player) {
+        BlockPos below = BlockPos.containing(player.getX(), player.getY() - 0.05, player.getZ());
+        return player.level().getBlockState(below).getBlock().getFriction() * 0.91;
     }
 
     /** Whether the place to stand has full, sturdy ground under it and on all four sides at its height: no edge near. */

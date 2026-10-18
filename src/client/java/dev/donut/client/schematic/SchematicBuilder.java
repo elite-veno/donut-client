@@ -520,6 +520,7 @@ public final class SchematicBuilder {
         if (!planKey.equals(key())) preparePlan(client);
         plan.refresh(client.level, REFRESH_BUDGET);
         head.pace((float) settings().turnSpeed);
+        head.misses(settings().aimCorrections);
         walker.pace(settings().hesitate, settings().sprint);
         if (swapFrom >= 0) {
             swapTick(client, player);
@@ -604,7 +605,7 @@ public final class SchematicBuilder {
                 glancePitch = -15 + random.nextFloat() * 50;
                 nextGlance = now + (long) ((1.2 + random.nextDouble() * 3.5) * 1e9);
             }
-            head.turn(player, glanceYaw, glancePitch);
+            head.aim(player, glanceYaw, glancePitch);
             show("Taking a short break (" + (breakEnds - now + 999_999_999L) / 1_000_000_000L + " s)", false);
             return true;
         }
@@ -1413,7 +1414,7 @@ public final class SchematicBuilder {
      */
     private boolean looked(LocalPlayer player, float yaw, float pitch) {
         float yawBefore = player.getYRot(), pitchBefore = player.getXRot();
-        boolean there = head.turn(player, yaw, pitch);
+        boolean there = head.aim(player, yaw, pitch);
         boolean moved = Math.abs(player.getYRot() - yawBefore) > 1e-3f || Math.abs(player.getXRot() - pitchBefore) > 1e-3f;
         if (!there || moved) {
             restingTicks = 0;

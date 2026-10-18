@@ -635,6 +635,8 @@ public final class DonutScreen extends Screen {
                     () -> s.reaction, v -> s.reaction = v, 0, 0.5, 0.01, v -> Math.round(v * 1000) + " ms");
             c.slider("settle", "Aim settle", "Ticks the crosshair rests on a spot before clicking, now and then one more",
                     () -> s.settle, v -> s.settle = (int) Math.round(v), 1, 6, 1, v -> Math.round(v) + (Math.round(v) == 1 ? " tick" : " ticks"));
+            c.slider("aimCorrections", "Aim corrections", "How many longer turns in a hundred land a little off the block and correct, as a hand does",
+                    () -> s.aimCorrections, v -> s.aimCorrections = (int) Math.round(v), 0, 80, 1, v -> Math.round(v) + "%");
             c.toggle("breaks", "Breaks", "Stops now and then for a while and looks about, as a player does",
                     () -> s.breaks, () -> s.breaks = !s.breaks);
             if (s.breaks) {
