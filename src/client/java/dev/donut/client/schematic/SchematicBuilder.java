@@ -1142,6 +1142,37 @@ public final class SchematicBuilder {
             order.put(i, turn / 60 + (inHand ? 0 : 2) + Math.sqrt(away) * 0.3);
         }
         candidates.sort(Comparator.comparingDouble(order::get));
+        // Back to front, as a player builds: a block in reach that stands in the line from the eye to a farther one would
+        // take that block's only look, and a walk would come back for it. The farther one, when it has a chance from here
+        // (in reach, its item in hand, not found without a click from here), goes in just before it; the rest keep their
+        // order, so no turn or item swap comes in that wasn't there.
+        double range = player.blockInteractionRange();
+        List<Integer> backToFront = new ArrayList<>(candidates.size());
+        Set<Integer> movedUp = new HashSet<>();
+        for (int p = 0; p < candidates.size(); p++) {
+            int i = candidates.get(p);
+            if (movedUp.contains(i)) continue;
+            if (order.get(i) < 1000 && plan.kind(i) == BlockRules.Kind.PLACE) {
+                AABB cell = new AABB(plan.pos(i)).deflate(0.05);
+                double away = Vec3.atCenterOf(plan.pos(i)).distanceToSqr(eye);
+                for (int q = p + 1; q < candidates.size(); q++) {
+                    int j = candidates.get(q);
+                    if (order.get(j) >= 1000) break;
+                    Vec3 behind = Vec3.atCenterOf(plan.pos(j));
+                    double far = behind.distanceToSqr(eye);
+                    if (movedUp.contains(j) || plan.kind(j) != BlockRules.Kind.PLACE || far <= away || far > range * range
+                            || !creative && !atHand.contains(plan.item(j)) || noClickHere.containsKey(j)
+                            || missedHere.contains(j) && player.blockPosition().equals(missedAt) || cell.clip(eye, behind).isEmpty()) {
+                        continue;
+                    }
+                    backToFront.add(j);
+                    movedUp.add(j);
+                }
+            }
+            backToFront.add(i);
+        }
+        candidates.clear();
+        candidates.addAll(backToFront);
         if (settings().walk && wetSoon(player.level(), player.blockPosition(), recentPours(), new HashMap<>())) {
             // Water running past pushes the player about and spoils every look: out of it first, onto dry ground.
             nextAction = System.nanoTime() + 250_000_000L;
