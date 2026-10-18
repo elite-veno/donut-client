@@ -182,6 +182,19 @@ public final class SchematicBuilder {
     private final Set<Long> missedFrom = new HashSet<>();
     private BlockPos missedAt;
     /**
+     * Where the player stood when the click being lined up was worked out, by {@link Navigator.Node#key}, and where the
+     * feet were: a player carried off from there while turning works it out again rather than chase it.
+     */
+    private long aimFrom;
+    private Vec3 aimFeet;
+    /**
+     * Places to stand the player was carried off from while lining up a click, by water running past, ice or a push:
+     * walks don't end there again. Forgotten with the layer, or with the clicks that missed when there is no other way on.
+     */
+    private final Set<Long> carriedFrom = new HashSet<>();
+    /** How far the feet may move off where a click was worked out, as a slide coming to rest does, before it is given up. */
+    private static final double CARRIED = 0.3;
+    /**
      * Blocks with no click from where the player stands, and why, worked out at {@code noClickFrom} in that stance: passed
      * over until the player moves, a block goes in or a couple of seconds go by. A long row of them would otherwise use
      * up each tick's planning time before a walk is worked out, and the next tick would start over with the same ones.
@@ -715,6 +728,7 @@ public final class SchematicBuilder {
         badSteps.clear();
         badStepsRetried = -100_000;
         missedFrom.clear();
+        carriedFrom.clear();
         pours.clear();
         missedHere.clear();
         noClickHere.clear();
@@ -845,6 +859,7 @@ public final class SchematicBuilder {
                 traps.clear();
                 badSteps.clear();
                 missedFrom.clear();
+                carriedFrom.clear();
             }
             layerY = entry.getKey();
             layerNumber = number;
@@ -1035,12 +1050,14 @@ public final class SchematicBuilder {
         // Steps that failed once are left out of every walk in the layer. With no way on without them, they get another
         // try before anything is taken away: what made one fail, a climb begun off the middle or something in the way,
         // may be gone, and it may be the only way out.
-        // Places whose click missed the same: tried again with them, when there is no other.
-        if (settings().walk && (!badSteps.isEmpty() || !missedFrom.isEmpty()) && tick - badStepsRetried > 600) {
-            if (debug()) LOGGER.info("No way on without the {} steps that failed and {} clicks that missed: trying them again",
-                    badSteps.size(), missedFrom.size());
+        // Places whose click missed the same, and places the player was carried off from: tried again with them, when
+        // there is no other.
+        if (settings().walk && (!badSteps.isEmpty() || !missedFrom.isEmpty() || !carriedFrom.isEmpty()) && tick - badStepsRetried > 600) {
+            if (debug()) LOGGER.info("No way on without the {} steps that failed, {} clicks that missed and {} places carried off from: trying them again",
+                    badSteps.size(), missedFrom.size(), carriedFrom.size());
             badSteps.clear();
             missedFrom.clear();
+            carriedFrom.clear();
             badStepsRetried = tick;
             nextAction = System.nanoTime();
             return;
@@ -1204,6 +1221,23 @@ public final class SchematicBuilder {
                         open.add(next);
                     }
                 }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether water runs right beside a player standing with the feet in {@code feet}, at the feet or the head. A walk
+     * comes to rest up to a quarter block off the middle, and a body that far off reaches into the cell beside: in a
+     * current, it is carried off, along a channel on ice for blocks. Water that runs nowhere, a pool of sources, carries
+     * no one.
+     */
+    static boolean currentBeside(BlockGetter level, BlockPos feet) {
+        for (int up = 0; up <= 1; up++) {
+            for (Direction side : Direction.Plane.HORIZONTAL) {
+                BlockPos cell = feet.above(up).relative(side);
+                FluidState fluid = level.getFluidState(cell);
+                if (!fluid.isEmpty() && fluid.getFlow(level, cell).lengthSqr() > 1e-4) return true;
             }
         }
         return false;
@@ -1490,6 +1524,8 @@ public final class SchematicBuilder {
             return;
         }
         aim = planned;
+        aimFrom = Navigator.standingAt(player.level(), player).key();
+        aimFeet = player.position();
         restingTicks = 0;
         next = planned.at();
         nextIndex = planned.index();
@@ -1530,6 +1566,16 @@ public final class SchematicBuilder {
             aim = null;
             return;
         }
+        if (player.position().subtract(aimFeet).horizontalDistanceSqr() > CARRIED * CARRIED) {
+            // Carried off while turning, by water running past or a push: the look is aimed again from the eye each tick, so
+            // it would follow the player along, to wherever they come to rest, out of reach or with something in the way.
+            // Worked out again from where they are, and walks don't end where it happened again.
+            if (debug()) LOGGER.info("Carried from {} to {} while lining up {}: working it out again", aimFeet, player.position(),
+                    planned.index() < 0 ? planned.at().toShortString() : plan.target(planned.index()));
+            carriedFrom.add(aimFrom);
+            aim = null;
+            return;
+        }
         PlacementSolver.Click click = planned.click();
         if (click.crouch() != player.isShiftKeyDown()) {
             setCrouch(client, click.crouch());
@@ -1561,7 +1607,7 @@ public final class SchematicBuilder {
             if (!player.blockPosition().equals(missedAt)) missedHere.clear();
             missedAt = player.blockPosition();
             missedHere.add(planned.index());
-            missedFrom.add(Navigator.standingAt(player.level(), player).key() * 31 + planned.index());
+            missedFrom.add(aimFrom * 31 + planned.index());
             return;
         }
         if (planned.act() != Act.ADJUST && !player.getMainHandItem().is(planned.item()) && !player.hasInfiniteMaterials()) return;
@@ -1572,7 +1618,7 @@ public final class SchematicBuilder {
             if (!player.blockPosition().equals(missedAt)) missedHere.clear();
             missedAt = player.blockPosition();
             missedHere.add(planned.index());
-            missedFrom.add(Navigator.standingAt(player.level(), player).key() * 31 + planned.index());
+            missedFrom.add(aimFrom * 31 + planned.index());
             return;
         }
         InteractionResult result = planned.act() == Act.POUR ? client.gameMode.useItem(player, InteractionHand.MAIN_HAND)
@@ -2316,13 +2362,14 @@ public final class SchematicBuilder {
         int[] seen = new int[3];
         List<Navigator.Node> sample = new ArrayList<>();
         Map<Long, Boolean> wetCells = new HashMap<>();
+        Map<Long, Boolean> currentCells = new HashMap<>();
         List<BlockPos> poured = recentPours();
         long leaning = ThreadLocalRandom.current().nextLong();
         // The nearest block a real look reaches from each place to stand, to turn toward on arriving there.
         Map<Long, Integer> firstFrom = new HashMap<>();
         Navigator.Goal goal = node -> {
             seen[0]++;
-            if (uselessSpots.contains(node.key()) || traps.contains(node.key())) return 0;
+            if (uselessSpots.contains(node.key()) || traps.contains(node.key()) || carriedFrom.contains(node.key())) return 0;
             // Waded through, never stood in: water would push the player off every look.
             if (wetSoon(player.level(), node.feetCell(), poured, wetCells)) return 0;
             Vec3 feet = node.standing(), eye = node.eye();
@@ -2366,6 +2413,9 @@ public final class SchematicBuilder {
             if (good == 0) return 0;
             // A little leaning toward some places over others, its own each walk: not always the very same spot.
             double lean = 0.88 + 0.24 * Navigator.unit(node.key() ^ leaning);
+            // Beside running water a walk that comes to rest a little off the middle is in the current: only when nothing
+            // else does.
+            if (currentCells.computeIfAbsent(node.feetCell().asLong(), k -> currentBeside(player.level(), node.feetCell()))) lean *= 0.2;
             return (good * 2 + Math.min(inReach.size(), 24) * 0.25) * lean;
         };
         // Standing more than a couple of blocks over the layer sees nothing more of it.
