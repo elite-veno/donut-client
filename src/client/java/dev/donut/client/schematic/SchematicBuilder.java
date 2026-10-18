@@ -92,6 +92,10 @@ public final class SchematicBuilder {
     private static final long FILE_CHECK_NANOS = 1_000_000_000;
     private static final int PREVIEW_RANGE = 48, PREVIEW_MAX = 1500;
     private static final int RESTOCK_FAILURES = 3;
+    /** Stacks of each helper block kept on the player, out of the boxes: climbs and helper blocks use them up quickly. */
+    private static final int HELPER_STACKS = 2;
+    /** With fewer helper blocks than this left outside the boxes, more are taken out of one. */
+    private static final int HELPERS_LOW = 16;
     /** Ticks a look rests on its spot before the click, so the server has the head turned the same way. */
     private static final int REST_TICKS = 2;
     /** How many of the nearest blocks a walk checks a real look for at each place it considers. */
@@ -247,6 +251,10 @@ public final class SchematicBuilder {
     private BlockPos box;
     private PlacementSolver.Click boxClick;
     private int restockTicks, nextTake, boxesBefore, restockFailures;
+    /** When helper blocks were last taken out of a box for running low: not tried again for a while, should it fail. */
+    private long helperFetchTick = -100_000;
+    /** Dropped helper blocks a walk went to pick up, by entity id: not walked to again, should they have stayed where they were. */
+    private final Set<Integer> pickupTried = new HashSet<>();
     /** Walks planned to a dropped box since it broke, a few at a time; and whether the player was asked to pick it up. */
     private int boxWalks;
     private boolean boxAsked;
@@ -591,6 +599,8 @@ public final class SchematicBuilder {
         pours.clear();
         missedHere.clear();
         noClickHere.clear();
+        pickupTried.clear();
+        helperFetchTick = -100_000;
         helpers.clear();
         helperSpot.clear();
         helpersLeft.clear();
@@ -668,6 +678,14 @@ public final class SchematicBuilder {
                 startRestock(client, player, wanted, materials);
                 return;
             }
+        }
+        // Helper blocks running low: more out of a box before they run out mid-climb.
+        Item fetch = creative || !settings().useShulkers ? null : helperToFetch(player, materials);
+        if (fetch != null) {
+            startRestock(client, player, fetch, materials);
+            if (restock != Restock.NONE || swapFrom >= 0 || walker.active()) return;
+            // No box could go down for them, as with no room beside the player: the build goes on, and tries again later.
+            helperFetchTick = tick;
         }
         // The layer: the lowest with a block that can go in now; lower blocks still waiting need something above them.
         // Each layer lists its blocks in placing order, so the first block found also sets the group.
@@ -846,6 +864,7 @@ public final class SchematicBuilder {
         nextAction = System.nanoTime() + 250_000_000L;
         int left = 0;
         for (int i : layer) if (plan.status(i) == BuildPlan.Status.PENDING || plan.status(i) == BuildPlan.Status.UNLOADED) left++;
+        if (settings().walk && pickUpHelpers(client, player)) return;
         if (settings().walk && planWalk(client, player, candidates, materials, layerNumber, lift)) return;
         if (settings().walk && planPit(client, player, candidates, materials, layerNumber, lift)) return;
         if (settings().walk && breakOut(player)) return;
@@ -1526,6 +1545,55 @@ public final class SchematicBuilder {
         }
         if (to < 0) return true;
         startSwap(client, player, from, to);
+        return false;
+    }
+
+    /** How many helper blocks the player carries outside shulker boxes. */
+    private int helpersLoose(LocalPlayer player) {
+        Inventory inventory = player.getInventory();
+        int count = 0;
+        for (int slot = 0; slot < Materials.SLOTS; slot++) if (isHelper(inventory.getItem(slot))) count += inventory.getItem(slot).getCount();
+        return count;
+    }
+
+    /**
+     * The helper block to take out of a shulker box: one the boxes carried hold, when fewer than {@link #HELPERS_LOW} are
+     * left outside them; null when enough are, or a fetch was tried in the last minute.
+     */
+    private Item helperToFetch(LocalPlayer player, Materials materials) {
+        if (tick - helperFetchTick < 1200) return null;
+        helperItem(player);
+        if (helpersLoose(player) >= HELPERS_LOW) return null;
+        Map<Item, Integer> needs = plan.needs();
+        for (Item item : helperItems) if (!needs.containsKey(item) && materials.boxed(item) > 0) return item;
+        return null;
+    }
+
+    /**
+     * Short of helper blocks, walks over dropped ones lying near, as those broken from a distance leave: a few steps
+     * away, without climbing. False when there are plenty, or none to get to.
+     */
+    private boolean pickUpHelpers(Minecraft client, LocalPlayer player) {
+        if (player.hasInfiniteMaterials()) return false;
+        helperItem(player);
+        if (helpersLoose(player) >= HELPER_STACKS * 64) return false;
+        List<ItemEntity> drops = player.level().getEntitiesOfClass(ItemEntity.class, player.getBoundingBox().inflate(8, 4, 8),
+                item -> isHelper(item.getItem()) && !pickupTried.contains(item.getId()));
+        drops.sort(Comparator.comparingDouble(item -> item.distanceToSqr(player)));
+        Navigator.Node start = Navigator.standingAt(player.level(), player);
+        for (ItemEntity drop : drops) {
+            pickupTried.add(drop.getId());
+            AABB item = drop.getBoundingBox();
+            // Picked up within a block of the body sideways and half a block up or down, as vanilla does.
+            Navigator.Path path = navigator(player, false).limit(1500).find(start, node -> new AABB(node.x() + 0.2, node.feet(),
+                    node.z() + 0.2, node.x() + 0.8, node.feet() + 1.8, node.z() + 0.8).inflate(1, 0.5, 1).intersects(item) ? 1 : 0);
+            if (path == null || path.nodes().size() < 2 || path.nodes().size() > 13 || dropsIntoTrap(player, path)) continue;
+            releaseKeys(client);
+            walker.start(path.nodes());
+            show("Picking up " + name(drop.getItem().getItem()) + " dropped nearby", false);
+            if (debug()) LOGGER.info("Walking {} steps to pick up {} at {}", path.nodes().size() - 1, drop.getItem(), drop.position());
+            return true;
+        }
         return false;
     }
 
@@ -2794,7 +2862,9 @@ public final class SchematicBuilder {
      */
     private Map<Item, Integer> soonNeeds(Level level) {
         Map<Item, Integer> needs = needsUpTo(level, layerY + 2);
-        if (restockItem != null) needs.merge(restockItem, 1, Math::max);
+        // Helper blocks come out a couple of stacks at a time, which the build itself never lists.
+        if (restockItem != null) needs.merge(restockItem, helperItems.contains(restockItem)
+                ? HELPER_STACKS * restockItem.getDefaultMaxStackSize() : 1, Math::max);
         return needs;
     }
 
@@ -2829,7 +2899,7 @@ public final class SchematicBuilder {
         for (int slot = 0; slot < 27; slot++) if (menu.getSlot(slot).getItem().isEmpty()) boxHasRoom = true;
         if (!boxHasRoom) return -1;
         Map<Item, Integer> needs = plan.needs(), now = needsUpTo(player.level(), layerY);
-        Set<Item> helperKept = new HashSet<>();
+        Map<Item, Integer> helperKept = new HashMap<>();
         int best = -1, bestRank = Integer.MAX_VALUE;
         for (int slot = 27; slot < menu.slots.size(); slot++) {
             ItemStack stack = menu.getSlot(slot).getItem();
@@ -2837,7 +2907,7 @@ public final class SchematicBuilder {
             Item item = stack.getItem();
             int rank;
             if (helperItems.contains(item)) {
-                if (helperKept.add(item)) continue;
+                if (helperKept.merge(item, 1, Integer::sum) <= HELPER_STACKS) continue;
                 rank = 1;
             } else if (stack.is(Items.BUCKET) || needs.containsKey(item) && !soon.containsKey(item)) {
                 rank = 0;
