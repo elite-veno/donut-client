@@ -1,5 +1,6 @@
 package dev.donut.client.freecam;
 
+import dev.donut.client.GoNutsGate;
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.config.FreecamSettings;
 import dev.donut.client.input.ModuleKeybinds;
@@ -75,6 +76,11 @@ public final class FreecamController {
             client.player.sendOverlayMessage(Component.literal("Land before enabling Freecam."));
             return;
         }
+        // GoNuts clicks through the crosshair, which Freecam takes away.
+        if (GoNutsGate.busy()) {
+            client.player.sendOverlayMessage(Component.literal("GoNuts is trading or buying; stop it before enabling Freecam."));
+            return;
+        }
         settings().sanitize();
         player = client.player;
         level = client.level;
@@ -118,6 +124,11 @@ public final class FreecamController {
         }
         if (settings().enabled != active) setEnabled(settings().enabled);
         if (!isActive()) return;
+        if (GoNutsGate.busy()) {
+            disable();
+            client.player.sendOverlayMessage(Component.literal("Freecam off: GoNuts started trading or buying"));
+            return;
+        }
         float health = player.getHealth();
         if (settings().exitWhenHurt && health < lastHealth) {
             disable();

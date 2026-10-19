@@ -23,6 +23,8 @@ dependencies {
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+    // GoNuts ships inside the Ven Client jar as a nested mod: its auction house buying orders a build's materials.
+    include(implementation("dev.doughbay:trader-fabric:0.1.0+26.2"))
     testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
 }
@@ -85,4 +87,6 @@ java {
 
 jar {
     from('LICENSE') { rename { "${it}_${project.base.archivesName.get()}" } }
+    // GoNuts ships inside this jar, and its MIT license asks for its notice to come with every copy.
+    from(providers.gradleProperty('gonutsDir').map { "${it}/LICENSE" }.getOrElse('../Gonuts/LICENSE')) { rename { 'LICENSE_doughbay' } }
 }

@@ -6,3 +6,6 @@ pluginManagement {
     }
 }
 rootProject.name = 'donut-client'
+// GoNuts, built from its own clone (branch local-hardening) next to this one: dev.doughbay:trader-fabric resolves to
+// that project. -PgonutsDir=<path> points elsewhere, as for a worktree that isn't beside the Gonuts clone.
+includeBuild(providers.gradleProperty('gonutsDir').getOrElse('../Gonuts'))

@@ -1,5 +1,6 @@
 package dev.donut.client.rtp;
 
+import dev.donut.client.GoNutsGate;
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.config.RtpSettings;
 import dev.donut.client.finder.ActivityArea;
@@ -92,6 +93,12 @@ public final class AutoRtpController {
             // Turned off from the GUI or a keybind.
             if (isActive()) finish(client, RtpLoop.Result.STOPPED);
             lastHealth = client.player.getHealth();
+            return;
+        }
+        if (GoNutsGate.busy()) {
+            // GoNuts has the auction house open: an /rtp or a menu click now lands in the middle of one of its steps.
+            loop.refuse(RtpLoop.Result.GONUTS_BUSY);
+            finish(client, RtpLoop.Result.GONUTS_BUSY);
             return;
         }
         if (SchematicBuilder.busy() || ChunkMiner.busy()) {
