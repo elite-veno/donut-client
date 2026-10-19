@@ -429,6 +429,10 @@ public final class SchematicBuilder {
     private final Map<Long, BlockState> filledOther = new LinkedHashMap<>();
     /** Walks made to put each of those right, by position. */
     private final Map<Long, Integer> redoWalks = new HashMap<>();
+    /** All ground ever dug out, by position, with the block that was there: what the ground must hold again at the end. */
+    private final Map<Long, BlockState> groundDug = new LinkedHashMap<>();
+    /** Ground under a spot being put right: the spot over it waits to be filled in until it is (see {@link #redoFills}). */
+    private final Set<Long> redoUnder = new HashSet<>();
     private final List<BlockPos> dugLeft = new ArrayList<>();
     /** Walks made during the build to fill in dug ground, by spot: one that still can't be filled from there is left for the end. */
     private final Map<Long, Integer> refillWalks = new HashMap<>();
@@ -979,6 +983,8 @@ public final class SchematicBuilder {
         dugLeft.clear();
         filledOther.clear();
         redoWalks.clear();
+        groundDug.clear();
+        redoUnder.clear();
         pit = lastPit = null;
         uselessPits.clear();
         pitTries.clear();
@@ -4334,6 +4340,7 @@ public final class SchematicBuilder {
             // With the right tool, so the ground drops itself to fill the pit in again with.
             if (!holdTool(client, player, level.getBlockState(next))) return;
             dug.put(next.asLong(), level.getBlockState(next));
+            groundDug.putIfAbsent(next.asLong(), level.getBlockState(next));
             pours.put(next.asLong(), tick);
             restingTicks = 0;
             // Ground taken out may open a way out of where a block would have shut the player in.
@@ -4388,6 +4395,7 @@ public final class SchematicBuilder {
         if (!dug.containsKey(next.asLong())) {
             if (!holdTool(client, player, level.getBlockState(next))) return;
             dug.put(next.asLong(), level.getBlockState(next));
+            groundDug.putIfAbsent(next.asLong(), level.getBlockState(next));
             pours.put(next.asLong(), tick);
             restingTicks = 0;
             shutIn.clear();
@@ -4446,39 +4454,58 @@ public final class SchematicBuilder {
     }
 
     /**
-     * Once every block is in, ground dug out and filled in with another block, a helper block in hand on the climb out of
-     * a pit say, is put right where the inventory now has the block that was there: the other block is broken, the spot
-     * goes back on the list of ground dug out, and {@link #refill} fills it with the right one. Top first, where a face of
-     * it is in view, after a walk if need be (each at most twice). True while there is one to break or walk to.
+     * Once every block is in, ground dug out that doesn't hold its own block again, filled in with a helper block on the
+     * climb out of a pit say, or left open under one filled in over it, is put right where the inventory has the block
+     * that was there. From the top down: what covers the wrong spot in its pit is broken first, then the spot itself, and
+     * each goes back on the list of ground dug out for {@link #refill} to fill in, bottom first. Where a face is in view,
+     * after a walk if need be (at most two for each). True while there is one to break or walk to.
      */
     private boolean redoFills(Minecraft client, LocalPlayer player) {
-        if (filledOther.isEmpty() || player.hasInfiniteMaterials()) return false;
+        if (groundDug.isEmpty() || player.hasInfiniteMaterials()) return false;
         Level level = player.level();
         double reach = player.blockInteractionRange() - 0.25;
         Materials materials = Materials.of(player.getInventory());
         List<BlockPos> ready = new ArrayList<>();
-        for (Iterator<Map.Entry<Long, BlockState>> it = filledOther.entrySet().iterator(); it.hasNext(); ) {
-            Map.Entry<Long, BlockState> entry = it.next();
+        Map<BlockPos, BlockPos> wrongUnder = new HashMap<>();
+        for (Map.Entry<Long, BlockState> entry : groundDug.entrySet()) {
             BlockPos cell = BlockPos.of(entry.getKey());
             BlockState now = level.getBlockState(cell), was = entry.getValue();
-            if (now.getBlock() == was.getBlock() || now.canBeReplaced()) {
-                // Put right already, or open again and so on the list of ground dug out.
-                it.remove();
+            if (now.getBlock() == was.getBlock()) {
+                filledOther.remove(entry.getKey());
+                dugLeft.remove(cell);
+                redoUnder.remove(entry.getKey());
                 continue;
             }
             Item item = was.getBlock().asItem();
-            if (item == Items.AIR || materials.total(item) == 0 || filledOther.containsKey(cell.above().asLong())) continue;
-            if (!helperItems.contains(now.getBlock().asItem()) || now.getDestroySpeed(level, cell) < 0) continue;
-            ready.add(cell);
+            if (item == Items.AIR || materials.total(item) == 0 || dug.containsKey(entry.getKey())) continue;
+            // What covers it: the highest ground dug out straight over it, up to the first open spot.
+            BlockPos top = cell;
+            for (BlockPos up = cell.above(); groundDug.containsKey(up.asLong()) && !level.getBlockState(up).canBeReplaced(); up = up.above()) top = up;
+            if (top.equals(cell) && now.canBeReplaced()) {
+                // Open, and nothing over it: back on the list for refill, which walks to it, twice at most.
+                if (redoWalks.merge(entry.getKey(), 1, Integer::sum) > 2) continue;
+                dug.put(entry.getKey(), was);
+                dugLeft.remove(cell);
+                return true;
+            }
+            BlockState covering = level.getBlockState(top);
+            boolean own = covering.getBlock() == groundDug.get(top.asLong()).getBlock();
+            if (!own && !helperItems.contains(covering.getBlock().asItem()) || covering.getDestroySpeed(level, top) < 0) continue;
+            ready.add(top);
+            wrongUnder.put(top, cell);
         }
         if (ready.isEmpty()) return false;
         Vec3 eye = player.getEyePosition();
         ready.sort(Comparator.comparingDouble(cell -> new AABB(cell).distanceToSqr(eye)));
         for (BlockPos cell : ready) {
             if (missedMining(player, cell) || !inView(player, eye, cell, reach) || !safeToBreak(player, cell)) continue;
-            if (debug()) LOGGER.info("Putting right the ground at {}: {} there, {} to go back", cell.toShortString(),
-                    level.getBlockState(cell).getBlock().getName().getString(), filledOther.get(cell.asLong()).getBlock().getName().getString());
-            dug.put(cell.asLong(), filledOther.remove(cell.asLong()));
+            BlockPos wrong = wrongUnder.get(cell);
+            if (debug()) LOGGER.info("Putting right the ground at {}: breaking {} at {} first", wrong.toShortString(),
+                    level.getBlockState(cell).getBlock().getName().getString(), cell.toShortString());
+            if (!cell.equals(wrong)) redoUnder.add(wrong.asLong());
+            else redoUnder.remove(wrong.asLong());
+            dug.put(cell.asLong(), groundDug.get(cell.asLong()));
+            filledOther.remove(cell.asLong());
             startBreak(cell);
             return true;
         }
@@ -4495,6 +4522,8 @@ public final class SchematicBuilder {
             show("Putting right the ground dug out", false);
             return true;
         }
+        // Nothing more can be put right: the spots under those waiting are filled in as they are.
+        redoUnder.clear();
         return false;
     }
 
@@ -4519,7 +4548,7 @@ public final class SchematicBuilder {
         double farDistance = Double.MAX_VALUE;
         for (BlockPos cell : open) {
             // Bottom first, and never under the player.
-            if (dug.containsKey(cell.below().asLong())) continue;
+            if (dug.containsKey(cell.below().asLong()) || redoUnder.contains(cell.below().asLong())) continue;
             if (new AABB(cell.getX(), cell.getY(), cell.getZ(), cell.getX() + 1, cell.getY() + 3, cell.getZ() + 1).intersects(body)) continue;
             if (!finish && lastPit != null && !placedSincePit && cell.getX() == lastPit.x() && cell.getZ() == lastPit.z()) continue;
             BlockState was = dug.get(cell.asLong());
