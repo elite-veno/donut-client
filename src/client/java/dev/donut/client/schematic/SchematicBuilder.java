@@ -1080,6 +1080,7 @@ public final class SchematicBuilder {
         SchematicSettings s = settings();
         plan = BuildPlan.of(schematic, new BlockPos(s.originX, s.originY, s.originZ), mirror(s.mirror), rotation(s.rotation), s.redstoneLast);
         opened = null;
+        openedView = null;
         planKey = key();
         planLevel = client.level;
         shortageReported = false;
@@ -3955,6 +3956,18 @@ public final class SchematicBuilder {
      * it once it opens on the way, as one fell six blocks from a row of gate tops.
      */
     private BlockGetter asOpened(Level level) {
+        // Once a tick: a search that plans many walks within one, as the one for a shulker box spot does for each place,
+        // asks for it each time.
+        if (openedTick == tick && openedView != null) return openedView;
+        openedTick = tick;
+        openedView = workOutOpened(level);
+        return openedView;
+    }
+
+    private long openedTick = -1;
+    private BlockGetter openedView;
+
+    private BlockGetter workOutOpened(Level level) {
         if (opened == null) {
             List<Integer> found = new ArrayList<>();
             for (int i = 0; i < plan.size(); i++) {
