@@ -2141,7 +2141,9 @@ public final class SchematicBuilder {
             BlockState state = level.getBlockState(at);
             if (BlockRules.group(state) != 0 || BlockRules.wet(state) || !BlockRules.dropsItself(state) || !getsBack(player, state)
                     || state.getDestroySpeed(level, at) < 0 || level.getBlockEntity(at) != null) continue;
-            if (new AABB(at).distanceToSqr(eye) > reach * reach || !safeToBreak(level, at, 0)) continue;
+            // Shut in a flooded tunnel, every block round it has water beside it: the water runs into the opening, and
+            // stops once the block goes in again.
+            if (new AABB(at).distanceToSqr(eye) > reach * reach || !safeToBreak(level, at, 0, true)) continue;
             candidates.add(at.immutable());
         }
         candidates.sort(Comparator.comparingDouble(at -> breakTicks(player, level, at) + new AABB(at).distanceToSqr(eye)));
@@ -3706,13 +3708,19 @@ public final class SchematicBuilder {
      * it or hanging from it that would drop, and no container that may have taken items in since it was placed, which
      * {@code age} ticks ago. Only blocks that stand by themselves may be beside it.
      */
-    private static boolean safeToBreak(Level level, BlockPos pos, long age) {
+    private static boolean safeToBreak(Level level, BlockPos pos, long age) { return safeToBreak(level, pos, age, false); }
+
+    /** As the other, with {@code waterBeside} letting water beside it run into the spot: a way out of a flooded pocket. */
+    private static boolean safeToBreak(Level level, BlockPos pos, long age, boolean waterBeside) {
         if (!level.getFluidState(pos).isEmpty()) return false;
         if (level.getBlockEntity(pos) instanceof Container && age > 100) return false;
         for (Direction side : Direction.values()) {
             BlockPos next = pos.relative(side);
             BlockState there = level.getBlockState(next);
-            if (!level.getFluidState(next).isEmpty()) return false;
+            if (!level.getFluidState(next).isEmpty()) {
+                if (waterBeside && there.getBlock() instanceof LiquidBlock) continue;
+                return false;
+            }
             if (there.isAir()) continue;
             if (there.getBlock() instanceof FallingBlock) {
                 if (side == Direction.UP) return false;
