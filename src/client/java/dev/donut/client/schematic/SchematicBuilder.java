@@ -5344,9 +5344,13 @@ public final class SchematicBuilder {
         // hopper's own block, a block lower than the spot stood on.
         Navigator.Node here = Navigator.standingAt(player.level(), player);
         BlockPos feet = here.floor().above();
-        for (BlockPos candidate : boxSpots(player, feet, player.position())) {
+        List<BlockPos> candidates = boxSpots(player, feet, player.position());
+        if (debug()) LOGGER.info("Shulker box for {}: {} spots beside {}", name(item), candidates.size(), here);
+        for (BlockPos candidate : candidates) {
             PlacementSolver.Result result = PlacementSolver.find(player, candidate, boxState, shulker, player.blockInteractionRange(),
                     helpers::containsKey);
+            if (debug()) LOGGER.info("  box spot {}: {} {}, seen {}, walks into {}", candidate.toShortString(), result.click() != null, result.problem(),
+                    boxSeenFrom(player, player.getEyePosition(), candidate), walksInto(player, here, candidate));
             // A click in the other stance does too: placing the box crouches or stands up for it first.
             if (result.click() != null && (result.problem() == null || result.problem() == PlacementSolver.Problem.STANCE)
                     && boxSeenFrom(player, player.getEyePosition(), candidate) && walksInto(player, here, candidate)) {
