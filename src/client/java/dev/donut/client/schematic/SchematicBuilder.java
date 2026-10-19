@@ -490,6 +490,8 @@ public final class SchematicBuilder {
     private boolean orderLifted;
     /** Walks made for blocks of the layer since the last click that placed one. */
     private int walksSinceClick;
+    /** Blocks a walk was made for and that didn't go in on arrival, how often, this layer: past two, only firm looks count. */
+    private final Map<Integer, Integer> arrivalMisses = new HashMap<>();
     /** After how many such walks, none of them placing anything, the layer's order is lifted. */
     private static final int WALKS_WITHOUT_CLICK = 25;
     private long[] sealStamp = new long[0];
@@ -1201,6 +1203,7 @@ public final class SchematicBuilder {
                 sealsLifted = false;
                 orderLifted = false;
                 walksSinceClick = 0;
+                arrivalMisses.clear();
                 uselessSpots.clear();
                 lastWalkEnd = null;
                 shutIn.clear();
@@ -1535,6 +1538,7 @@ public final class SchematicBuilder {
             }
             int index = i;
             PlacementSolver.Result result = PlacementSolver.find(player, pos, target, new ItemStack(item), reach, at -> unclickable(at, index));
+            if (result.click() == null && walkEnd != null && walkExpects.contains(i)) arrivalMisses.merge(i, 1, Integer::sum);
             if (result.click() == null && result.problem() == PlacementSolver.Problem.IN_THE_WAY && walkEnd != null && walkExpects.contains(i)) {
                 // The walk came to rest a little off the middle, into the spot of a block it was made for, as in a row of
                 // blocks still to go in: never planned from there for that block again, or the same walk is made over and over.
@@ -4082,6 +4086,8 @@ public final class SchematicBuilder {
                     if (ok > 0 && rimTop > feet.y + 0.05) ok = Math.min(ok, placeableFrom(player, new Vec3(feet.x, rimTop, feet.z), i, reach));
                     verified.put(key, ok);
                 }
+                // One that a walk was made for and didn't go in twice already: only a look that holds off the middle counts.
+                if (ok == 1 && arrivalMisses.getOrDefault(i, 0) >= 2) ok = 0;
                 if (ok > 0) {
                     // A look that only works from the very middle of the block counts for little: the walk comes to rest
                     // a little off it, and from there the look misses, and the walk was for nothing.
