@@ -12,6 +12,7 @@ import dev.donut.client.gui.FinderHud;
 import dev.donut.client.gui.ModuleArrayList;
 import dev.donut.client.input.ModuleKeybinds;
 import dev.donut.client.miner.ChunkMiner;
+import dev.donut.client.order.MaterialOrder;
 import dev.donut.client.render.HighlightRenderer;
 import dev.donut.client.rtp.AutoRtpController;
 import dev.donut.client.schematic.SchematicBuilder;
@@ -96,6 +97,8 @@ public final class DonutClient implements ClientModInitializer {
         ModuleKeybinds.initialize(storage, spawner, camera, debris, activity, autoRtp, xrayKey, fullbrightKey, entities, tunnels, bases,
                 schematic, chunks, minerKey);
 
+        // After an order is bought, the build it was for starts, when asked to.
+        ClientTickEvents.END_CLIENT_TICK.register(MaterialOrder::tick);
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             boolean inputBlocked = ModuleKeybinds.inputBlocked(client);
             while (open.consumeClick()) {

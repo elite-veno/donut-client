@@ -14,9 +14,11 @@ import dev.donut.client.input.ModuleKeybinds;
 import dev.donut.client.miner.ChunkMiner;
 import dev.donut.client.miner.Excavator;
 import dev.donut.client.miner.Kit;
+import dev.donut.client.order.MaterialOrder;
 import dev.donut.client.schematic.Materials;
 import dev.donut.client.schematic.Schematic;
 import dev.donut.client.schematic.SchematicBuilder;
+import dev.doughbay.fabric.MaterialBuyer;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -25,12 +27,13 @@ import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.Util;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import org.lwjgl.glfw.GLFW;
-
 import java.lang.reflect.Field;
 import java.io.IOException;
 import java.lang.reflect.Modifier;
@@ -56,7 +59,6 @@ import java.util.function.IntConsumer;
 import java.util.function.IntFunction;
 import java.util.function.IntSupplier;
 import java.util.function.Supplier;
-
 import static dev.donut.client.gui.UiPaint.*;
 
 /**
@@ -674,6 +676,7 @@ public final class DonutScreen extends Screen {
             c.toggle("shulkers", "Use shulker boxes", "Take blocks from shulker boxes in your inventory: placed beside you, emptied, broken and picked up",
                     () -> s.useShulkers, () -> s.useShulkers = !s.useShulkers);
             buildMaterials(c, builder);
+            orderMaterials(c, builder);
             c.more(m -> {
                 m.section("Placing");
                 m.toggle("redstoneLast", "Redstone last", "In each layer: plain blocks, then redstone, then pistons, observers and dispensers",
@@ -839,6 +842,93 @@ public final class DonutScreen extends Screen {
         c.note(short_ == 0 ? "You carry everything " + (builder.isActive() ? "the rest of the build" : "it") + " needs."
                 : short_ + (short_ == 1 ? " kind is" : " kinds are") + " short; it builds what it can and waits for the rest.",
                 short_ == 0 ? GOOD : WARN);
+    }
+
+    /** Whether a bought order starts the build after, and whether listings over $10M may be bought; the toggles under Order materials. */
+    private static boolean buildWhenBought = true, highPriceItems;
+
+    /**
+     * Ordering what the build still needs through GoNuts: a quote from live auction house prices, which buys nothing,
+     * then, on a second click, the purchase within the quote, and with Build when bought, the build.
+     */
+    private void orderMaterials(Column c, SchematicBuilder builder) {
+        if (builder == null || builder.schematic() == null || minecraft.player == null || minecraft.player.hasInfiniteMaterials()) return;
+        if (!MaterialOrder.available()) return;
+        MaterialBuyer.Snapshot order = MaterialOrder.snapshot();
+        if (order == null) return;
+        c.section("Order materials");
+        switch (order.state()) {
+            case IDLE -> {
+                String blocked = MaterialOrder.blocker();
+                if (blocked != null) c.note(blocked + ".", MUTED);
+                c.toggle("highPriceItems", "High price items", "Off, no single listing over " + money(MaterialBuyer.MAX_LISTING)
+                        + " is planned or bought", () -> highPriceItems, () -> highPriceItems = !highPriceItems);
+                c.button("orderQuote", "Get a quote", "The cheapest mix of listings for what the build still needs, less what you carry; buys nothing",
+                        "Quote", () -> replyOr(MaterialOrder.quote(builder, highPriceItems), "Checking prices on the auction house"));
+            }
+            case QUOTING -> {
+                c.note(order.message(), LABEL);
+                c.button("orderStop", "Stop", "Stops checking prices", "Stop", MaterialOrder::stop);
+            }
+            case QUOTED -> {
+                int shown = 0, missing = 0;
+                for (MaterialBuyer.Line line : order.quote()) {
+                    if (!line.available()) missing++;
+                    if (shown++ < 8) {
+                        c.info(itemName(line.itemId()) + " x" + line.units(), line.available()
+                                ? money(line.estimate()) + " in " + line.plan().size() + (line.plan().size() == 1 ? " listing" : " listings")
+                                        + (line.note().isEmpty() ? "" : ", " + line.note())
+                                : line.note(), line.available() ? (line.note().isEmpty() ? TEXT : WARN) : WARN);
+                    }
+                }
+                if (order.quote().size() > 8) c.note("And " + (order.quote().size() - 8) + " more kinds.", MUTED);
+                if (missing > 0) c.note(missing + (missing == 1 ? " kind isn't" : " kinds aren't") + " on the auction house now; get those yourself.", WARN);
+                long most = Math.round(order.quoteTotal() * MaterialBuyer.BUDGET_MARGIN);
+                c.info("About", money(order.quoteTotal()) + ", at most " + money(most), TEXT);
+                if (order.highPrice()) c.note("High price items: listings over " + money(MaterialBuyer.MAX_LISTING) + " may be bought.", WARN);
+                c.toggle("buildWhenBought", "Build when bought", "Starts SchematicBuilder once everything listed is bought",
+                        () -> buildWhenBought, () -> buildWhenBought = !buildWhenBought);
+                boolean confirming = isArmed("orderBuy");
+                if (confirming) c.warnNext();
+                c.button("orderBuy", "Buy it", confirming ? "Click Confirm within 8 seconds to spend up to " + money(most)
+                        : "The planned listings, another seller's at most 1.5x where one is gone; never over the total; End stops it",
+                        confirming ? "Confirm" : "Buy", () -> {
+                    if (isArmed("orderBuy")) {
+                        armed.remove("orderBuy");
+                        replyOr(MaterialOrder.buy(buildWhenBought), "Buying on the auction house");
+                    } else {
+                        armed.put("orderBuy", System.currentTimeMillis() + ARM_MILLIS);
+                    }
+                });
+                c.button("orderClear", "Forget the quote", "Prices go stale; get a new one before buying later", "Clear", MaterialOrder::clear);
+            }
+            case BUYING -> {
+                c.note(order.message(), LABEL);
+                c.info("Spent", money(order.spent()) + " of at most " + money(order.budget()), TEXT);
+                c.button("orderStop", "Stop buying", "What is bought stays bought", "Stop", MaterialOrder::stop);
+            }
+            case DONE, STOPPED -> {
+                c.note(order.message() + ".", order.state() == MaterialBuyer.State.DONE ? GOOD : WARN);
+                c.info("Spent", money(order.spent()), TEXT);
+                for (MaterialBuyer.Progress p : order.progress()) {
+                    if (!p.note().isEmpty()) c.info(itemName(p.itemId()), p.bought() + " bought; " + p.note(), WARN);
+                }
+                c.button("orderClear", "Done", "Back to a new quote", "OK", MaterialOrder::clear);
+            }
+        }
+        replyNote(c);
+        c.note("Buys with GoNuts on the auction house: its authorized execution must be on, and its per-purchase limit applies.", DIM);
+    }
+
+    /** The reply line: what went wrong, or what goes on now. */
+    private void replyOr(String problem, String fine) { reply(problem == null ? fine : problem, problem != null); }
+
+    private static String money(long amount) { return String.format(Locale.ROOT, "$%,d", amount); }
+
+    private static String itemName(String itemId) {
+        Identifier id = Identifier.tryParse(itemId);
+        Item item = id == null ? null : BuiltInRegistries.ITEM.getValue(id);
+        return item == null ? itemId : SchematicBuilder.name(item);
     }
 
     private List<String> schematicFiles;
