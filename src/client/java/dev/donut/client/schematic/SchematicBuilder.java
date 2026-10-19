@@ -1539,14 +1539,6 @@ public final class SchematicBuilder {
                 startRestock(client, player, item, materials);
                 return;
             }
-            // Over ground dug out and still open, a pit or a trench under it: it waits while the ground is being filled
-            // in, else it closes the pit over, and the ground under it can't be reached to fill in again.
-            if (!dug.containsKey(player.blockPosition().asLong()) && overOpenGround(level, pos)) {
-                if (debug()) LOGGER.info("{} at {} waits: ground dug out under it is still open", target, pos.toShortString());
-                if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
-                noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH);
-                continue;
-            }
             // A walk's helper block beside it in a spot the build shuts in: taken away first if it can be from here, as this
             // block may be the one that closes the spot over it.
             for (Direction side : Direction.values()) {
@@ -4648,18 +4640,6 @@ public final class SchematicBuilder {
     }
 
     /**
-     * Whether ground dug out lies open under {@code pos}, up to three blocks down through nothing solid, and refill is
-     * still trying to fill it in (twice at most, see {@link #refill}).
-     */
-    private boolean overOpenGround(Level level, BlockPos pos) {
-        for (BlockPos below = pos.below(); below.getY() >= pos.getY() - 3; below = below.below()) {
-            if (dug.containsKey(below.asLong())) return refillWalks.getOrDefault(below.asLong(), 0) < 2;
-            if (!level.getBlockState(below).canBeReplaced()) return false;
-        }
-        return false;
-    }
-
-    /**
      * Fills in ground dug out that the player has left, the bottom of each pit first, with what was there if the
      * inventory has it, else helper blocks. While building it only does so from where the player stands and keeps the
      * pit just dug for the block it was dug for; once every block is in ({@code finish}) it walks to what is left. True
@@ -4669,9 +4649,11 @@ public final class SchematicBuilder {
         Level level = player.level();
         dug.entrySet().removeIf(e -> !level.getBlockState(BlockPos.of(e.getKey())).canBeReplaced());
         if (dug.isEmpty()) return false;
-        // Standing in a pit or a trench, what is dug stays open till the player is out: filling in behind would have them
-        // turn about for each block, and a trench may still run on.
-        if (!finish && dug.containsKey(player.blockPosition().asLong()) && !player.blockPosition().equals(pitFill)) return false;
+        // Standing in a pit or a trench, what is dug stays open till the player is out, but for the cells right behind
+        // them along a trench: its bottom has no click from outside once the player is out, and a block of a later layer
+        // over it would close it for good. Those are filled in as the trench goes on, from inside it.
+        BlockPos feetCell = player.blockPosition();
+        boolean inPit = !finish && dug.containsKey(feetCell.asLong()) && !feetCell.equals(pitFill);
         List<BlockPos> open = dug.keySet().stream().map(BlockPos::of).sorted(Comparator.comparingInt(BlockPos::getY)).toList();
         AABB body = player.getBoundingBox().inflate(0.1);
         // The nearest spot out of reach from here, to walk to once nothing in reach is left to fill.
@@ -4679,6 +4661,8 @@ public final class SchematicBuilder {
         Item farItem = null;
         double farDistance = Double.MAX_VALUE;
         for (BlockPos cell : open) {
+            if (inPit && (cell.getY() < feetCell.getY() || cell.getY() > feetCell.getY() + 1
+                    || Math.abs(cell.getX() - feetCell.getX()) + Math.abs(cell.getZ() - feetCell.getZ()) != 1)) continue;
             // Bottom first, and never under the player.
             if (dug.containsKey(cell.below().asLong()) || redoUnder.contains(cell.below().asLong())) continue;
             if ((finish || cell.equals(pitFill)) && settings().walk && Navigator.standingAt(level, player).feetCell().equals(cell)) {
@@ -4719,6 +4703,7 @@ public final class SchematicBuilder {
                 startAim(client, player, new Aim(Act.REFILL, -1, result.click(), item, cell, level.getBlockState(cell), 0));
                 return true;
             }
+            if (inPit) continue;
             if (!finish) {
                 double away = player.position().distanceToSqr(Vec3.atCenterOf(cell));
                 if (away < farDistance && refillWalks.getOrDefault(cell.asLong(), 0) < 2) {
