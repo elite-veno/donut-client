@@ -1535,6 +1535,14 @@ public final class SchematicBuilder {
                 startRestock(client, player, item, materials);
                 return;
             }
+            // Over ground dug out and still open, a pit or a trench under it: it waits while the ground is being filled
+            // in, else it closes the pit over, and the ground under it can't be reached to fill in again.
+            if (!dug.containsKey(player.blockPosition().asLong()) && overOpenGround(level, pos)) {
+                if (debug()) LOGGER.info("{} at {} waits: ground dug out under it is still open", target, pos.toShortString());
+                if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
+                noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH);
+                continue;
+            }
             // A walk's helper block beside it in a spot the build shuts in: taken away first if it can be from here, as this
             // block may be the one that closes the spot over it.
             for (Direction side : Direction.values()) {
@@ -3462,6 +3470,10 @@ public final class SchematicBuilder {
     private static boolean safeToBreak(LocalPlayer player, BlockPos pos) {
         BlockPos under = BlockPos.containing(player.getX(), player.getY() - 0.05, player.getZ());
         if (pos.equals(under)) return groundUnder(player.level(), pos);
+        // Standing on a bridge block, nothing under it: not the block beside it the bridge was put against, which would
+        // leave the player up on it with no way down but a fall.
+        if (pos.getY() == under.getY() && pos.distManhattan(under) == 1 && !groundUnder(player.level(), under)
+                && !player.level().getBlockState(under).getCollisionShape(player.level(), under).isEmpty()) return false;
         return !holdsBackWater(player.level(), pos) || !floods(player.level(), pos, player.position());
     }
 
@@ -4628,6 +4640,18 @@ public final class SchematicBuilder {
         }
         // Nothing more can be put right: the spots under those waiting are filled in as they are.
         redoUnder.clear();
+        return false;
+    }
+
+    /**
+     * Whether ground dug out lies open under {@code pos}, up to three blocks down through nothing solid, and refill is
+     * still trying to fill it in (twice at most, see {@link #refill}).
+     */
+    private boolean overOpenGround(Level level, BlockPos pos) {
+        for (BlockPos below = pos.below(); below.getY() >= pos.getY() - 3; below = below.below()) {
+            if (dug.containsKey(below.asLong())) return refillWalks.getOrDefault(below.asLong(), 0) < 2;
+            if (!level.getBlockState(below).canBeReplaced()) return false;
+        }
         return false;
     }
 
