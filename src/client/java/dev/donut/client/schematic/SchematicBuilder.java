@@ -4163,6 +4163,8 @@ public final class SchematicBuilder {
         Navigator.Node end = path.end();
         Integer first = firstFrom.get(end.key());
         walker.start(path.nodes(), first == null ? null : Vec3.atCenterOf(plan.pos(first)));
+        // Only looks from the very middle of the place counted for it: the walk ends there, not a few tenths off.
+        walker.precise(!firm.contains(end.key()));
         walksSinceClick++;
         lastWalkEnd = end;
         clickedSinceWalk = false;

@@ -141,9 +141,18 @@ final class Walker {
     /** The walking steps to take crouched (see {@link #careful}). */
     void careful(Set<Long> steps) { careful = steps; }
 
+    /**
+     * The walk just started ends on the very middle of its last block: the look it is for only works from there, so a
+     * player edges onto the spot rather than stopping wherever the step brings them.
+     */
+    void precise(boolean on) { precise = on; }
+
+    private boolean precise;
+
     void start(List<Navigator.Node> path, Vec3 lookAt) {
         this.path = path;
         this.lookAt = lookAt;
+        precise = false;
         ThreadLocalRandom random = ThreadLocalRandom.current();
         offsets = new double[path.size()][];
         for (int i = 0; i < path.size(); i++) {
@@ -217,7 +226,7 @@ final class Walker {
         // it too, so the next look isn't the very same; a climb, and anything near an edge or on a narrow top keep to
         // the middle.
         double offX = 0, offZ = 0;
-        if (to.move() == Navigator.Move.WALK && open(player, to)) {
+        if (to.move() == Navigator.Move.WALK && open(player, to) && !(last && precise)) {
             double share = last ? 0.7 : 1;
             offX = offsets[index][0] * share;
             offZ = offsets[index][1] * share;
@@ -252,7 +261,7 @@ final class Walker {
         boolean there = last ? player.onGround() && Math.abs(at.y - to.feet()) < 0.6
                 : (player.onGround() ? Math.abs(at.y - to.feet()) < 0.6 : at.y >= to.feet() - 0.05 && at.y - to.feet() < 0.45);
         if (!last && settle && slide(player) > 0.3) there = false;
-        if (there && distance < (last ? (onIce ? 0.4 : 0.25) : settle ? 0.4 : narrow ? 0.2 : 0.45)) {
+        if (there && distance < (last ? (onIce ? 0.4 : precise ? 0.13 : 0.25) : settle ? 0.4 : narrow ? 0.2 : 0.45)) {
             if (bridgeCrouch) {
                 // On the block put down: standing up again.
                 climb.crouch(false);
@@ -292,7 +301,7 @@ final class Walker {
             // or back as needed, as a player building a row does. The eyes follow it as a player's do, a little behind.
             float[] look = PlacementSolver.look(player.getEyePosition(), lookAt);
             head.follow(player, look[0], look[1], slack);
-            boolean go = distance > (last ? 0.2 : 0.05) || player.getDeltaMovement().horizontalDistanceSqr() < 0.02 * 0.02 && distance > 0.12;
+            boolean go = distance > (last ? (precise ? 0.08 : 0.2) : 0.05) || player.getDeltaMovement().horizontalDistanceSqr() < 0.02 * 0.02 && distance > 0.12;
             strafe(client, player, dx, dz, go);
             jumpKey(client, player, false);
             client.options.keySprint.setDown(false);
@@ -333,7 +342,7 @@ final class Walker {
         // can't tighten enough to reach a point less than a block off, and would circle it.
         float aside = Math.abs(Mth.wrapDegrees((float) Math.toDegrees(Math.atan2(-dx, dz)) - player.getYRot()));
         if (distance < 1.0 && aside > 20 && player.onGround() && !wading && to.move() == Navigator.Move.WALK) {
-            boolean near = distance > (last ? 0.2 : 0.05) || player.getDeltaMovement().horizontalDistanceSqr() < 0.02 * 0.02 && distance > 0.12;
+            boolean near = distance > (last ? (precise ? 0.08 : 0.2) : 0.05) || player.getDeltaMovement().horizontalDistanceSqr() < 0.02 * 0.02 && distance > 0.12;
             strafe(client, player, dx, dz, near);
             jumpKey(client, player, false);
             client.options.keySprint.setDown(false);
