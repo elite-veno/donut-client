@@ -3790,6 +3790,8 @@ public final class SchematicBuilder {
         int limit = (int) Math.min(20 * 120, Math.max(20 * 15, 2 / Math.max(progress, 1e-4f) + 40));
         if (mine(client, player, breaking) && breakTicks <= limit) return;
         // Out of view, or not breaking: it is left for later, from somewhere else.
+        if (debug() && breakTicks <= limit) LOGGER.info("Breaking {} at {}: no face of it in view from {} after all", state.getBlock().getName().getString(),
+                breaking.toShortString(), player.position());
         client.gameMode.stopDestroyBlock();
         if (breakTicks > limit && repairing < 0) {
             if (debug()) LOGGER.info("Leaving the helper block at {}: not broken after {} ticks, at {} of it a tick", breaking.toShortString(),
@@ -4734,6 +4736,7 @@ public final class SchematicBuilder {
             if (path == null || path.nodes().size() < 2 || dropsIntoTrap(player, path)) continue;
             releaseKeys(client);
             walker.start(path.nodes(), Vec3.atCenterOf(cell));
+            if (debug()) LOGGER.info("Putting right the ground: walking {} steps to where {} is in view", path.nodes().size() - 1, cell.toShortString());
             show("Putting right the ground dug out", false);
             return true;
         }
