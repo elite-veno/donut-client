@@ -479,6 +479,10 @@ public final class SchematicBuilder {
      * be reached from anywhere and nothing else can go in: one of those may need a later one beside it to click on.
      */
     private boolean orderLifted;
+    /** Walks made for blocks of the layer since the last click that placed one. */
+    private int walksSinceClick;
+    /** After how many such walks, none of them placing anything, the layer's order is lifted. */
+    private static final int WALKS_WITHOUT_CLICK = 25;
     private long[] sealStamp = new long[0];
     private byte[] seal = new byte[0];
     /** What {@link #heldByLater} found for each block, against blocks of group 1 and later and of group 2, and when. */
@@ -1161,6 +1165,7 @@ public final class SchematicBuilder {
                 pickupSweep = layerY != Integer.MIN_VALUE;
                 sealsLifted = false;
                 orderLifted = false;
+                walksSinceClick = 0;
                 shutIn.clear();
                 traps.clear();
                 badSteps.clear();
@@ -1596,6 +1601,16 @@ public final class SchematicBuilder {
         if (settings().walk && pickUpHelpers(client, player)) return;
         if (settings().walk && walkOut(client, player)) return;
         if (settings().walk && walkToRepair(client, player)) return;
+        if (settings().walk && settings().redstoneLast && !orderLifted && walksSinceClick >= WALKS_WITHOUT_CLICK) {
+            // Walk after walk for the blocks whose turn it is, and none of them goes in: each look counted from where a
+            // walk was to end fails from where it does end. Those after them may go in first, as when none can be placed
+            // at all: a hopper row a row of blocks is clicked against, say.
+            orderLifted = true;
+            walksSinceClick = 0;
+            if (debug()) LOGGER.info("{} walks in layer {} and nothing placed: later blocks may go first", WALKS_WITHOUT_CLICK, layerNumber);
+            nextAction = System.nanoTime();
+            return;
+        }
         if (settings().walk && planWalk(client, player, candidates, materials, layerNumber, lift)) return;
         if (settings().walk && planPit(client, player, candidates, materials, layerNumber, lift)) return;
         if (settings().walk && walkToSpareHelper(client, player)) return;
@@ -2637,6 +2652,7 @@ public final class SchematicBuilder {
     /** What follows a click: the next wait, and what the status line says. */
     private void clicked(Aim planned, BlockHitResult hit) {
         int i = planned.index(), layerNumber = planned.layerNumber();
+        if (planned.act() == Act.PLACE || planned.act() == Act.POUR) walksSinceClick = 0;
         uselessSpots.clear();
         forgetNoClicks();
         walkFailures = 0;
@@ -3979,6 +3995,7 @@ public final class SchematicBuilder {
         Navigator.Node end = path.end();
         Integer first = firstFrom.get(end.key());
         walker.start(path.nodes(), first == null ? null : Vec3.atCenterOf(plan.pos(first)));
+        walksSinceClick++;
         show("Layer " + layerNumber + " of " + plan.layers().size() + ": walking to " + end.x() + " " + Math.round(end.feet()) + " " + end.z(), false);
         if (debug()) {
             LOGGER.info("Walking {} steps to {} {} {} for {}; {} climbs, {} steps on walk helpers standing", path.nodes().size() - 1, end.x(),
