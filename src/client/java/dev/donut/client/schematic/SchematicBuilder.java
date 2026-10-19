@@ -353,6 +353,12 @@ public final class SchematicBuilder {
     /** Whether the cleanup's last try is on: climbing searches that go much further before a helper block is left. */
     private boolean cleanupWide;
     /**
+     * Spots the cleanup has taken a helper block away from: no climb puts one there again, or two columns are taken down
+     * and put up again in turn, each climb for one going up where the other stood.
+     */
+    private final Set<Long> cleared = new HashSet<>();
+    private boolean cleaning;
+    /**
      * Tops of helper columns no walk reached from where the player stood, standing at {@code cleanupFrom}: tried again
      * from anywhere else, as what can't be reached from up on a pillar often can from below.
      */
@@ -701,6 +707,8 @@ public final class SchematicBuilder {
         helpersLeft.clear();
         leftRetried = false;
         cleanupWide = false;
+        cleared.clear();
+        cleaning = false;
         cleanupSkipped.clear();
         cleanupBridges = 0;
         nearWalks.clear();
@@ -979,6 +987,8 @@ public final class SchematicBuilder {
         helpersLeft.clear();
         leftRetried = false;
         cleanupWide = false;
+        cleared.clear();
+        cleaning = false;
         cleanupSkipped.clear();
         cleanupBridges = 0;
         nearWalks.clear();
@@ -3070,6 +3080,7 @@ public final class SchematicBuilder {
         // A helper block just clicked in may not be there yet; one a what-if takes away is gone.
         boolean helper = helpers.containsKey(cell.asLong()) && !(view instanceof Overlay overlay && overlay.changes(cell));
         if (!state.canBeReplaced() || helper) return false;
+        if (cleaning && cleared.contains(cell.asLong())) return false;
         int i = plan.indexOf(cell);
         boolean water = i >= 0 && (plan.kind(i) == BlockRules.Kind.FLUID || plan.kind(i) == BlockRules.Kind.AUTO)
                 && plan.target(i).getBlock() instanceof LiquidBlock && plan.target(i).getFluidState().is(FluidTags.WATER);
@@ -3263,6 +3274,7 @@ public final class SchematicBuilder {
      * what still isn't reached stays. True while there is one to go to or break.
      */
     private boolean cleanUp(Minecraft client, LocalPlayer player) {
+        cleaning = true;
         if (refill(client, player, true)) return true;
         // Ground broken to be put right drops itself, and that is what it goes back in with.
         if (settings().walk && !repairDrops.isEmpty() && pickUpHelpers(client, player)) return true;
@@ -3617,6 +3629,7 @@ public final class SchematicBuilder {
         BlockState state = client.level.getBlockState(breaking);
         if (state.isAir() || state.canBeReplaced()) {
             Helper helper = helpers.remove(breaking.asLong());
+            if (cleaning && helper != null) cleared.add(breaking.asLong());
             if (debug() && helper != null) {
                 LOGGER.info("Took away the helper block at {} (serving {}) in {} ticks, {} helper blocks standing", breaking.toShortString(),
                         helper.serves(), breakTicks, helpers.size());
