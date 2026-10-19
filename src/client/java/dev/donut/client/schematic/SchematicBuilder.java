@@ -1639,6 +1639,15 @@ public final class SchematicBuilder {
             nextAction = System.nanoTime();
             return;
         }
+        if (settings().walk && orderLifted && walksSinceClick >= WALKS_WITHOUT_CLICK) {
+            // Still nothing placed with the order lifted: the places the walks end on don't do. One more way, as when no
+            // place to stand is found at all: helper blocks put into cells the build fills later, its water too, which
+            // come away again after.
+            walksSinceClick = 0;
+            if (debug()) LOGGER.info("{} more walks in layer {} and still nothing placed: standing on helper blocks in the build's own cells",
+                    WALKS_WITHOUT_CLICK, layerNumber);
+            if (climbOut(client, player, candidates, materials, layerNumber, lift)) return;
+        }
         if (settings().walk && planWalk(client, player, candidates, materials, layerNumber, lift)) return;
         if (settings().walk && planPit(client, player, candidates, materials, layerNumber, lift)) return;
         if (settings().walk && walkToSpareHelper(client, player)) return;
