@@ -3247,6 +3247,8 @@ public final class SchematicBuilder {
      */
     private boolean cleanUp(Minecraft client, LocalPlayer player) {
         if (refill(client, player, true)) return true;
+        // Ground broken to be put right drops itself, and that is what it goes back in with.
+        if (settings().walk && !repairDrops.isEmpty() && pickUpHelpers(client, player)) return true;
         if (redoFills(client, player)) return true;
         if (!leftRetried) {
             // Those left during the build, out of reach then or slow to break, get another try now the build is done.
@@ -4549,6 +4551,8 @@ public final class SchematicBuilder {
                     level.getBlockState(cell).getBlock().getName().getString(), cell.toShortString());
             if (!cell.equals(wrong)) redoUnder.add(wrong.asLong());
             else redoUnder.remove(wrong.asLong());
+            Item own = groundDug.get(cell.asLong()).getBlock().asItem();
+            if (level.getBlockState(cell).getBlock().asItem() == own) repairDrops.add(own);
             dug.put(cell.asLong(), groundDug.get(cell.asLong()));
             filledOther.remove(cell.asLong());
             startBreak(cell);
