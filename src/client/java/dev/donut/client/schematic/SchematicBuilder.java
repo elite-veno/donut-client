@@ -5677,8 +5677,12 @@ public final class SchematicBuilder {
             Item item = stack.getItem();
             int rank;
             if (helperItems.contains(item)) {
-                if (helperKept.merge(item, 1, Integer::sum) <= HELPER_STACKS) continue;
-                rank = 1;
+                int kept = helperKept.merge(item, 1, Integer::sum);
+                // Past the stacks kept, they go back first; the second stack kept only when nothing else can, as when
+                // every slot holds what the layer takes and the box is full: one stack still climbs, and more come out of a
+                // box when it runs low.
+                if (kept == 1) continue;
+                rank = kept <= HELPER_STACKS ? 5 : 1;
             } else if (stack.is(Items.BUCKET)) {
                 // A few empty ones stay, to fill for the water the next layers still take.
                 if (carried.loose(Items.BUCKET) - stack.getCount() < Math.min(3, soon.getOrDefault(Items.WATER_BUCKET, 0))) continue;
