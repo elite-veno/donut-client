@@ -5412,7 +5412,7 @@ public final class SchematicBuilder {
     private List<BlockPos> boxSpots(LocalPlayer player, BlockPos feet, Vec3 standing) {
         ClientLevel level = (ClientLevel) player.level();
         AABB keepClear = plan.bounds.inflate(1);
-        List<BlockPos> outside = new ArrayList<>(), inside = new ArrayList<>();
+        List<BlockPos> outside = new ArrayList<>(), inside = new ArrayList<>(), cornered = new ArrayList<>();
         for (int dx = -2; dx <= 2; dx++) {
             for (int dz = -2; dz <= 2; dz++) {
                 if (dx == 0 && dz == 0) continue;
@@ -5423,19 +5423,23 @@ public final class SchematicBuilder {
                 // Something under it to place it on, and not ice: the box, once broken, would slide off out of reach.
                 if (!level.getBlockState(at.below()).isFaceSturdy(level, at.below(), Direction.UP)) continue;
                 if (level.getBlockState(at.below()).getBlock().getFriction() > 0.6f) continue;
-                // Not beside a drop either: the box, once broken, can bounce into it, down out of reach.
-                if (besideDrop(level, at)) continue;
+                // Not beside a drop either: the box, once broken, can bounce into it, down out of reach. One with a drop
+                // only at a corner is kept for last, for where nothing better is: on top of a build, say.
+                if (besideDrop(level, at, false)) continue;
+                boolean corner = besideDrop(level, at, true);
                 // Nor where the dropped box is carried off before it is picked up: into a hopper, or down a stream.
                 if (carriedOff(level, at)) continue;
                 // Never on a spot the schematic fills.
                 if (plan.indexOf(at) >= 0) continue;
-                (keepClear.contains(Vec3.atCenterOf(at)) ? inside : outside).add(at);
+                (corner ? cornered : keepClear.contains(Vec3.atCenterOf(at)) ? inside : outside).add(at);
             }
         }
         Comparator<BlockPos> nearest = Comparator.comparingDouble(p -> Vec3.atBottomCenterOf(p).distanceToSqr(standing));
         outside.sort(nearest);
         inside.sort(nearest);
+        cornered.sort(nearest);
         outside.addAll(inside);
+        outside.addAll(cornered);
         return outside;
     }
 
@@ -5501,10 +5505,10 @@ public final class SchematicBuilder {
      * Whether a spot beside {@code at}, corners too, is open with nothing under it to stop a dropped item falling: a box
      * broken there bounces off as far as a corner, as one did down into a water channel two blocks below.
      */
-    private static boolean besideDrop(Level level, BlockPos at) {
+    private static boolean besideDrop(Level level, BlockPos at, boolean corners) {
         for (int dx = -1; dx <= 1; dx++) {
             for (int dz = -1; dz <= 1; dz++) {
-                if (dx == 0 && dz == 0) continue;
+                if (dx == 0 && dz == 0 || (dx != 0 && dz != 0) != corners) continue;
                 BlockPos next = at.offset(dx, 0, dz);
                 if (level.getBlockState(next).getCollisionShape(level, next).isEmpty()
                         && level.getBlockState(next.below()).getCollisionShape(level, next.below()).isEmpty()) return true;
