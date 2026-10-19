@@ -82,6 +82,7 @@ import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.TrapDoorBlock;
 import net.minecraft.world.level.block.WallBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.phys.AABB;
@@ -1078,6 +1079,7 @@ public final class SchematicBuilder {
     private void preparePlan(Minecraft client) {
         SchematicSettings s = settings();
         plan = BuildPlan.of(schematic, new BlockPos(s.originX, s.originY, s.originZ), mirror(s.mirror), rotation(s.rotation), s.redstoneLast);
+        opened = null;
         planKey = key();
         planLevel = client.level;
         shortageReported = false;
@@ -3923,15 +3925,45 @@ public final class SchematicBuilder {
     private Navigator navigator(LocalPlayer player, boolean climb) { return navigator(player, player.level(), climb); }
 
     private Navigator navigator(LocalPlayer player, BlockGetter view, boolean climb) {
+        if (view instanceof Level level) view = asOpened(level);
+        BlockGetter seen = view;
         AABB b = plan.bounds;
         AABB area = new AABB(b.minX - 12, b.minY - 6, b.minZ - 12, b.maxX + 12, b.maxY + 4, b.maxZ + 12)
                 .minmax(new AABB(player.blockPosition()).inflate(6));
         Item helper = climb ? helperItem(player) : null;
-        return new Navigator(view, area, cell -> helper != null && helperAllowed(player, view, cell)
-                && (escaping || !BlockRules.interactive(view.getBlockState(cell.below()).getBlock())), key -> {
+        return new Navigator(seen, area, cell -> helper != null && helperAllowed(player, seen, cell)
+                && (escaping || !BlockRules.interactive(seen.getBlockState(cell.below()).getBlock())), key -> {
             int i = plan.indexOf(key);
             return i >= 0 && plan.status(i) == BuildPlan.Status.PENDING;
         }).avoidSteps(badSteps).pillars(helper == null ? 0 : climbBudget(player));
+    }
+
+    /** Blocks of the build that end up open, a gate or a door or a trapdoor, by index; worked out on first use. */
+    private int[] opened;
+
+    /**
+     * The level as walks plan on it: a gate, door or trapdoor of the build that goes in closed and is opened right after
+     * counts as open already. A walk planned over the top of one, just placed and still shut, drops the player through
+     * it once it opens on the way, as one fell six blocks from a row of gate tops.
+     */
+    private BlockGetter asOpened(Level level) {
+        if (opened == null) {
+            List<Integer> found = new ArrayList<>();
+            for (int i = 0; i < plan.size(); i++) {
+                BlockState target = plan.target(i);
+                if (target.hasProperty(BlockStateProperties.OPEN) && target.getValue(BlockStateProperties.OPEN)) found.add(i);
+            }
+            opened = found.stream().mapToInt(Integer::intValue).toArray();
+        }
+        Map<Long, BlockState> open = null;
+        for (int i : opened) {
+            BlockPos pos = plan.pos(i);
+            BlockState now = level.getBlockState(pos);
+            if (now.getBlock() != plan.target(i).getBlock() || now.getValue(BlockStateProperties.OPEN)) continue;
+            if (open == null) open = new HashMap<>();
+            open.put(pos.asLong(), now.setValue(BlockStateProperties.OPEN, true));
+        }
+        return open == null ? level : new Overlay(level, open);
     }
 
     /**
