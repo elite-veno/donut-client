@@ -4520,7 +4520,11 @@ public final class SchematicBuilder {
             ready.add(top);
             wrongUnder.put(top, cell);
         }
-        if (ready.isEmpty()) return false;
+        if (ready.isEmpty()) {
+            // Nothing more can be put right: the spots over those waiting are filled in as they are.
+            redoUnder.clear();
+            return false;
+        }
         Vec3 eye = player.getEyePosition();
         ready.sort(Comparator.comparingDouble(cell -> new AABB(cell).distanceToSqr(eye)));
         for (BlockPos cell : ready) {
@@ -4610,8 +4614,15 @@ public final class SchematicBuilder {
             if (settings().walk) {
                 Item fill = item;
                 double reach = player.blockInteractionRange() - 0.2;
-                Navigator.Path path = navigator(player, true).find(Navigator.standingAt(level, player), node -> PlacementSolver.fromSpot(player,
+                Navigator.Node here = Navigator.standingAt(level, player);
+                Navigator.Path path = navigator(player, true).find(here, node -> PlacementSolver.fromSpot(player,
                         node.standing(), cell, state, new ItemStack(fill), reach, helpers::containsKey) != null ? 1 : 0);
+                if (path != null && path.nodes().size() < 2) {
+                    // A click from the middle of where the player stands, but none from where they really are, a little off
+                    // it: somewhere else, rather than give the spot up.
+                    path = navigator(player, true).find(here, node -> node.key() != here.key() && PlacementSolver.fromSpot(player,
+                            node.standing(), cell, state, new ItemStack(fill), reach, helpers::containsKey) != null ? 1 : 0);
+                }
                 if (path != null && path.nodes().size() > 1) {
                     if (!climbReady(client, player, path)) return true;
                     releaseKeys(client);
@@ -4619,6 +4630,7 @@ public final class SchematicBuilder {
                     show("Walking over to fill in the ground dug out", false);
                     return true;
                 }
+                if (debug()) LOGGER.info("Leaving the ground dug out at {} open: no place to stand with a click on it, from {}", cell.toShortString(), here);
             }
             dug.remove(cell.asLong());
             dugLeft.add(cell);
