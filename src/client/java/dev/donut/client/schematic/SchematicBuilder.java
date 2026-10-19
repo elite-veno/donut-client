@@ -2993,9 +2993,12 @@ public final class SchematicBuilder {
      * left outside them; null when enough are, or a fetch was tried in the last minute.
      */
     private Item helperToFetch(LocalPlayer player, Materials materials) {
-        if (tick - helperFetchTick < 1200) return null;
         helperItem(player);
-        if (helpersLoose(player) >= HELPERS_LOW) return null;
+        int loose = helpersLoose(player);
+        // Once a minute while some are left; with none left at all, every ten seconds: a full box is then swapped for
+        // room, and with nothing to swap the box isn't opened over and over.
+        if (tick - helperFetchTick < (loose > 0 ? 1200 : 200)) return null;
+        if (loose >= HELPERS_LOW) return null;
         Map<Item, Integer> needs = plan.needs();
         for (Item item : helperItems) if (!needs.containsKey(item) && materials.boxed(item) > 0) return item;
         return null;
