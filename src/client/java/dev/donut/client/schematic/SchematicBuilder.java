@@ -357,6 +357,8 @@ public final class SchematicBuilder {
      * and put up again in turn, each climb for one going up where the other stood.
      */
     private final Set<Long> cleared = new HashSet<>();
+    /** Walks into a narrow pit to fill it by climbing out, by its cell (see {@link #refill}). */
+    private final Map<Long, Integer> pitWalks = new HashMap<>();
     private boolean cleaning;
     /**
      * Tops of helper columns no walk reached from where the player stood, standing at {@code cleanupFrom}: tried again
@@ -708,6 +710,7 @@ public final class SchematicBuilder {
         leftRetried = false;
         cleanupWide = false;
         cleared.clear();
+        pitWalks.clear();
         cleaning = false;
         cleanupSkipped.clear();
         cleanupBridges = 0;
@@ -988,6 +991,7 @@ public final class SchematicBuilder {
         leftRetried = false;
         cleanupWide = false;
         cleared.clear();
+        pitWalks.clear();
         cleaning = false;
         cleanupSkipped.clear();
         cleanupBridges = 0;
@@ -4689,11 +4693,10 @@ public final class SchematicBuilder {
                 if (path == null || path.nodes().size() < 2) {
                     // The bottom of a narrow pit has no click from outside it: a player gets in and climbs out, a block put
                     // under their feet at each jump, which fills it with what was there (see walk's Climb.ready).
-                    path = refillWalks.merge(cell.asLong(), 1, Integer::sum) > 3 ? null
+                    path = pitWalks.merge(cell.asLong(), 1, Integer::sum) > 3 ? null
                             : navigator(player, true).find(here, node -> node.feetCell().equals(cell) ? 1 : 0);
-                    if (path != null && path.nodes().size() > 1 && debug()) {
-                        LOGGER.info("Ground dug out at {} has no click from outside: getting in, to climb out", cell.toShortString());
-                    }
+                    if (debug()) LOGGER.info("Ground dug out at {} has no click from outside: {}", cell.toShortString(),
+                            path != null && path.nodes().size() > 1 ? "getting in, to climb out" : "no way in either, try " + pitWalks.get(cell.asLong()));
                 }
                 if (path != null && path.nodes().size() > 1) {
                     if (!climbReady(client, player, path)) return true;
