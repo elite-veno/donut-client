@@ -161,6 +161,11 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
             String boxedText = System.getenv("DONUT_SCHEMATIC_DIRT_BOXED");
             int boxedDirt = boxedText == null || boxedText.isBlank() ? 0 : Integer.parseInt(boxedText.trim());
             if (boxedDirt > 0) bill.merge(Items.DIRT, boxedDirt, Integer::sum);
+            // DONUT_SCHEMATIC_SPARE=n: n percent more of each block, at least one, as a player brings a few spare: a farm
+            // that runs while it is built can push a block out, and it is placed again.
+            String spareText = System.getenv("DONUT_SCHEMATIC_SPARE");
+            int spare = spareText == null || spareText.isBlank() ? 0 : Integer.parseInt(spareText.trim());
+            if (spare > 0) bill.replaceAll((item, count) -> item == Items.DIRT ? count : count + Math.max(1, count * spare / 100));
             giveInShulkers(server, bill);
             // DONUT_SCHEMATIC_DIRT: fewer helper blocks than the default 448, to see the builder take back those of earlier walks.
             String dirtText = System.getenv("DONUT_SCHEMATIC_DIRT");
