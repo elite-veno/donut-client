@@ -239,8 +239,9 @@ public final class BuildPlan {
                     if (nx < 0 || ny < 0 || nz < 0 || nx >= sx || ny >= sy || nz >= sz) continue;
                     int nk = (nx * sy + ny) * sz + nz;
                     if (reached[nk]) continue;
-                    int i = indexOf(BlockPos.asLong(nx + x0, ny + y0, nz + z0));
-                    if (i >= 0 && !targets[i].isAir()) continue;
+                    // A player gets through a spot only with room for the body: open, and open over or under it too. A
+                    // crawl space a block high, under a row of chests say, lets nobody in to fetch a helper block back.
+                    if (!airAt(nx + x0, ny + y0, nz + z0) || !airAt(nx + x0, ny + y0 + 1, nz + z0) && !airAt(nx + x0, ny + y0 - 1, nz + z0)) continue;
                     reached[nk] = true;
                     queue.add(nk);
                 }
@@ -248,11 +249,24 @@ public final class BuildPlan {
             enclosed = new boolean[sx * sy * sz];
             for (int k = 0; k < reached.length; k++) {
                 if (reached[k]) continue;
-                int i = indexOf(BlockPos.asLong(k / (sy * sz) + x0, k / sz % sy + y0, k % sz + z0));
-                enclosed[k] = i < 0 || targets[i].isAir();
+                int cx = k / (sy * sz), cy = k / sz % sy, cz = k % sz;
+                if (!airAt(cx + x0, cy + y0, cz + z0)) continue;
+                // A spot next to one a player gets to is in reach from there.
+                boolean beside = false;
+                for (int[] step : steps) {
+                    int nx = cx + step[0], ny = cy + step[1], nz = cz + step[2];
+                    if (nx >= 0 && ny >= 0 && nz >= 0 && nx < sx && ny < sy && nz < sz && reached[(nx * sy + ny) * sz + nz]) beside = true;
+                }
+                enclosed[k] = !beside;
             }
         }
         return enclosed[(x * sy + y) * sz + z];
+    }
+
+    /** Whether the finished build leaves the spot air: nothing of it there, or air in the schematic. */
+    private boolean airAt(int x, int y, int z) {
+        int i = indexOf(BlockPos.asLong(x, y, z));
+        return i < 0 || targets[i].isAir();
     }
 
     /**

@@ -15,6 +15,9 @@ import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.level.block.piston.PistonHeadBlock;
+import net.minecraft.world.level.block.piston.PistonBaseBlock;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 
 /** What a schematic build test sets up and checks: the materials, packed in shulker boxes, and the blocks built. */
@@ -66,6 +69,12 @@ final class BuildCheck {
             } else if (target.getBlock() instanceof LiquidBlock) {
                 // Flowing water: anything wet will do; where it runs depends on what the machine does.
                 ok = !actual.getFluidState().isEmpty();
+            } else if (target.getBlock() instanceof PistonHeadBlock) {
+                // A piston's head is out only while the machine powers it: its base standing there, facing the same way,
+                // is what was built. Whether it is pushed out at the moment the check runs is the redstone's business.
+                BlockState base = level.getBlockState(pos.relative(target.getValue(PistonHeadBlock.FACING).getOpposite()));
+                ok = actual.getBlock() instanceof PistonHeadBlock || actual.is(Blocks.MOVING_PISTON)
+                        || base.getBlock() instanceof PistonBaseBlock && base.getValue(PistonBaseBlock.FACING) == target.getValue(PistonHeadBlock.FACING);
             } else if (kind == BlockRules.Kind.AUTO) {
                 ok = BlockRules.placementMatches(actual, target);
             } else {
