@@ -1819,7 +1819,7 @@ public final class SchematicBuilder {
      */
     private byte heldByLater(LocalPlayer player, int i, int j, int own, long started) {
         BlockState target = plan.target(j);
-        if (plan.target(i).getBlock() instanceof ObserverBlock || target.isSignalSource() || helperSpot.containsKey(j)) return 2;
+        if (plan.target(i).getBlock() instanceof ObserverBlock || target.isSignalSource()) return 2;
         Level level = player.level();
         BlockPos pos = plan.pos(j);
         long stamp = BuildPlan.stamp(level, pos);
@@ -1835,7 +1835,28 @@ public final class SchematicBuilder {
         }
         byte result = 2;
         Item item = BlockRules.item(target);
-        if (!without.isEmpty() && item != null) {
+        if (without.isEmpty() && item != null) {
+            // Nothing of that group in yet: whether it is what the block waits for. One with nothing to go in against now
+            // but a block of that group beside it once that is in, a row of blocks over air beside a hopper row say, is
+            // clicked onto it then, rather than onto a helper block put under each.
+            Map<Long, BlockState> with = new HashMap<>();
+            for (Direction side : Direction.values()) {
+                BlockPos at = pos.relative(side);
+                int k = plan.indexOf(at);
+                if (k >= 0 && BlockRules.group(plan.target(k)) >= own && level.getBlockState(at).canBeReplaced()) with.put(at.asLong(), plan.target(k));
+            }
+            if (!with.isEmpty()) {
+                if (System.nanoTime() - started > PLAN_NANOS) return 0;
+                LongPredicate notThere = a -> unclickable(a, j);
+                ItemStack stack = new ItemStack(item);
+                Overlay withView = new Overlay(level, with);
+                if (!PlacementSolver.supported(player, pos, target, stack, notThere)
+                        && (PlacementSolver.supported(player, withView, pos, target, stack, notThere)
+                        || PlacementSolver.supportedFinely(player, withView, pos, target, stack, notThere))) {
+                    result = 1;
+                }
+            }
+        } else if (item != null) {
             if (System.nanoTime() - started > PLAN_NANOS) return 0;
             Overlay view = new Overlay(level, without);
             if (!PlacementSolver.supported(player, view, pos, target, new ItemStack(item), a -> unclickable(a, j))
