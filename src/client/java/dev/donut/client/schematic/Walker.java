@@ -148,11 +148,14 @@ final class Walker {
     void precise(boolean on) { precise = on; }
 
     private boolean precise;
+    /** Whether this walk crouched to edge onto its precise end, and so stands up again there before it counts as arrived. */
+    private boolean preciseCrouch;
 
     void start(List<Navigator.Node> path, Vec3 lookAt) {
         this.path = path;
         this.lookAt = lookAt;
         precise = false;
+        preciseCrouch = false;
         ThreadLocalRandom random = ThreadLocalRandom.current();
         offsets = new double[path.size()][];
         for (int i = 0; i < path.size(); i++) {
@@ -182,6 +185,11 @@ final class Walker {
         if (index >= path.size()) {
             release(client);
             Navigator.Node end = path.getLast();
+            if (preciseCrouch) {
+                // On the spot: upright again for the look it was walked to, which works from a standing eye.
+                climb.crouch(false);
+                edgeCrouch = preciseCrouch = false;
+            }
             if (!edgeCrouch && player.onGround() && Math.abs(player.getY() - end.feet()) < 0.05 && within(player.position(), end)
                     && Navigator.narrowOverDrop(player.level(), end)) {
                 // Sliding to a stop on a narrow top over a drop: crouched, the edge holds the player.
@@ -198,7 +206,8 @@ final class Walker {
             }
             // Wait until the player has as good as come to rest, so a block placed next is aimed from where they stand: a
             // last few centimetres of slide the aim follows, as it is worked out again from the eye each tick.
-            if (player.onGround() && restsWithin(player, 0.1)) {
+            // Standing up again after edging on crouched takes the eye a moment to come up; the look waits for it.
+            if (player.onGround() && restsWithin(player, 0.1) && (edgeCrouch || !player.isCrouching())) {
                 path = null;
                 return State.ARRIVED;
             }
@@ -246,10 +255,14 @@ final class Walker {
                 && Navigator.supportedAlong(player.level(), from, to);
         // A walking step a walk fell off before is taken crouched all the way: slower, but the edge holds the player.
         boolean wary = onTop && to.move() == Navigator.Move.WALK && careful.contains(Navigator.stepKey(from, to));
-        boolean crouchHere = rail || wary || last && onTop && narrow && within(at, to);
+        // A walk to a spot whose look works only from its very middle edges on crouched for the last bit, as a player
+        // lining up on an exact spot does: slower, no run-on past it, and no dithering of the keys to get it right.
+        boolean easing = last && precise && onTop && to.move() == Navigator.Move.WALK && distance < 1.0;
+        boolean crouchHere = rail || wary || last && onTop && narrow && within(at, to) || easing;
         if (!bridgeCrouch && crouchHere != edgeCrouch && (crouchHere || player.onGround())) {
             climb.crouch(crouchHere);
             edgeCrouch = crouchHere;
+            preciseCrouch = crouchHere && easing && !(rail || wary || last && onTop && narrow && within(at, to));
         }
         // On ice a step where the way turns, or one beside a drop, is come to rest at as the walk's end is: a slide carries
         // a player walking on past the corner and off the side of a walkway one block wide, as a player who knows ice
@@ -542,7 +555,9 @@ final class Walker {
         if (--strafeHold < 0 || !between) {
             ThreadLocalRandom random = ThreadLocalRandom.current();
             strafeWay = random.nextFloat() * 45 < angle - lower ? lower + 45 : lower;
-            strafeHold = 1 + random.nextInt(3);
+            // Held 2-4 ticks; edging onto a precise end, crouched and slow, 4-6: a finger settles there, it does not tap.
+            boolean edging = precise && path != null && index == path.size() - 1;
+            strafeHold = edging ? 3 + random.nextInt(3) : 1 + random.nextInt(3);
         }
         float way = strafeWay;
         client.options.keyUp.setDown(go && Math.abs(way) <= 67.5f);
