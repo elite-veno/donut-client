@@ -88,6 +88,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -3868,6 +3869,9 @@ public final class SchematicBuilder {
             if (wetSoon(player.level(), node.feetCell(), poured, wetCells)) return 0;
             Vec3 feet = node.standing(), eye = node.eye();
             AABB body = new AABB(node.x() + 0.2, node.feet(), node.z() + 0.2, node.x() + 0.8, node.feet() + 1.8, node.z() + 0.8);
+            BlockPos floor = node.floor();
+            VoxelShape floorShape = level.getBlockState(floor).getCollisionShape(level, floor);
+            double rimTop = floorShape.isEmpty() ? node.feet() : floor.getY() + floorShape.max(Direction.Axis.Y);
             List<Integer> inReach = new ArrayList<>();
             for (int i : near) {
                 Set<Long> pocket = shutIn.get(i);
@@ -3889,6 +3893,9 @@ public final class SchematicBuilder {
                 Integer ok = verified.get(key);
                 if (ok == null) {
                     ok = placeableFrom(player, feet, i, reach);
+                    // In a bowl, a hopper's or a composter's, a walk that comes to rest a little off the middle stands up on
+                    // the rim, a few tenths higher: the look must work from there too.
+                    if (ok > 0 && rimTop > feet.y + 0.05) ok = Math.min(ok, placeableFrom(player, new Vec3(feet.x, rimTop, feet.z), i, reach));
                     verified.put(key, ok);
                 }
                 if (ok > 0) {
