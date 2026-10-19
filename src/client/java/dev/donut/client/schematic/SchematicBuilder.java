@@ -350,6 +350,8 @@ public final class SchematicBuilder {
     private final List<BlockPos> helpersLeft = new ArrayList<>();
     /** Whether the helper blocks left during the build were given another try once every block was in. */
     private boolean leftRetried;
+    /** Whether the cleanup's last try is on: climbing searches that go much further before a helper block is left. */
+    private boolean cleanupWide;
     /**
      * Tops of helper columns no walk reached from where the player stood, standing at {@code cleanupFrom}: tried again
      * from anywhere else, as what can't be reached from up on a pillar often can from below.
@@ -696,6 +698,7 @@ public final class SchematicBuilder {
         helperSpot.clear();
         helpersLeft.clear();
         leftRetried = false;
+        cleanupWide = false;
         cleanupSkipped.clear();
         cleanupBridges = 0;
         nearWalks.clear();
@@ -972,6 +975,7 @@ public final class SchematicBuilder {
         helperSpot.clear();
         helpersLeft.clear();
         leftRetried = false;
+        cleanupWide = false;
         cleanupSkipped.clear();
         cleanupBridges = 0;
         nearWalks.clear();
@@ -3311,12 +3315,14 @@ public final class SchematicBuilder {
             // as high across the build.
             // Before any of those, the highest of the helper blocks that stand on no ground at all, hung off the side of the
             // build: reached only from up there, they go while the player still is, not after a walk down to the ground.
+            // And those as high as the player's feet or higher before those below: down is a step, up a climb.
             List<BlockPos> walkOrder = new ArrayList<>(tops);
+            int feet = player.getBlockY();
             walkOrder.sort(Comparator.comparingDouble((BlockPos pos) -> {
                 if (!fromGround.containsKey(pos.asLong())) return -2_000_000 - pos.getY();
                 double dx = pos.getX() + 0.5 - player.getX(), dz = pos.getZ() + 0.5 - player.getZ();
                 double away = dx * dx + dz * dz;
-                return away > NEAR_COLUMN * NEAR_COLUMN ? away : -1_000_000 - pos.getY();
+                return (pos.getY() >= feet ? 0 : 10_000_000) + (away > NEAR_COLUMN * NEAR_COLUMN ? away : -1_000_000 - pos.getY());
             }));
             for (BlockPos top : walkOrder) {
                 if (cleanupSkipped.contains(top.asLong()) || cleanupMisses.getOrDefault(top.asLong(), 0) >= CLEANUP_MISSES) continue;
@@ -3340,7 +3346,7 @@ public final class SchematicBuilder {
                     }
                 }
                 if (path == null) {
-                    Navigator navigator = navigator(player, true).limit(6000);
+                    Navigator navigator = navigator(player, true).limit(cleanupWide ? 60_000 : 6000);
                     if (cleanupBridges >= CLEANUP_BRIDGES) navigator.noBridges();
                     boolean missedHere = missedMining(player, top);
                     long topKey = top.asLong();
@@ -3371,6 +3377,15 @@ public final class SchematicBuilder {
                 startBreak(under);
                 return true;
             }
+        }
+        if (settings().walk && !cleanupWide) {
+            // One more round before any is left, with climbing searches that go ten times as far: from the ground, the way
+            // up a finished build to a helper block high on it takes more places to try than a near one.
+            cleanupWide = true;
+            cleanupSkipped.clear();
+            nearWalks.clear();
+            if (debug()) LOGGER.info("Cleanup: {} helper blocks out of reach, looking further for a way to them", helpers.size());
+            return true;
         }
         for (long key : helpers.keySet()) {
             BlockPos pos = BlockPos.of(key);
