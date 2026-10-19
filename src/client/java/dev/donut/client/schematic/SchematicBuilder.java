@@ -415,6 +415,8 @@ public final class SchematicBuilder {
     private final Map<Long, Integer> escapeWalks = new HashMap<>();
     /** Walks made to take back a helper block of an earlier walk, out of them (see {@link #walkToSpareHelper}), by position. */
     private final Map<Long, Integer> reclaimWalks = new HashMap<>();
+    /** When each of those was last checked with a search for a way on without it (see {@link #reclaimable}). */
+    private final Map<Long, Long> reclaimChecked = new HashMap<>();
     /** Since when one of those has stood in the build's own water, holding the layers above (see BuildPlan.hold), or -1. */
     private long holdSince = -1;
     /** Whether the way out {@link #wayOut} keeps clear climbs over cells the build fills later. */
@@ -968,6 +970,7 @@ public final class SchematicBuilder {
         escapeWalk = false;
         escapeWalks.clear();
         reclaimWalks.clear();
+        reclaimChecked.clear();
         holdSince = -1;
         repairing = -1;
         helperFetchTick = -100_000;
@@ -1510,6 +1513,18 @@ public final class SchematicBuilder {
             if (!creative && materials.loose(item) == 0) {
                 if (waitsForRoom(item, materials) || noBoxHere(item)) continue;
                 startRestock(client, player, item, materials);
+                return;
+            }
+            // A walk's helper block beside it in a spot the build shuts in: taken away first if it can be from here, as this
+            // block may be the one that closes the spot over it.
+            for (Direction side : Direction.values()) {
+                BlockPos beside = pos.relative(side);
+                Helper helper = helpers.get(beside.asLong());
+                if (helper == null || helper.serves() >= 0 || escapeHelpers.contains(beside.asLong()) || !plan.enclosed(beside)) continue;
+                if (!reclaimable(player, beside, player.blockInteractionRange() - 0.25)) continue;
+                if (debug()) LOGGER.info("{} at {} waits: first taking away the helper block at {}, which the build shuts in",
+                        target, pos.toShortString(), beside.toShortString());
+                startBreak(beside);
                 return;
             }
             Aim aim = new Aim(Act.PLACE, i, result.click(), item, pos, current, layerNumber);
@@ -3175,7 +3190,9 @@ public final class SchematicBuilder {
      */
     private boolean reclaimable(LocalPlayer player, BlockPos at, double reach) {
         Level level = player.level();
-        if (helpers.containsKey(at.above().asLong()) || tick - escapeChecked < 20 || Navigator.standingAt(level, player).floor().equals(at)
+        // Each one looked at again a second later at the soonest: one that fails the check each time mustn't hold up the rest.
+        if (helpers.containsKey(at.above().asLong()) || tick - reclaimChecked.getOrDefault(at.asLong(), -100_000L) < 20
+                || Navigator.standingAt(level, player).floor().equals(at)
                 || missedMining(player, at) || !inView(player, player.getEyePosition(), at, reach) || !safeToBreak(player, at)) return false;
         if (!plan.enclosed(at) && helperItem(player) != null) {
             // Taken back for its drop: one over a drop, a bridge say, falls to where a walk down and a climb back up, a new
@@ -3198,7 +3215,7 @@ public final class SchematicBuilder {
             return false;
         }
         Overlay without = new Overlay(level, Map.of(at.asLong(), Blocks.AIR.defaultBlockState()));
-        escapeChecked = tick;
+        reclaimChecked.put(at.asLong(), tick);
         return exitFrom(player, without, Navigator.standingAt(without, player), null) != null;
     }
 
