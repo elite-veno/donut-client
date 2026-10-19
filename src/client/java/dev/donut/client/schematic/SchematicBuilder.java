@@ -1095,6 +1095,9 @@ public final class SchematicBuilder {
         // Helper blocks running low: more out of a box before they run out mid-climb.
         Item fetch = creative || !settings().useShulkers ? null : helperToFetch(player, materials);
         if (fetch != null) {
+            // At most once a minute: with the inventory full, a box opened for them gives none, and is opened again and
+            // again otherwise.
+            helperFetchTick = tick;
             startRestock(client, player, fetch, materials);
             if (restock != Restock.NONE || swapFrom >= 0 || walker.active()) return;
             // No box could go down for them, as with no room beside the player: the build goes on, and tries again later.
