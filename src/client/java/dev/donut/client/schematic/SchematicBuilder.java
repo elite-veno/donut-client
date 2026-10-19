@@ -1766,6 +1766,8 @@ public final class SchematicBuilder {
         // A block facing up beside it, still to go in, takes a look up from below past this spot: this one waits for it,
         // as the ice ring round a column of up-facing observers took every such look.
         for (Direction side : Direction.Plane.HORIZONTAL) {
+            // A row of them goes in in any order: each is placed from below, not past the other.
+            if (BlockRules.facesUp(plan.target(i))) break;
             BlockPos at = pos.relative(side);
             int j = plan.indexOf(at);
             if (j < 0 || plan.status(j) != BuildPlan.Status.PENDING || !BlockRules.facesUp(plan.target(j))) continue;
