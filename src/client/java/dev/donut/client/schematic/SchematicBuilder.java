@@ -1492,6 +1492,11 @@ public final class SchematicBuilder {
             }
             int index = i;
             PlacementSolver.Result result = PlacementSolver.find(player, pos, target, new ItemStack(item), reach, at -> unclickable(at, index));
+            if (result.click() == null && result.problem() == PlacementSolver.Problem.IN_THE_WAY && walkEnd != null && walkExpects.contains(i)) {
+                // The walk came to rest a little off the middle, into the spot of a block it was made for, as in a row of
+                // blocks still to go in: never planned from there for that block again, or the same walk is made over and over.
+                missedFrom.add(walkEnd.key() * 31 + i);
+            }
             if (result.click() == null && debug()) {
                 LOGGER.info("Can't place {} at {} yet: {}", target, pos.toShortString(), result.problem());
                 if (walkExpects.remove(i) && walkEnd != null) {
