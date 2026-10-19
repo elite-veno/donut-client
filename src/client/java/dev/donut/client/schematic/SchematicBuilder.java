@@ -376,6 +376,10 @@ public final class SchematicBuilder {
     private final Map<Long, Integer> nearWalks = new HashMap<>();
     /** The helper block the last cleanup climb was for; null for none. */
     private BlockPos cleanupTarget;
+    /** The helper column the last cleanup walk on foot went beside, by its top; null for none. */
+    private BlockPos cleanupColumn;
+    /** How far above where a walk on foot to beside its column ends a helper top may be: higher, it is a climb from there. */
+    private static final int COLUMN_RISE = 4;
     /**
      * Cleanup climbs that ended with their block still out of reach, by block and the place they ended at: that place is
      * no goal for that block again, wherever a walk sets off from. And how many such climbs each block has had.
@@ -716,6 +720,7 @@ public final class SchematicBuilder {
         cleanupBridges = 0;
         nearWalks.clear();
         cleanupTarget = null;
+        cleanupColumn = null;
         cleanupFailed.clear();
         cleanupMisses.clear();
         dug.clear();
@@ -997,6 +1002,7 @@ public final class SchematicBuilder {
         cleanupBridges = 0;
         nearWalks.clear();
         cleanupTarget = null;
+        cleanupColumn = null;
         cleanupFailed.clear();
         cleanupMisses.clear();
         dug.clear();
@@ -3375,13 +3381,24 @@ public final class SchematicBuilder {
                         double dx = top.getX() - node.x(), dz = top.getZ() - node.z();
                         return dx * dx + dz * dz <= 4 ? 1 : 0;
                     });
+                    if (path != null && path.nodes().size() > 1 && top.getY() - path.end().feet() > COLUMN_RISE) {
+                        // It ends on the ground far under the top: from there, the climb to it would be searched for
+                        // anyway, and when it fails the next far top sends the player off again.
+                        if (debug()) LOGGER.info("Cleanup: no walk on foot to the helper block at {}: it ends {} under it",
+                                top.toShortString(), String.format(Locale.ROOT, "%.1f", top.getY() - path.end().feet()));
+                        path = null;
+                    }
                     if (path != null && path.nodes().size() > 1) {
                         nearWalks.merge(top.asLong(), 1, Integer::sum);
                         toColumn = true;
                     }
                 }
+                // Just walked to beside its column on foot: the climb from here is searched for as far as the last round
+                // goes, not given up on for another far column, which sent the player to and fro between them.
+                boolean besideColumn = path == null && top.equals(cleanupColumn);
+                if (besideColumn) cleanupColumn = null;
                 if (path == null) {
-                    Navigator navigator = navigator(player, true).limit(cleanupWide ? 60_000 : 6000);
+                    Navigator navigator = navigator(player, true).limit(cleanupWide || besideColumn ? 60_000 : 6000);
                     if (cleanupBridges >= CLEANUP_BRIDGES) navigator.noBridges();
                     boolean missedHere = missedMining(player, top);
                     long topKey = top.asLong();
@@ -3399,10 +3416,14 @@ public final class SchematicBuilder {
                             path.nodes().size() - 1, path.nodes().stream().filter(node -> node.move() == Navigator.Move.PILLAR).count(),
                             top.toShortString());
                     if (!toColumn) cleanupTarget = top;
+                    cleanupColumn = toColumn ? top : null;
                     walker.start(path.nodes());
                     show("Taking the helper blocks away", false);
                     return true;
                 }
+                if (besideColumn) nearWalks.put(top.asLong(), 2);
+                if (debug()) LOGGER.info("Cleanup: no walk to the helper block at {} from {}{}", top.toShortString(), here,
+                        besideColumn ? ", after the walk on foot to beside it" : "");
                 cleanupSkipped.add(top.asLong());
             }
             // None reached from up here, on helper blocks climbed: down a block, and from there they are looked for again.
