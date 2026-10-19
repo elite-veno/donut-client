@@ -156,6 +156,11 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                 if (reset > 0) LOGGER.info("Set {} of them again, which had changed", reset);
                 context.waitTicks(10);
             }
+            // DONUT_SCHEMATIC_DIRT_BOXED: helper dirt carried in shulker boxes on top of the loose stacks, as a player brings
+            // for a big build; the builder takes it out when the loose ones run low.
+            String boxedText = System.getenv("DONUT_SCHEMATIC_DIRT_BOXED");
+            int boxedDirt = boxedText == null || boxedText.isBlank() ? 0 : Integer.parseInt(boxedText.trim());
+            if (boxedDirt > 0) bill.merge(Items.DIRT, boxedDirt, Integer::sum);
             giveInShulkers(server, bill);
             // DONUT_SCHEMATIC_DIRT: fewer helper blocks than the default 448, to see the builder take back those of earlier walks.
             String dirtText = System.getenv("DONUT_SCHEMATIC_DIRT");
