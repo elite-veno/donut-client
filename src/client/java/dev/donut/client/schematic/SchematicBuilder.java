@@ -318,6 +318,9 @@ public final class SchematicBuilder {
     private Navigator.Node walkEnd;
     /** Places tried and found useless since the last block went in, so the next walk goes somewhere else. */
     private final Set<Long> uselessSpots = new HashSet<>();
+    /** Where the last walk for blocks was to end, and whether anything was clicked since it started. */
+    private Navigator.Node lastWalkEnd;
+    private boolean clickedSinceWalk;
     /** Steps that failed when walked, by {@link Navigator#stepKey}, this layer: walks go another way. */
     private final Set<Long> badSteps = new HashSet<>();
     /** When the steps that failed were last given another try, for want of any other way on. */
@@ -989,6 +992,7 @@ public final class SchematicBuilder {
         buildSlot = -1;
         walkFailures = 0;
         uselessSpots.clear();
+        lastWalkEnd = null;
         shutIn.clear();
         traps.clear();
         badSteps.clear();
@@ -1194,6 +1198,8 @@ public final class SchematicBuilder {
                 sealsLifted = false;
                 orderLifted = false;
                 walksSinceClick = 0;
+                uselessSpots.clear();
+                lastWalkEnd = null;
                 shutIn.clear();
                 traps.clear();
                 badSteps.clear();
@@ -2729,8 +2735,13 @@ public final class SchematicBuilder {
     /** What follows a click: the next wait, and what the status line says. */
     private void clicked(Aim planned, BlockHitResult hit) {
         int i = planned.index(), layerNumber = planned.layerNumber();
-        if (planned.act() == Act.PLACE || planned.act() == Act.POUR) walksSinceClick = 0;
-        uselessSpots.clear();
+        if (planned.act() == Act.PLACE || planned.act() == Act.POUR) {
+            // A block went in: places passed over since may do again. A helper block alone isn't one: a place where only
+            // helpers go down, one after another, and never the block, is still passed over.
+            walksSinceClick = 0;
+            uselessSpots.clear();
+            clickedSinceWalk = true;
+        }
         forgetNoClicks();
         walkFailures = 0;
         String layer = "Layer " + layerNumber + " of " + plan.layers().size() + " (y " + layerY + "): ";
@@ -3928,6 +3939,16 @@ public final class SchematicBuilder {
             if (near.size() >= 48) break;
         }
         if (near.isEmpty()) return false;
+        // The last walk's place didn't do: nothing went in from there, though looks were counted from it. Left out until a
+        // block goes in, so two such places close by can't send the player to and fro between them, and the search goes
+        // on to places further off, round the build or into it.
+        if (lastWalkEnd != null && !clickedSinceWalk) {
+            if (uselessSpots.add(lastWalkEnd.key()) && debug()) {
+                LOGGER.info("Nothing went in from {} {} {}: no more walks there until a block does", lastWalkEnd.x(), lastWalkEnd.feet(),
+                        lastWalkEnd.z());
+            }
+        }
+        lastWalkEnd = null;
         // Blocks left that a block placed from the same place could hold, by position, whether or not they can go in yet.
         Map<Long, Integer> pool = new HashMap<>();
         for (int i : candidates) {
@@ -4075,6 +4096,8 @@ public final class SchematicBuilder {
         Integer first = firstFrom.get(end.key());
         walker.start(path.nodes(), first == null ? null : Vec3.atCenterOf(plan.pos(first)));
         walksSinceClick++;
+        lastWalkEnd = end;
+        clickedSinceWalk = false;
         show("Layer " + layerNumber + " of " + plan.layers().size() + ": walking to " + end.x() + " " + Math.round(end.feet()) + " " + end.z(), false);
         if (debug()) {
             LOGGER.info("Walking {} steps to {} {} {} for {}; {} climbs, {} steps on walk helpers standing", path.nodes().size() - 1, end.x(),
