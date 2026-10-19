@@ -3,7 +3,9 @@ package dev.donut.client.gui;
 import com.mojang.blaze3d.platform.InputConstants;
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.config.FinderSettings;
+import dev.donut.client.config.PipelineSettings;
 import dev.donut.client.config.RenderMode;
+import dev.donut.client.config.SchematicSettings;
 import dev.donut.client.finder.ActivityArea;
 import dev.donut.client.finder.ActivityStats;
 import dev.donut.client.finder.ChunkStats;
@@ -14,6 +16,7 @@ import dev.donut.client.input.ModuleKeybinds;
 import dev.donut.client.miner.ChunkMiner;
 import dev.donut.client.miner.Excavator;
 import dev.donut.client.miner.Kit;
+import dev.donut.client.order.AutoBase;
 import dev.donut.client.order.MaterialOrder;
 import dev.donut.client.schematic.Materials;
 import dev.donut.client.schematic.Schematic;
@@ -179,7 +182,7 @@ public final class DonutScreen extends Screen {
                         chunks())),
                 page("render", "Render", "eye", List.of(xray(), fullbright(), freecam())),
                 page("utility", "Utility", "rtp", List.of(autoRtp())),
-                page("build", "Build", "cube", List.of(schematicBuilder(), chunkMiner())),
+                page("build", "Build", "cube", List.of(autoBase(), schematicBuilder(), chunkMiner())),
                 page("hud", "HUD", "monitor", List.of(
                         module("ArrayList", "Active module names at the top right", "hud array list modules",
                                 () -> config.showHud, () -> change(() -> config.showHud = !config.showHud), null),
@@ -191,7 +194,9 @@ public final class DonutScreen extends Screen {
                                                 () -> config.hud.maxLabels, v -> config.hud.maxLabels = (int) Math.round(v), 1, 32, 1, "")))));
         group("General",
                 page("keybinds", "Keybinds", "keyboard", "Keys that turn modules on or off", this::drawKeybinds),
-                page("theme", "Theme", "palette", "Colors and effects", this::drawTheme));
+                page("theme", "Theme", "palette", "Colors and effects", this::drawTheme),
+                page("humanizer", "Humanizer", "chart", "How human the builder, the miner and Auto RTP look",
+                        this::drawHumanizer));
         if (!pages.containsKey(pageId)) pageId = "finders";
         // Configs from before the mint design carry the winter theme's colors, and mint ones its accent; both move to
         // gold once. An accent picked by hand stays.
@@ -589,6 +594,111 @@ public final class DonutScreen extends Screen {
         }).key(5).values(s);
     }
 
+    /** Mine, order and build as one run, with GoNuts' guards over all three; each step is also here on its own. */
+    private Module autoBase() {
+        var p = config.pipeline;
+        return worldModule("AutoBase", "Digs a schematic's room, buys what it needs and builds it, one after the other",
+                "autobase auto base all in one pipeline mine order buy build stash farm guard staff watch",
+                () -> p.enabled, () -> {
+                    if (AutoBase.running()) AutoBase.stop("Stopped from the menu");
+                    else replyOr(AutoBase.start(), "AutoBase started: digging the room");
+                }, c -> {
+            SchematicBuilder builder = SchematicBuilder.getInstance();
+            ChunkMiner miner = ChunkMiner.getInstance();
+            c.note(AutoBase.status(), AutoBase.statusWarn() ? WARN : AutoBase.running() ? TEXT : MUTED);
+            replyNote(c);
+            Schematic schematic = builder == null ? null : builder.schematic();
+            if (schematic == null) c.note("Pick a schematic in SchematicBuilder first.", WARN);
+            else c.info("Schematic", schematic.name, TEXT);
+            c.section("Steps");
+            AutoBase.Step at = AutoBase.step();
+            boolean ordering = at == AutoBase.Step.QUOTE || at == AutoBase.Step.CONFIRM || at == AutoBase.Step.BUY;
+            c.info("1. Mine", miner != null && miner.isActive() ? miner.status() : "Digs the room with ChunkMiner",
+                    at == AutoBase.Step.MINE ? TEXT : LABEL);
+            c.info("2. Order", ordering ? AutoBase.status() : "Buys what is short on the auction house",
+                    at == AutoBase.Step.CONFIRM ? WARN : ordering ? TEXT : LABEL);
+            c.info("3. Build", builder != null && builder.isActive() ? builder.status() : "SchematicBuilder",
+                    at == AutoBase.Step.BUILD ? TEXT : LABEL);
+            if (at == AutoBase.Step.CONFIRM) {
+                MaterialBuyer.Snapshot order = MaterialOrder.snapshot();
+                long most = order == null ? 0 : Math.round(order.quoteTotal() * MaterialBuyer.BUDGET_MARGIN);
+                boolean confirming = isArmed("autoConfirm");
+                c.warnNext();
+                c.button("autoConfirm", "Buy the materials", confirming ? "Click Confirm within 8 seconds to spend up to " + money(most)
+                        : "The quote is over the buy-without-asking amount; it shows under SchematicBuilder's Order materials",
+                        confirming ? "Confirm" : "Buy", () -> {
+                    if (isArmed("autoConfirm")) {
+                        armed.remove("autoConfirm");
+                        replyOr(AutoBase.confirm(), "Buying the materials");
+                    } else {
+                        armed.put("autoConfirm", System.currentTimeMillis() + ARM_MILLIS);
+                    }
+                });
+            }
+            c.section("One by one");
+            c.button("stepMine", "Mine chunk", "ChunkMiner alone: digs the room and stops", miner != null && miner.isActive() ? "Stop" : "Mine",
+                    () -> change(() -> config.miner.enabled = !config.miner.enabled));
+            c.button("stepOrder", "Order materials", "A quote for what is short; it shows under SchematicBuilder", "Quote",
+                    () -> replyOr(MaterialOrder.quote(builder, p.highPrice), "Checking prices on the auction house"));
+            c.button("stepBuild", "Build", "SchematicBuilder alone", builder != null && builder.isActive() ? "Stop" : "Build",
+                    () -> change(() -> config.schematic.enabled = !config.schematic.enabled));
+            c.section("Buying");
+            c.field("autoSpend", "Buy without asking up to", "A quote at or under this many dollars is bought straight away; 0 always asks",
+                    () -> Long.toString(p.autoSpend), v -> {
+                        try {
+                            p.autoSpend = Math.max(0, Long.parseLong(v.replace(",", "").replace("$", "").strip()));
+                        } catch (NumberFormatException ignored) {
+                            // Kept as it was: the field shows the number again.
+                        }
+                    }, false, 16);
+            c.toggle("autoHighPrice", "High price items", "Off, no single listing over " + money(MaterialBuyer.MAX_LISTING) + " is bought",
+                    () -> p.highPrice, () -> p.highPrice = !p.highPrice);
+            c.section("Guard");
+            if (MaterialOrder.available()) c.info("GoNuts guard", AutoBase.guardStatus(), LABEL);
+            c.toggle("guardHold", "Hold for the guard", "While GoNuts' player guard holds, ChunkMiner and SchematicBuilder wait and buying stops",
+                    () -> p.guardHold, () -> p.guardHold = !p.guardHold);
+            if (p.guardHold) {
+                c.slider("clearSeconds", "Clear for", "How long the guard must be clear before what it held goes on",
+                        () -> p.clearSeconds, v -> p.clearSeconds = (int) Math.round(v), 2, 120, 1, v -> Math.round(v) + " s");
+            }
+            c.toggle("staffStop", "Stop on staff", "A GoNuts Staff Watch alert stops ChunkMiner, buying and SchematicBuilder; nothing goes on by itself",
+                    () -> p.staffStop, () -> p.staffStop = !p.staffStop);
+            c.note("Staff Watch and the player guard are GoNuts' own; turn them on in GoNuts. Check the server's rules before automating.", DIM);
+        }).values(p);
+    }
+
+    /** The settings for how human the modules look, all on one page; each module keeps its own too. */
+    private void drawHumanizer(Column c) {
+        var b = config.schematic;
+        c.section("SchematicBuilder");
+        builderLooks(c, b);
+        c.toggle("hum.sprint", "Sprint", "Sprints longer walks over open ground; never near an edge", () -> b.sprint, () -> b.sprint = !b.sprint);
+        c.slider("hum.hesitate", "Hesitation", "How many walks in a hundred start with a moment of standing still",
+                () -> b.hesitate, v -> b.hesitate = (int) Math.round(v), 0, 50, 1, v -> Math.round(v) + "%");
+        var m = config.miner;
+        c.section("ChunkMiner");
+        c.slider("hum.minerTurn", "Turn speed", "How quickly the view turns: 1x is a player's usual pace, always a smooth turn",
+                () -> m.turnPace, v -> m.turnPace = v, 0.8, 2, 0.05, v -> String.format(Locale.ROOT, "%.2fx", v));
+        c.slider("hum.minerMin", "Shortest delay", "Each block waits a random time between the shortest and longest delay",
+                () -> m.minDelay, m::setMinDelay, 0, 5, 0.05, v -> String.format(Locale.ROOT, "%.2f s", v));
+        c.slider("hum.minerMax", "Longest delay", "Set both the same for a fixed delay", () -> m.maxDelay, m::setMaxDelay,
+                0, 5, 0.05, v -> String.format(Locale.ROOT, "%.2f s", v));
+        c.slider("hum.aimSpread", "Aim spread", "How far from a face's middle the aim may land", () -> m.aimSpread, v -> m.aimSpread = v,
+                0, 0.9, 0.05, v -> Math.round(v * 100) + "% of a face");
+        c.slider("hum.handShake", "Hand shake", "The camera's small drift while a block breaks, at most", () -> m.handShake,
+                v -> m.handShake = v, 0, 2, 0.05, v -> String.format(Locale.ROOT, "%.2f°", v));
+        c.slider("hum.pauseChance", "Pause chance", "After each block, the chance of a longer pause, glancing around",
+                () -> m.pauseChance, v -> m.pauseChance = v, 0, 0.5, 0.01, v -> Math.round(v * 100) + "%");
+        c.toggle("hum.vary", "Vary order", "Not always the very best next block, so no two rooms are dug the same way",
+                () -> m.varyOrder, () -> m.varyOrder = !m.varyOrder);
+        var r = config.rtp;
+        c.section("Auto RTP");
+        c.slider("hum.intervalSpread", "Interval spread", "How much each wait varies about the interval, so the command doesn't go out on a clock",
+                () -> r.intervalSpread, v -> r.intervalSpread = v, 0, 0.5, .05, v -> Math.round(v * 100) + "%");
+        c.slider("hum.menuDelay", "Menu delay", "The usual moment from the menu showing to the click; each varies about it",
+                () -> r.menuDelay, v -> r.menuDelay = v, 0.15, 1.5, .05, v -> String.format(Locale.ROOT, "%.2f s", v));
+    }
+
     private Module schematicBuilder() {
         var s = config.schematic;
         return worldModule("SchematicBuilder", "Builds a .litematic layer by layer from your inventory and its shulker boxes",
@@ -635,32 +745,7 @@ public final class DonutScreen extends Screen {
                     () -> s.minDelay, s::setMinDelay, 0.05, 10, 0.05, v -> String.format(Locale.ROOT, "%.2f s", v));
             c.slider("maxDelay", "Longest delay", "Set both the same for a fixed delay", () -> s.maxDelay, s::setMaxDelay,
                     0.05, 10, 0.05, v -> String.format(Locale.ROOT, "%.2f s", v));
-            c.slider("turnSpeed", "Turn speed", "How quickly the view turns to the next block: 1x is a player's usual pace, always a smooth turn",
-                    () -> s.turnSpeed, v -> s.turnSpeed = v, 0.8, 2, 0.05, v -> String.format(Locale.ROOT, "%.2fx", v));
-            c.slider("reaction", "Reaction time", "After a click, the longest moment before turning on; each is a third of it to all of it",
-                    () -> s.reaction, v -> s.reaction = v, 0, 0.5, 0.01, v -> Math.round(v * 1000) + " ms");
-            c.slider("settle", "Aim settle", "Ticks the crosshair rests on a spot before clicking, now and then one more",
-                    () -> s.settle, v -> s.settle = (int) Math.round(v), 1, 6, 1, v -> Math.round(v) + (Math.round(v) == 1 ? " tick" : " ticks"));
-            c.slider("settleSpread", "Settle spread", "On average how many ticks more the crosshair rests, at random: mostly none, now and then a few",
-                    () -> s.settleSpread, v -> s.settleSpread = v, 0, 2, 0.1, v -> String.format(Locale.ROOT, "%.1f ticks", v));
-            c.slider("itemSwitch", "Item switch", "After taking another item in hand, the longest moment before using it; each is a third of it to all of it",
-                    () -> s.itemSwitch, v -> s.itemSwitch = v, 0.05, 0.5, 0.01, v -> Math.round(v * 1000) + " ms");
-            c.toggle("holdAttack", "Hold attack", "After a block it mines breaks, the button stays down while it turns to the next, as when clearing a row",
-                    () -> s.holdAttack, () -> s.holdAttack = !s.holdAttack);
-            c.slider("aimCorrections", "Aim corrections", "How many longer turns in a hundred land a little off the block and correct, as a hand does",
-                    () -> s.aimCorrections, v -> s.aimCorrections = (int) Math.round(v), 0, 80, 1, v -> Math.round(v) + "%");
-            c.slider("clickSpread", "Click spread", "How far from the middle and the thirds of a face a click may land, as a share of it",
-                    () -> s.clickSpread, v -> s.clickSpread = v, 0.06, 0.15, 0.01, v -> Math.round(v * 100) + "%");
-            c.toggle("breaks", "Breaks", "Stops now and then for a while and looks about, as a player does",
-                    () -> s.breaks, () -> s.breaks = !s.breaks);
-            if (s.breaks) {
-                c.slider("breakEvery", "Break every", "About how often; most waits near it, now and then much sooner or later",
-                        () -> s.breakEvery, v -> s.breakEvery = v, 1, 30, 0.5, v -> String.format(Locale.ROOT, "%.1f min", v));
-                c.slider("breakLength", "Longest break", "Most breaks last about half of this, a few all of it",
-                        () -> s.breakLength, v -> s.breakLength = v, 5, 120, 1, v -> String.format(Locale.ROOT, "%.0f s", v));
-                c.slider("pauseEvery", "Pause every", "About how often a pause of a second or a few comes between blocks, to look about",
-                        () -> s.pauseEvery, v -> s.pauseEvery = v, 15, 300, 5, v -> String.format(Locale.ROOT, "%.0f s", v));
-            }
+            builderLooks(c, s);
             c.section("Moving");
             c.toggle("walk", "Walk", "Walks, jumps and climbs to each block by itself, as a player on foot; off, you walk and it places what comes in reach",
                     () -> s.walk, () -> s.walk = !s.walk);
@@ -844,8 +929,38 @@ public final class DonutScreen extends Screen {
                 short_ == 0 ? GOOD : WARN);
     }
 
+    /** SchematicBuilder's settings for how human it looks: its turns, rests, clicks and breaks; on the Build and Humanizer pages. */
+    private void builderLooks(Column c, SchematicSettings s) {
+        c.slider("turnSpeed", "Turn speed", "How quickly the view turns to the next block: 1x is a player's usual pace, always a smooth turn",
+                () -> s.turnSpeed, v -> s.turnSpeed = v, 0.8, 2, 0.05, v -> String.format(Locale.ROOT, "%.2fx", v));
+        c.slider("reaction", "Reaction time", "After a click, the longest moment before turning on; each is a third of it to all of it",
+                () -> s.reaction, v -> s.reaction = v, 0, 0.5, 0.01, v -> Math.round(v * 1000) + " ms");
+        c.slider("settle", "Aim settle", "Ticks the crosshair rests on a spot before clicking, now and then one more",
+                () -> s.settle, v -> s.settle = (int) Math.round(v), 1, 6, 1, v -> Math.round(v) + (Math.round(v) == 1 ? " tick" : " ticks"));
+        c.slider("settleSpread", "Settle spread", "On average how many ticks more the crosshair rests, at random: mostly none, now and then a few",
+                () -> s.settleSpread, v -> s.settleSpread = v, 0, 2, 0.1, v -> String.format(Locale.ROOT, "%.1f ticks", v));
+        c.slider("itemSwitch", "Item switch", "After taking another item in hand, the longest moment before using it; each is a third of it to all of it",
+                () -> s.itemSwitch, v -> s.itemSwitch = v, 0.05, 0.5, 0.01, v -> Math.round(v * 1000) + " ms");
+        c.toggle("holdAttack", "Hold attack", "After a block it mines breaks, the button stays down while it turns to the next, as when clearing a row",
+                () -> s.holdAttack, () -> s.holdAttack = !s.holdAttack);
+        c.slider("aimCorrections", "Aim corrections", "How many longer turns in a hundred land a little off the block and correct, as a hand does",
+                () -> s.aimCorrections, v -> s.aimCorrections = (int) Math.round(v), 0, 80, 1, v -> Math.round(v) + "%");
+        c.slider("clickSpread", "Click spread", "How far from the middle and the thirds of a face a click may land, as a share of it",
+                () -> s.clickSpread, v -> s.clickSpread = v, 0.06, 0.15, 0.01, v -> Math.round(v * 100) + "%");
+        c.toggle("breaks", "Breaks", "Stops now and then for a while and looks about, as a player does",
+                () -> s.breaks, () -> s.breaks = !s.breaks);
+        if (s.breaks) {
+            c.slider("breakEvery", "Break every", "About how often; most waits near it, now and then much sooner or later",
+                    () -> s.breakEvery, v -> s.breakEvery = v, 1, 30, 0.5, v -> String.format(Locale.ROOT, "%.1f min", v));
+            c.slider("breakLength", "Longest break", "Most breaks last about half of this, a few all of it",
+                    () -> s.breakLength, v -> s.breakLength = v, 5, 120, 1, v -> String.format(Locale.ROOT, "%.0f s", v));
+            c.slider("pauseEvery", "Pause every", "About how often a pause of a second or a few comes between blocks, to look about",
+                    () -> s.pauseEvery, v -> s.pauseEvery = v, 15, 300, 5, v -> String.format(Locale.ROOT, "%.0f s", v));
+        }
+    }
+
     /** Whether a bought order starts the build after, and whether listings over $10M may be bought; the toggles under Order materials. */
-    private static boolean buildWhenBought = true, highPriceItems;
+    private static boolean buildWhenBought = true;
 
     /**
      * Ordering what the build still needs through GoNuts: a quote from live auction house prices, which buys nothing,
@@ -861,10 +976,11 @@ public final class DonutScreen extends Screen {
             case IDLE -> {
                 String blocked = MaterialOrder.blocker();
                 if (blocked != null) c.note(blocked + ".", MUTED);
+                PipelineSettings p = config.pipeline;
                 c.toggle("highPriceItems", "High price items", "Off, no single listing over " + money(MaterialBuyer.MAX_LISTING)
-                        + " is planned or bought", () -> highPriceItems, () -> highPriceItems = !highPriceItems);
+                        + " is planned or bought", () -> p.highPrice, () -> p.highPrice = !p.highPrice);
                 c.button("orderQuote", "Get a quote", "The cheapest mix of listings for what the build still needs, less what you carry; buys nothing",
-                        "Quote", () -> replyOr(MaterialOrder.quote(builder, highPriceItems), "Checking prices on the auction house"));
+                        "Quote", () -> replyOr(MaterialOrder.quote(builder, p.highPrice), "Checking prices on the auction house"));
             }
             case QUOTING -> {
                 c.note(order.message(), LABEL);

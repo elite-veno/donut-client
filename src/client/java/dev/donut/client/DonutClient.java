@@ -12,6 +12,7 @@ import dev.donut.client.gui.FinderHud;
 import dev.donut.client.gui.ModuleArrayList;
 import dev.donut.client.input.ModuleKeybinds;
 import dev.donut.client.miner.ChunkMiner;
+import dev.donut.client.order.AutoBase;
 import dev.donut.client.order.MaterialOrder;
 import dev.donut.client.render.HighlightRenderer;
 import dev.donut.client.rtp.AutoRtpController;
@@ -99,6 +100,9 @@ public final class DonutClient implements ClientModInitializer {
 
         // After an order is bought, the build it was for starts, when asked to.
         ClientTickEvents.END_CLIENT_TICK.register(MaterialOrder::tick);
+        // One run of ChunkMiner, buying and SchematicBuilder, and GoNuts' guards over all three.
+        AutoBase.init(config, this::save);
+        ClientTickEvents.END_CLIENT_TICK.register(AutoBase::tick);
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             boolean inputBlocked = ModuleKeybinds.inputBlocked(client);
             while (open.consumeClick()) {

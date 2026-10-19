@@ -152,6 +152,15 @@ public final class SchematicBuilderGameTest implements FabricClientGameTest {
             screenshot(context, "donut-schematic-01-settings");
             GuiClicks.reveal(context, "SchematicBuilder.section.Materials");
             screenshot(context, "donut-schematic-02-materials");
+            // AutoBase's panel (steps, buttons, buying, guard) and the Humanizer page draw with the schematic loaded.
+            GuiClicks.expand(context, "AutoBase");
+            screenshot(context, "donut-schematic-02b-autobase");
+            GuiClicks.collapse(context, "AutoBase");
+            GuiClicks.click(context, "nav.humanizer");
+            GuiClicks.settle(context);
+            screenshot(context, "donut-schematic-02c-humanizer");
+            GuiClicks.click(context, "nav.build");
+            GuiClicks.settle(context);
             GuiClicks.click(context, "module.SchematicBuilder");
             require(settings.enabled, "The module switch did not turn the builder on");
             context.waitTicks(3);

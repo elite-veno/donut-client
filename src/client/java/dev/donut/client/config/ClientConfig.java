@@ -25,6 +25,7 @@ public final class ClientConfig {
     public RtpSettings rtp = new RtpSettings();
     public SchematicSettings schematic = new SchematicSettings();
     public MinerSettings miner = new MinerSettings();
+    public PipelineSettings pipeline = new PipelineSettings();
     public HudSettings hud = new HudSettings();
     public GuiSettings gui = new GuiSettings();
     public int accentColor = 0xD9AE4E;
@@ -136,6 +137,7 @@ public final class ClientConfig {
         if (rtp == null) rtp = new RtpSettings();
         if (schematic == null) schematic = new SchematicSettings();
         if (miner == null) miner = new MinerSettings();
+        if (pipeline == null) pipeline = new PipelineSettings();
         if (hud == null) hud = new HudSettings();
         if (gui == null) gui = new GuiSettings();
         storage.sanitize(new FinderSettings());
@@ -153,6 +155,7 @@ public final class ClientConfig {
         rtp.sanitize();
         schematic.sanitize();
         miner.sanitize();
+        pipeline.sanitize();
         hud.sanitize();
         gui.sanitize();
         accentColor &= 0xFFFFFF;
