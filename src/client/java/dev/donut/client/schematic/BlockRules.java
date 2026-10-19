@@ -362,6 +362,9 @@ public final class BlockRules {
         // Water and lava go in once their layer's blocks hold them in, and what grows in water after them.
         if (block instanceof LiquidBlock || block instanceof BubbleColumnBlock) return 3;
         if (state.getFluidState().isSource() && !state.hasProperty(BlockStateProperties.WATERLOGGED)) return 4;
+        // One facing up takes a look up at it from below, from a place the blocks round it close off once they stand:
+        // it goes in with the plain blocks of its layer, before them.
+        if (facesUp(state)) return 0;
         if (block instanceof PistonBaseBlock || block instanceof ObserverBlock || block instanceof DispenserBlock
                 || block instanceof CrafterBlock || block instanceof TntBlock) return 2;
         if (state.isSignalSource() || block instanceof RedStoneWireBlock || block instanceof DiodeBlock
@@ -372,6 +375,21 @@ public final class BlockRules {
                 || block instanceof NoteBlock || block instanceof PoweredBlock || block instanceof LightningRodBlock
                 || block instanceof CopperBulbBlock) return 1;
         return 0;
+    }
+
+    /**
+     * Whether the block faces up the way a look gives it: an observer, piston, dispenser or dropper facing up, or a
+     * crafter turned up. Placed, those take a look up from below.
+     */
+    static boolean facesUp(BlockState state) {
+        Block block = state.getBlock();
+        if (block instanceof ObserverBlock || block instanceof PistonBaseBlock || block instanceof DispenserBlock) {
+            return state.hasProperty(BlockStateProperties.FACING) && state.getValue(BlockStateProperties.FACING) == Direction.UP;
+        }
+        if (block instanceof CrafterBlock && state.hasProperty(BlockStateProperties.ORIENTATION)) {
+            return state.getValue(BlockStateProperties.ORIENTATION).front() == Direction.UP;
+        }
+        return false;
     }
 
     /**
