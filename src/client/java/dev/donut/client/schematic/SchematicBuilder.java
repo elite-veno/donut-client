@@ -359,6 +359,8 @@ public final class SchematicBuilder {
     private final Set<Long> cleared = new HashSet<>();
     /** Walks into a narrow pit to fill it by climbing out, by its cell (see {@link #refill}). */
     private final Map<Long, Integer> pitWalks = new HashMap<>();
+    /** The narrow pit the player walked into to fill by climbing out, or null. */
+    private BlockPos pitFill;
     private boolean cleaning;
     /**
      * Tops of helper columns no walk reached from where the player stood, standing at {@code cleanupFrom}: tried again
@@ -715,6 +717,7 @@ public final class SchematicBuilder {
         cleanupWide = false;
         cleared.clear();
         pitWalks.clear();
+        pitFill = null;
         cleaning = false;
         cleanupSkipped.clear();
         cleanupBridges = 0;
@@ -997,6 +1000,7 @@ public final class SchematicBuilder {
         cleanupWide = false;
         cleared.clear();
         pitWalks.clear();
+        pitFill = null;
         cleaning = false;
         cleanupSkipped.clear();
         cleanupBridges = 0;
@@ -4667,7 +4671,7 @@ public final class SchematicBuilder {
         if (dug.isEmpty()) return false;
         // Standing in a pit or a trench, what is dug stays open till the player is out: filling in behind would have them
         // turn about for each block, and a trench may still run on.
-        if (!finish && dug.containsKey(player.blockPosition().asLong())) return false;
+        if (!finish && dug.containsKey(player.blockPosition().asLong()) && !player.blockPosition().equals(pitFill)) return false;
         List<BlockPos> open = dug.keySet().stream().map(BlockPos::of).sorted(Comparator.comparingInt(BlockPos::getY)).toList();
         AABB body = player.getBoundingBox().inflate(0.1);
         // The nearest spot out of reach from here, to walk to once nothing in reach is left to fill.
@@ -4677,13 +4681,14 @@ public final class SchematicBuilder {
         for (BlockPos cell : open) {
             // Bottom first, and never under the player.
             if (dug.containsKey(cell.below().asLong()) || redoUnder.contains(cell.below().asLong())) continue;
-            if (finish && settings().walk && Navigator.standingAt(level, player).feetCell().equals(cell)) {
+            if ((finish || cell.equals(pitFill)) && settings().walk && Navigator.standingAt(level, player).feetCell().equals(cell)) {
                 // Got into it to fill it (see below): out again by climbing, a block put under the feet at each jump, which
                 // fills it with what was there (see walk's Climb.ready).
                 Navigator.Path out = navigator(player, true).find(Navigator.standingAt(level, player),
                         node -> node.feet() >= cell.getY() + 2 - 1e-3 && !dug.containsKey(node.feetCell().asLong()) ? 1 : 0);
                 if (out != null && out.nodes().size() > 1) {
                     if (!climbReady(client, player, out)) return true;
+                    pitFill = null;
                     releaseKeys(client);
                     walker.start(out.nodes());
                     if (debug()) LOGGER.info("Climbing out of the ground dug out at {}, filling it on the way", cell.toShortString());
@@ -4742,6 +4747,7 @@ public final class SchematicBuilder {
                             : navigator(player, true).find(here, node -> node.feetCell().equals(cell) ? 1 : 0);
                     if (debug()) LOGGER.info("Ground dug out at {} has no click from outside: {}", cell.toShortString(),
                             path != null && path.nodes().size() > 1 ? "getting in, to climb out" : "no way in either, try " + pitWalks.get(cell.asLong()));
+                    if (path != null && path.nodes().size() > 1) pitFill = cell;
                 }
                 if (path != null && path.nodes().size() > 1) {
                     if (!climbReady(client, player, path)) return true;
@@ -4764,7 +4770,8 @@ public final class SchematicBuilder {
             Item fill = farItem;
             BlockState state = Block.byItem(fill).defaultBlockState();
             double reach = player.blockInteractionRange() - 0.2;
-            Navigator.Path path = navigator(player, true).find(Navigator.standingAt(level, player), node -> PlacementSolver.fromSpot(player,
+            Navigator.Node here = Navigator.standingAt(level, player);
+            Navigator.Path path = navigator(player, true).find(here, node -> PlacementSolver.fromSpot(player,
                     node.standing(), cell, state, new ItemStack(fill), reach, helpers::containsKey) != null ? 1 : 0);
             if (path != null && path.nodes().size() > 1 && !dropsIntoTrap(player, path)) {
                 if (!climbReady(client, player, path)) return true;
@@ -4772,6 +4779,19 @@ public final class SchematicBuilder {
                 walker.start(path.nodes());
                 show("Walking over to fill in the ground dug out", false);
                 return true;
+            }
+            if ((path == null || path.nodes().size() < 2) && pitWalks.merge(cell.asLong(), 1, Integer::sum) <= 3) {
+                // No click from anywhere outside, as at the bottom of a narrow trench: in, and out again by climbing, which
+                // fills it, before anything is built over it.
+                Navigator.Path in = navigator(player, true).find(here, node -> node.feetCell().equals(cell) ? 1 : 0);
+                if (in != null && in.nodes().size() > 1) {
+                    if (debug()) LOGGER.info("Ground dug out at {} has no click from outside: getting in, to climb out", cell.toShortString());
+                    pitFill = cell;
+                    releaseKeys(client);
+                    walker.start(in.nodes());
+                    show("Walking over to fill in the ground dug out", false);
+                    return true;
+                }
             }
         }
         return false;
