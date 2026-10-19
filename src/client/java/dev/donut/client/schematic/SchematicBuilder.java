@@ -2893,6 +2893,29 @@ public final class SchematicBuilder {
         long climbs = path.nodes().stream().filter(node -> node.move() == Navigator.Move.PILLAR || node.move() == Navigator.Move.BRIDGE).count();
         if (climbs == 0 || player.hasInfiniteMaterials()) return true;
         Inventory inventory = player.getInventory();
+        // A climb out of ground dug out fills it with what was there, from the hotbar (see walk's Climb.ready): moved in
+        // first from the inventory where it is only there, so the ground isn't filled with helper blocks instead.
+        for (Navigator.Node node : path.nodes()) {
+            BlockState was = dug.get(node.feetCell().asLong());
+            if (was == null) continue;
+            Item item = was.getBlock().asItem();
+            int from = -1;
+            boolean inHotbar = false;
+            for (int slot = 0; slot < Materials.SLOTS; slot++) {
+                if (!inventory.getItem(slot).is(item)) continue;
+                if (slot < Inventory.getSelectionSize()) inHotbar = true;
+                else if (from < 0) from = slot;
+            }
+            if (inHotbar || from < 0) break;
+            int to = emptyHotbarSlot(inventory);
+            if (to < 0) {
+                int least = buildSlot(inventory);
+                if (!isHelper(inventory.getItem(least))) to = least;
+            }
+            if (to < 0) break;
+            startSwap(client, player, from, to);
+            return false;
+        }
         int hotbar = 0, from = -1;
         for (int slot = 0; slot < Materials.SLOTS; slot++) {
             ItemStack stack = inventory.getItem(slot);
@@ -3286,8 +3309,11 @@ public final class SchematicBuilder {
             // Walks: the columns close by first, highest first, then the nearest far one. Highest first across the whole
             // build walked from one far column to another and back, and passed a column right beside the player for one
             // as high across the build.
+            // Before any of those, the highest of the helper blocks that stand on no ground at all, hung off the side of the
+            // build: reached only from up there, they go while the player still is, not after a walk down to the ground.
             List<BlockPos> walkOrder = new ArrayList<>(tops);
             walkOrder.sort(Comparator.comparingDouble((BlockPos pos) -> {
+                if (!fromGround.containsKey(pos.asLong())) return -2_000_000 - pos.getY();
                 double dx = pos.getX() + 0.5 - player.getX(), dz = pos.getZ() + 0.5 - player.getZ();
                 double away = dx * dx + dz * dz;
                 return away > NEAR_COLUMN * NEAR_COLUMN ? away : -1_000_000 - pos.getY();
