@@ -1763,6 +1763,19 @@ public final class SchematicBuilder {
         if (System.nanoTime() - started > PLAN_NANOS) return 0;
         Overlay view = null;
         byte result = 2;
+        // A block facing up beside it, still to go in, takes a look up from below past this spot: this one waits for it,
+        // as the ice ring round a column of up-facing observers took every such look.
+        for (Direction side : Direction.Plane.HORIZONTAL) {
+            BlockPos at = pos.relative(side);
+            int j = plan.indexOf(at);
+            if (j < 0 || plan.status(j) != BuildPlan.Status.PENDING || !BlockRules.facesUp(plan.target(j))) continue;
+            if (!level.getBlockState(at).canBeReplaced()) continue;
+            if (debug()) LOGGER.info("{} at {} waits: it would take the look up at {} at {}", plan.target(i).getBlock().getName().getString(),
+                    pos.toShortString(), plan.target(j).getBlock().getName().getString(), at.toShortString());
+            sealStamp[i] = stamp;
+            seal[i] = 1;
+            return 1;
+        }
         for (Direction side : Direction.values()) {
             BlockPos at = pos.relative(side);
             int j = plan.indexOf(at);
