@@ -5238,12 +5238,18 @@ public final class SchematicBuilder {
         return false;
     }
 
-    /** Whether a spot beside {@code at} is open with nothing under it to stop a dropped item falling. */
+    /**
+     * Whether a spot beside {@code at}, corners too, is open with nothing under it to stop a dropped item falling: a box
+     * broken there bounces off as far as a corner, as one did down into a water channel two blocks below.
+     */
     private static boolean besideDrop(Level level, BlockPos at) {
-        for (Direction side : Direction.Plane.HORIZONTAL) {
-            BlockPos next = at.relative(side);
-            if (level.getBlockState(next).getCollisionShape(level, next).isEmpty()
-                    && level.getBlockState(next.below()).getCollisionShape(level, next.below()).isEmpty()) return true;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                if (dx == 0 && dz == 0) continue;
+                BlockPos next = at.offset(dx, 0, dz);
+                if (level.getBlockState(next).getCollisionShape(level, next).isEmpty()
+                        && level.getBlockState(next.below()).getCollisionShape(level, next.below()).isEmpty()) return true;
+            }
         }
         return false;
     }
