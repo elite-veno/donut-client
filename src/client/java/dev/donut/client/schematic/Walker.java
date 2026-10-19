@@ -150,12 +150,15 @@ final class Walker {
     private boolean precise;
     /** Whether this walk crouched to edge onto its precise end, and so stands up again there before it counts as arrived. */
     private boolean preciseCrouch;
+    /** Whether this walk crouched to turn on the spot on ice beside a drop, where the slide would carry the player off. */
+    private boolean iceCrouch;
 
     void start(List<Navigator.Node> path, Vec3 lookAt) {
         this.path = path;
         this.lookAt = lookAt;
         precise = false;
         preciseCrouch = false;
+        iceCrouch = false;
         ThreadLocalRandom random = ThreadLocalRandom.current();
         offsets = new double[path.size()][];
         for (int i = 0; i < path.size(); i++) {
@@ -189,6 +192,10 @@ final class Walker {
                 // On the spot: upright again for the look it was walked to, which works from a standing eye.
                 climb.crouch(false);
                 edgeCrouch = preciseCrouch = false;
+            }
+            if (iceCrouch) {
+                if (!edgeCrouch) climb.crouch(false);
+                iceCrouch = false;
             }
             if (!edgeCrouch && player.onGround() && Math.abs(player.getY() - end.feet()) < 0.05 && within(player.position(), end)
                     && Navigator.narrowOverDrop(player.level(), end)) {
@@ -379,6 +386,20 @@ final class Walker {
         // Near the end of the path, let go a little early: friction carries the rest, much further on ice, where a
         // player who has come to a stop short of the spot steps on again.
         boolean slippery = player.onGround() && slippery(player);
+        // Turning on the spot on ice beside a drop, a ring of blue ice a block wide say: the slide goes on sideways while
+        // the view comes round, off the edge. A player crouches for it, and the edge holds them, and taps against the
+        // slide until it has as good as stopped; upright again once facing the way.
+        boolean iceTurn = !facing && slippery && !wayOpen;
+        if (iceTurn != iceCrouch && !bridgeCrouch && !edgeCrouch) {
+            climb.crouch(iceTurn);
+            iceCrouch = iceTurn;
+        }
+        if (iceTurn && slide(player) > 0.05) {
+            brake(client, player);
+            jumpKey(client, player, false);
+            client.options.keySprint.setDown(false);
+            return State.WALKING;
+        }
         double letGo = last ? (slippery ? 0.9 : 0.2) : slippery ? (settle ? 0.9 : 0.35) : 0.05;
         boolean stopped = player.getDeltaMovement().horizontalDistanceSqr() < 0.02 * 0.02;
         client.options.keyDown.setDown(false);
