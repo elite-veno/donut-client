@@ -2134,7 +2134,7 @@ public final class SchematicBuilder {
      * (see {@link #feedsPendingPlant}) until the seals are lifted for good, after the walks found nothing.
      */
     private boolean liftHolds(Level level, int i) {
-        return upWaitHolds(level, i) || !sealsLifted && plan.kind(i) == BlockRules.Kind.FLUID && feedsPendingPlant(level, i, false);
+        return upWaitHolds(level, i);
     }
 
     /** With the seals lifted, block {@code i} still waits for an up-facing neighbour, for {@link #UP_WAIT_TICKS} after. */
@@ -3802,24 +3802,31 @@ public final class SchematicBuilder {
     }
 
     /**
-     * Whether water source {@code i} waits for kelp or seagrass one or two cells under it, still to go in, with no water a
-     * block deep in its spot yet: poured first, its water runs off the plant under it into the spots beside, as
-     * water running, never a block deep, and kelp goes into none of them; ikea_v4's row of kelp at z 8 went in as a chain,
-     * each against the one before, with the water over it poured after. A plain seal, lifted with the others, as when
-     * the kelp gets its water from this source only.
+     * Whether water source {@code i} waits for kelp or seagrass beside where its water lands, still to go in, with no
+     * water a block deep in its spot yet: poured first, its water falls down the open cells under it, kelp spots among
+     * them, which it fills, and runs off at the bottom into the spots beside, as water running, never a block deep, and
+     * kelp goes into none of them; ikea_v4's row of kelp at z 8 went in as a chain, each against the one before, with
+     * the water over it poured after. Kelp under the source, in the cells its water falls through, it waits for no more:
+     * that kelp gets its water from this source, as IKEA v1's at 5,69,17 under 5,70,17, which waited for good (v1-reg2).
+     * A plain seal, lifted with the others when nothing but held-back blocks is left in the layer, as a row of such
+     * sources each waiting for the kelp beside the next is.
      */
     private boolean feedsPendingPlant(Level level, int i, boolean log) {
         BlockPos pos = plan.pos(i);
         if (!plan.target(i).getFluidState().isSource() || !level.getBlockState(pos).canBeReplaced()) return false;
-        for (int down = 1; down <= 2; down++) {
-            BlockPos at = pos.below(down);
+        // Where the water lands: the lowest of the open cells under it, a few at most.
+        BlockPos lands = pos;
+        for (int down = 1; down <= 4 && level.getBlockState(lands.below()).canBeReplaced(); down++) lands = lands.below();
+        if (lands.equals(pos)) return false;
+        for (Direction side : Direction.Plane.HORIZONTAL) {
+            BlockPos at = lands.relative(side);
             int j = plan.indexOf(at);
             if (j < 0 || !plan.plant(j) || plan.status(j) != BuildPlan.Status.PENDING) continue;
             FluidState there = level.getFluidState(at);
             if (there.getType().isSame(Fluids.WATER) && there.getAmount() == 8) continue;
             if (log && debug() && tick - plantWaitLogged.getOrDefault(i, -1000L) > 200) {
                 plantWaitLogged.put(i, tick);
-                LOGGER.info("Water at {} waits: {} at {} under it still to go in", pos.toShortString(),
+                LOGGER.info("Water at {} waits: {} at {} beside where it lands still to go in", pos.toShortString(),
                         plan.target(j).getBlock().getName().getString(), at.toShortString());
             }
             return true;
