@@ -324,7 +324,7 @@ final class Walker {
         // reached: crouched any sooner, still up on the step's edge, the same edge holds the player up there and the step
         // never goes down (v4-full4: stuck at 3.29 70 4.50 over the drop to 3 69 4).
         boolean fallLanding = (to.move() == Navigator.Move.DROP || to.move() == Navigator.Move.WALK && to.feet() < from.feet() - 0.05)
-                && (onTop && within(at, to) || !player.onGround() && at.y < from.feet() - 0.05 && distance < 1.2)
+                && (onTop && (within(at, to) || distance < 0.7) || !player.onGround() && at.y < from.feet() - 0.05 && distance < 1.2)
                 && Navigator.besideFall(player.level(), to);
         // In water as anywhere: standing on a floor in water the sneak edge holds the player just the same, and a landing
         // beside water over an open gate needs it most (v4-full9, 21:26: not crouched, the drop to 3 69 8 carried on to

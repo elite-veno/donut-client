@@ -2405,6 +2405,28 @@ public final class SchematicBuilder {
      * current, it is carried off, along a channel on ice for blocks. Water that runs nowhere, a pool of sources, carries
      * no one.
      */
+    /**
+     * Whether water at the feet runs toward a cell beside them with nothing under it, an open gate or a gap: standing
+     * there, the current carries the player off into it, upright or not (v4-full10, 21:34: on 3 69 8, the flow (0, 0, -1)
+     * pulled the player north over the fall column at z 7 and down through the gate at 3,68,7).
+     */
+    static boolean currentIntoFall(BlockGetter level, BlockPos feet) {
+        for (int up = 0; up <= 1; up++) {
+            BlockPos cell = feet.above(up);
+            FluidState fluid = level.getFluidState(cell);
+            if (fluid.isEmpty()) continue;
+            Vec3 flow = fluid.getFlow(level, cell);
+            if (flow.horizontalDistanceSqr() < 1e-4) continue;
+            for (Direction side : Direction.Plane.HORIZONTAL) {
+                if (flow.x * side.getStepX() + flow.z * side.getStepZ() < 0.5) continue;
+                BlockPos beside = feet.relative(side);
+                if (level.getBlockState(beside).getCollisionShape(level, beside).isEmpty()
+                        && level.getBlockState(beside.below()).getCollisionShape(level, beside.below()).isEmpty()) return true;
+            }
+        }
+        return false;
+    }
+
     static boolean currentBeside(BlockGetter level, BlockPos feet) {
         for (int up = 0; up <= 1; up++) {
             for (Direction side : Direction.Plane.HORIZONTAL) {
@@ -5013,6 +5035,7 @@ public final class SchematicBuilder {
         List<Navigator.Node> sample = new ArrayList<>();
         Map<Long, Boolean> wetCells = new HashMap<>();
         Map<Long, Boolean> currentCells = new HashMap<>();
+        Map<Long, Boolean> intoFall = new HashMap<>();
         List<BlockPos> poured = recentPours();
         long leaning = ThreadLocalRandom.current().nextLong();
         // The nearest block a real look reaches from each place to stand, to turn toward on arriving there.
@@ -5031,6 +5054,7 @@ public final class SchematicBuilder {
             seen[0]++;
             if (debug() && close.size() < 300 && node.eye().distanceToSqr(firstMiddle) < 25) close.add(node);
             if (uselessSpots.contains(node.key()) || traps.contains(node.key()) || carriedFrom.contains(node.key())) return 0;
+            if (intoFall.computeIfAbsent(node.feetCell().asLong(), k -> currentIntoFall(player.level(), node.feetCell()))) return 0;
             // Waded through, never stood in: water would push the player off every look. But for a cell the build fills
             // with water itself, a kelp channel say, with a floor and no drop beside it: water is poured from there.
             boolean wetHere = wetSoon(player.level(), node.feetCell(), poured, wetCells);
