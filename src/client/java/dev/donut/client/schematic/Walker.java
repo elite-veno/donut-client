@@ -40,6 +40,8 @@ final class Walker {
 
     /** Ticks without getting closer before the walk counts as stuck. */
     private static final int STUCK_TICKS = 30;
+    /** The most ticks a walk waits past its last step to come to rest, a slide on ice and standing up again included. */
+    private static final int REST_TICKS = 100;
     /** How far off the middle of a block on open ground a walk may pass, in blocks: each walk takes its own line. */
     private static final double WANDER = 0.14;
     /**
@@ -105,6 +107,8 @@ final class Walker {
     private Boolean sidestep;
     private int index;
     private int stuck, climbTicks, climbTries, jumpTicks, placedAt;
+    /** Ticks spent past the last step waiting to come to rest; see {@link #REST_TICKS}. */
+    private int restTicks;
     private double closest;
     private boolean placedClimb;
     /** Whether this walk crouched for a bridging step, how many ticks it has been at it, and when it last clicked. */
@@ -174,7 +178,7 @@ final class Walker {
         strafeHold = 0;
         trail.clear();
         index = 1;
-        stuck = climbTicks = climbTries = jumpTicks = placedAt = 0;
+        stuck = climbTicks = climbTries = jumpTicks = placedAt = restTicks = 0;
         closest = Double.MAX_VALUE;
         placedClimb = false;
     }
@@ -218,6 +222,9 @@ final class Walker {
                 path = null;
                 return State.ARRIVED;
             }
+            // Never at rest there: in a current, on a bubble column, pushed about. The walk fails rather than wait for
+            // ever, and the place is passed over by the next one.
+            if (++restTicks > REST_TICKS) return fail(client, "never came to rest at the end");
             return State.WALKING;
         }
         Navigator.Node from = path.get(index - 1), to = path.get(index);

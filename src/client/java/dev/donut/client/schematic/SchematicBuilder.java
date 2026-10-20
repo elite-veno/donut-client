@@ -4422,6 +4422,9 @@ public final class SchematicBuilder {
             nextAction = System.nanoTime();
         } else if (state == Walker.State.FAILED) {
             if (debug()) LOGGER.info("Walk failed at {}: {}", player.position(), walker.failure());
+            // Crouched for a bridge or an edge when it failed: up again, so what comes next isn't done from a lower eye. Not
+            // on a narrow top over a drop, where crouching is what holds the player.
+            if (crouchHeld && !onNarrowEdge(player)) setCrouch(client, false);
             // The same step would fail the same way: the next walk goes around it.
             Navigator.Node[] step = walker.failedStep();
             if (step != null) {
