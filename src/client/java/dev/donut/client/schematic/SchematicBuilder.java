@@ -3975,8 +3975,24 @@ public final class SchematicBuilder {
         }
         Overlay without = new Overlay(level, Map.of(at.asLong(), Blocks.AIR.defaultBlockState()));
         reclaimChecked.put(at.asLong(), tick);
-        return exitFrom(player, without, Navigator.standingAt(without, player), null) != null;
+        Navigator.Node start = Navigator.standingAt(without, player);
+        if (exitFrom(player, without, start, null) == null) return false;
+        // Nor the one block that joins where the player stands to the rest: a bridge onto a row of gate tops between two
+        // channels, where up at the layer counts as out, left the player on 16 tops, none to bridge or climb from (v4-z2).
+        Set<Long> with = new HashSet<>(), alone = new HashSet<>();
+        navigator(player, level, false).limit(CUT_OFF_PLACES).find(Navigator.standingAt(level, player), node -> {
+            with.add(node.key());
+            return 0;
+        });
+        navigator(player, without, false).limit(CUT_OFF_PLACES).find(start, node -> {
+            alone.add(node.key());
+            return 0;
+        });
+        return alone.size() >= CUT_OFF_PLACES || alone.size() >= with.size();
     }
+
+    /** Places a walk reaches on foot past which taking a helper block away cuts nobody off: a few rooms' worth. */
+    private static final int CUT_OFF_PLACES = 200;
 
     /**
      * Out of helper blocks with none left in a box, and nothing else to do: a walk to where one an earlier walk put down
