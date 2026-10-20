@@ -136,6 +136,18 @@ public final class PlacementSolver {
         return fromSpot(player, player.level(), feet, pos, target, stack, reach, unclickable);
     }
 
+    /**
+     * As {@link #fromSpot}, standing only, from a body held at {@code feet} wherever it is: swimming in still water, as at the
+     * top of a kelp channel, where nothing is under the feet. Null when the body is in a block's way there.
+     */
+    public static Click fromSwim(LocalPlayer player, Vec3 feet, BlockPos pos, BlockState target, ItemStack stack, double reach,
+                                 LongPredicate unclickable) {
+        Level level = player.level();
+        AABB body = new AABB(feet.x - 0.3, feet.y, feet.z - 0.3, feet.x + 0.3, feet.y + 1.8, feet.z + 0.3);
+        if (inTheWay(body, level, pos, target) || !level.noCollision(body)) return null;
+        return look(player, level, feet.add(0, STAND_EYE, 0), false, pos, target, stack, reach, unclickable, null);
+    }
+
     /** As the other {@code fromSpot}, with the looks traced through {@code view}: from a pit not dug yet, say. */
     public static Click fromSpot(LocalPlayer player, BlockGetter view, Vec3 feet, BlockPos pos, BlockState target, ItemStack stack,
                                  double reach, LongPredicate unclickable) {

@@ -56,6 +56,8 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
         SchematicBuilder builder = SchematicBuilder.getInstance();
         SchematicSettings settings = builder.settings();
         System.setProperty("donut.schematic.debug", "true");
+        // DONUT_SCHEMATIC_SWIM=1: logs how many blocks placed with a look up a place to swim in still water would let go in.
+        if ("1".equals(System.getenv("DONUT_SCHEMATIC_SWIM"))) System.setProperty("donut.schematic.swimStands", "true");
         LitematicFile parsed;
         String name;
         try {

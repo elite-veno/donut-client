@@ -156,6 +156,12 @@ public final class SchematicBuilder {
     /** Logs each placement and why blocks can't go in, with -Ddonut.schematic.debug=true. */
     private static boolean debug() { return Boolean.getBoolean("donut.schematic.debug"); }
 
+    /**
+     * Whether walks weigh places to swim in still water, held at a height there: only measured and logged so far (see
+     * {@link #logSwimLooks}), as the walker can't hold a height in water yet.
+     */
+    private static boolean swimStands() { return Boolean.getBoolean("donut.schematic.swimStands"); }
+
     private final ClientConfig config;
     private final Runnable save;
 
@@ -3026,6 +3032,76 @@ public final class SchematicBuilder {
         return false;
     }
 
+    /** A place to swim at, held at {@code feet} in still water, and the click on block {@code i} from there. */
+    record SwimSpot(int i, Vec3 feet, PlacementSolver.Click click) { }
+
+    /** Heights in a cell of still water the feet may be held at, swimming: low in it, its middle, and up near its top. */
+    private static final double[] SWIM_FEET = {0.1, 0.4, 0.7};
+    private long swimLogged = Long.MIN_VALUE / 2;
+    private int swimLoggedLayer = Integer.MIN_VALUE;
+
+    /**
+     * Where block {@code i}, placed with a look up, goes in from a body held swimming in still water near it, as a player
+     * swims up a kelp channel to place an up-facing observer over it: a source with no flow, the body clear of every
+     * block. Null when there is none. Only for the blocks with a look up, which no place to stand on the build may have.
+     */
+    SwimSpot swimSpot(LocalPlayer player, int i, double reach) {
+        BlockState target = plan.target(i);
+        if (!BlockRules.placedLookingUp(target)) return null;
+        Item item = BlockRules.item(target);
+        if (item == null) return null;
+        Level level = player.level();
+        BlockPos pos = plan.pos(i);
+        Vec3 middle = Vec3.atCenterOf(pos);
+        ItemStack stack = new ItemStack(item);
+        int r = (int) Math.ceil(reach);
+        SwimSpot best = null;
+        double bestAway = Double.MAX_VALUE;
+        for (BlockPos cell : BlockPos.betweenClosed(pos.offset(-r, -r - 2, -r), pos.offset(r, 0, r))) {
+            FluidState fluid = level.getFluidState(cell);
+            if (!fluid.is(FluidTags.WATER) || !fluid.isSource() || fluid.getFlow(level, cell).lengthSqr() > 0) continue;
+            for (double up : SWIM_FEET) {
+                Vec3 feet = new Vec3(cell.getX() + 0.5, cell.getY() + up, cell.getZ() + 0.5);
+                double away = feet.add(0, 1.62, 0).distanceToSqr(middle);
+                if (away > (reach + 0.5) * (reach + 0.5) || away >= bestAway) continue;
+                PlacementSolver.Click click = PlacementSolver.fromSwim(player, feet, pos, target, stack, reach, at -> unclickable(at, i));
+                if (click == null) continue;
+                best = new SwimSpot(i, feet, click);
+                bestAway = away;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * With no place to stand found, how many of the blocks placed with a look up a place to swim would let go in, and
+     * from where: logged once a layer and then every half minute, to see what swimming would bring before walks use it.
+     */
+    private void logSwimLooks(LocalPlayer player, List<Integer> near, double reach) {
+        if (layerY == swimLoggedLayer && tick - swimLogged < 600) return;
+        swimLogged = tick;
+        swimLoggedLayer = layerY;
+        int up = 0;
+        List<SwimSpot> found = new ArrayList<>();
+        for (int i : near) {
+            if (!BlockRules.placedLookingUp(plan.target(i))) continue;
+            up++;
+            SwimSpot spot = swimSpot(player, i, reach);
+            if (spot != null) found.add(spot);
+        }
+        if (up == 0) return;
+        StringBuilder text = new StringBuilder();
+        for (SwimSpot spot : found.subList(0, Math.min(3, found.size()))) {
+            BlockHitResult hit = spot.click().hit();
+            text.append("; ").append(plan.pos(spot.i()).toShortString()).append(" from feet ")
+                    .append(String.format(Locale.ROOT, "%.2f %.2f %.2f", spot.feet().x, spot.feet().y, spot.feet().z))
+                    .append(", ").append(hit.getDirection()).append(" face of ").append(hit.getBlockPos().toShortString())
+                    .append(String.format(Locale.ROOT, ", look %.1f %.1f", spot.click().yaw(), spot.click().pitch()));
+        }
+        LOGGER.info("Swimming in still water would place {} of the {} blocks with a look up left here (layer y {}){}", found.size(), up,
+                layerY, text);
+    }
+
     /** How long nothing may go in, with no place to stand for the next block, before it is given up on: five minutes. */
     private static final long GIVE_UP_TICKS = 6000;
     /** As {@link #GIVE_UP_TICKS}, for the blocks placed with a look up when no place a walk reaches has a look at any: a minute. */
@@ -5376,6 +5452,7 @@ public final class SchematicBuilder {
             }
         }
         noStand = path == null ? List.copyOf(near) : List.of();
+        if (path == null && debug() && swimStands()) logSwimLooks(player, near, reach);
         if (path == null && helperItem(player) != null) {
             for (int i : near.subList(0, Math.min(GUARD_CHECKS, near.size()))) {
                 if (guardSpot.containsKey(i) || guardWalks.getOrDefault(i, 0) >= REPAIRS) continue;
