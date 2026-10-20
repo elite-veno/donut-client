@@ -1544,7 +1544,10 @@ public final class SchematicBuilder {
             }
             byte support = support(player, i, started);
             if (support == 0) return;
-            if (support != 1) continue;
+            if (support != 1) {
+                passedOver(i, "nothing to place it against yet");
+                continue;
+            }
             if (nearest < 0) nearest = i;
             if (far) break;
             if (!lift && !(stayLifted && liftedFor.contains(i))) {
@@ -1552,21 +1555,28 @@ public final class SchematicBuilder {
                 if (seals == 0) return;
                 if (seals == 1) {
                     sealing = true;
+                    passedOver(i, "it would shut in a neighbour, or waits for one (a seal)");
                     continue;
                 }
             }
-            else if (upWaitHolds(player.level(), i)) continue;
+            else if (upWaitHolds(player.level(), i)) {
+                passedOver(i, "it waits for an up-facing block");
+                continue;
+            }
             if (missedHere.contains(i) && player.blockPosition().equals(missedAt)) {
                 if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
+                passedOver(i, "its click missed from here before");
                 continue;
             }
             PlacementSolver.Problem known = noClickHere.get(i);
             if (known != null) {
                 if (seen == null || known == PlacementSolver.Problem.IN_THE_WAY) seen = known;
+                passedOver(i, "no click from here a moment ago (" + known + ")");
                 continue;
             }
             if (helperLater.contains(i)) {
                 helpersHeld.add(i);
+                passedOver(i, "its helper block waits until nothing else goes in");
                 continue;
             }
             if (System.nanoTime() - started > PLAN_NANOS) {
@@ -1743,6 +1753,7 @@ public final class SchematicBuilder {
             Item item = BlockRules.item(target);
             if (!creative && materials.total(item) == 0) {
                 if (!missing.contains(item)) missing.add(item);
+                passedOver(i, "none left");
                 continue;
             }
             int index = i;
@@ -1791,6 +1802,7 @@ public final class SchematicBuilder {
             if (edge && !result.click().crouch()) {
                 if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
                 noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH);
+                passedOver(i, "its click is a standing one, on a narrow top over a drop");
                 continue;
             }
             if (!wayOut(player, i)) {
@@ -1798,10 +1810,14 @@ public final class SchematicBuilder {
                 // block that would only shut in a neighbor, this never goes in for want of anything else: shut in, the
                 // player can build nothing more.
                 noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH);
+                passedOver(i, "it would wall you in");
                 continue;
             }
             if (!creative && materials.loose(item) == 0) {
-                if (waitsForRoom(item, materials) || noBoxHere(item)) continue;
+                if (waitsForRoom(item, materials) || noBoxHere(item)) {
+                    passedOver(i, "none carried, and no room for it or for a box a moment ago");
+                    continue;
+                }
                 startRestock(client, player, item, materials);
                 return;
             }
@@ -6835,6 +6851,16 @@ public final class SchematicBuilder {
         }
         if (best != null) aheadLayer.put(best, y);
         return best;
+    }
+
+    /**
+     * For the debug log: a block the walk here was made for, passed over on arriving without a "Can't place" line, and
+     * why, once a walk. Such a walk places nothing, and planWalk counted it as a place where the block goes in.
+     */
+    private void passedOver(int i, String why) {
+        if (debug() && walkEnd != null && walkExpects.remove(i)) {
+            LOGGER.info("Walked for {} at {}, passed over on arriving: {}", plan.target(i), plan.pos(i).toShortString(), why);
+        }
     }
 
     /** The layer {@link #restockAhead} fetches for: the one being built, or before one is picked the lowest with a block left. */
