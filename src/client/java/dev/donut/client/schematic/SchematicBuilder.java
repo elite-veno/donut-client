@@ -1588,7 +1588,8 @@ public final class SchematicBuilder {
             if (plan.kind(i) == BlockRules.Kind.FLUID) {
                 // Just filled a bucket from it: it comes back by itself, or is found not to, in a moment.
                 if (pos.equals(filledFrom)) continue;
-                if (lift && debug() && feedsPendingPlant(level, i, false)) {
+                if (lift && debug() && tick - plantWaitLogged.getOrDefault(-1 - i, -1000L) > 200 && feedsPendingPlant(level, i, false)) {
+                    plantWaitLogged.put(-1 - i, tick);
                     LOGGER.info("Pouring {} at {} with kelp under it still to go in: the seals are lifted", target, pos.toShortString());
                 }
                 Item bucket = BlockRules.item(target);
@@ -4887,8 +4888,12 @@ public final class SchematicBuilder {
         // checked and the blocks in a row after them.
         Map<Long, List<Integer>> expectedBlocks = new HashMap<>();
         Map<Long, String> expected = debug() ? new HashMap<>() : null;
+        // For the log: every place with the eye near the first block, whatever the goal makes of it.
+        Vec3 firstMiddle = Vec3.atCenterOf(plan.pos(near.getFirst()));
+        List<Navigator.Node> close = new ArrayList<>();
         Navigator.Goal goal = node -> {
             seen[0]++;
+            if (debug() && close.size() < 300 && node.eye().distanceToSqr(firstMiddle) < 25) close.add(node);
             if (uselessSpots.contains(node.key()) || traps.contains(node.key()) || carriedFrom.contains(node.key())) return 0;
             // Waded through, never stood in: water would push the player off every look.
             if (wetSoon(player.level(), node.feetCell(), poured, wetCells)) return 0;
@@ -5028,11 +5033,28 @@ public final class SchematicBuilder {
                 sample.stream().filter(n -> !high.contains(n) && n.eye().y >= plan.pos(first).getY() - 0.5
                                 && n.eye().y <= plan.pos(first).getY() + 1.6)
                         .sorted(Comparator.comparingDouble(n -> n.eye().distanceToSqr(middle))).limit(3).forEach(high::add);
-                for (Navigator.Node node : high) {
+                boolean pours = plan.kind(first) == BlockRules.Kind.FLUID || plan.needsPour(first) || plan.soaking(first);
+                for (Navigator.Node node : pours ? List.<Navigator.Node>of() : high) {
                     for (boolean crouch : new boolean[] {false, true}) {
                         Vec3 eye = node.standing().add(0, crouch ? PlacementSolver.CROUCH_EYE : PlacementSolver.STAND_EYE, 0);
                         LOGGER.info("  from {}: {}", node, PlacementSolver.explain(player, eye, crouch, plan.pos(first), plan.target(first),
                                 new ItemStack(item), reach, cell -> unclickable(cell, first)));
+                    }
+                }
+                if (pours) {
+                    // A pour isn't a block placed: for the places nearest it, what each check the walk goes by makes of it.
+                    BlockPos at = plan.pos(first);
+                    Fluid fluid = plan.kind(first) == BlockRules.Kind.FLUID ? plan.target(first).getFluidState().getType() : Fluids.WATER;
+                    Map<Long, Boolean> wetLog = new HashMap<>();
+                    close.sort(Comparator.comparingDouble(n -> n.eye().distanceToSqr(firstMiddle)));
+                    for (Navigator.Node node : close.subList(0, Math.min(6, close.size()))) {
+                        Vec3 feet = node.standing();
+                        LOGGER.info("  pour from {}: standing {}, crouched {}; narrow top {}, floods {}, wet soon {}, passed over {}", node,
+                                PlacementSolver.pour(level, player, feet.add(0, PlacementSolver.STAND_EYE, 0), at, fluid, reach) != null,
+                                PlacementSolver.pour(level, player, feet.add(0, PlacementSolver.CROUCH_EYE, 0), at, fluid, reach) != null,
+                                Navigator.narrowOverDrop(level, node), floods(level, at, feet),
+                                wetSoon(level, node.feetCell(), recentPours(), wetLog),
+                                uselessSpots.contains(node.key()) || traps.contains(node.key()) || carriedFrom.contains(node.key()));
                     }
                 }
             }
