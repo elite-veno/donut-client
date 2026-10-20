@@ -5052,7 +5052,13 @@ public final class SchematicBuilder {
                     Fluid fluid = plan.kind(first) == BlockRules.Kind.FLUID ? plan.target(first).getFluidState().getType() : Fluids.WATER;
                     Map<Long, Boolean> wetLog = new HashMap<>();
                     close.sort(Comparator.comparingDouble(n -> n.eye().distanceToSqr(firstMiddle)));
-                    for (Navigator.Node node : close.subList(0, Math.min(6, close.size()))) {
+                    // Each place once: the nearest few, and then the nearest few the water wouldn't reach.
+                    Map<Long, Navigator.Node> distinct = new LinkedHashMap<>();
+                    for (Navigator.Node node : close) distinct.putIfAbsent(node.key(), node);
+                    List<Navigator.Node> shown = new ArrayList<>(distinct.values().stream().limit(4).toList());
+                    distinct.values().stream().filter(n -> !shown.contains(n) && !floods(level, at, n.standing())
+                            && !wetSoon(level, n.feetCell(), recentPours(), new HashMap<>())).limit(4).forEach(shown::add);
+                    for (Navigator.Node node : shown) {
                         Vec3 feet = node.standing();
                         LOGGER.info("  pour from {}: standing {}, crouched {}; narrow top {}, floods {}, wet soon {}, passed over {}", node,
                                 PlacementSolver.pour(level, player, feet.add(0, PlacementSolver.STAND_EYE, 0), at, fluid, reach) != null,
