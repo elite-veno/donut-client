@@ -416,6 +416,13 @@ public final class BlockRules {
      * repeaters. The builder sneaks to place against these, which keeps them as they are.
      */
     public static boolean interactive(Block block) {
-        return INTERACTIVE.get(block.getClass());
+        return LEARNED.contains(block) || INTERACTIVE.get(block.getClass());
+    }
+
+    /** Blocks found to open a menu on a plain click though nothing in their class says so: crouched for from then on. */
+    private static final Set<Block> LEARNED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    public static void learnInteractive(Block block) {
+        LEARNED.add(block);
     }
 }

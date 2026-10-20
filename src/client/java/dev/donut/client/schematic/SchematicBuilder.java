@@ -28,6 +28,7 @@ import java.util.stream.Stream;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.gui.screens.inventory.AbstractSignEditScreen;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -826,6 +827,16 @@ public final class SchematicBuilder {
             // A sign the builder placed opens its editor. The schematic's text isn't written: Done, a moment later, as long
             // as a player takes to see the editor and close it.
             if (tick >= signDoneAt) editor.onClose();
+            return;
+        }
+        if (client.gui.screen() instanceof AbstractContainerScreen<?> && !(client.gui.screen() instanceof InventoryScreen)
+                && clickedBlock != null && tick - clickedAt <= MENU_AFTER_CLICK) {
+            // A click of the builder's own opened the block's menu: the block takes a crouched click from now on, as a
+            // player learns which blocks open on a click. Closed again at once, and the click is made again.
+            BlockRules.learnInteractive(clickedBlock);
+            LOGGER.info("Clicking {} opened its menu: closed, and it takes a crouched click from now on", clickedBlock.getName().getString());
+            clickedBlock = null;
+            player.closeContainer();
             return;
         }
         if (client.gui.screen() != null) {
@@ -2698,6 +2709,17 @@ public final class SchematicBuilder {
         }
     }
 
+    /** The block a click of the builder's own went on, and when: a menu opening just after it was that click's doing. */
+    private Block clickedBlock;
+    private long clickedAt;
+    /** How many ticks after a click a menu that opens is taken for its doing. */
+    private static final int MENU_AFTER_CLICK = 10;
+
+    private void noteClick(LocalPlayer player, BlockHitResult hit) {
+        clickedBlock = player.isShiftKeyDown() ? null : player.level().getBlockState(hit.getBlockPos()).getBlock();
+        clickedAt = tick;
+    }
+
     /** A check that the crosshair, with a look, is on {@code pos}, and on its {@code face} unless that is null. */
     private static Head.Check onBlock(LocalPlayer player, BlockPos pos, Direction face) {
         return (yaw, pitch) -> {
@@ -2814,6 +2836,7 @@ public final class SchematicBuilder {
             missedFrom.add(Navigator.pairKey(aimFrom, planned.index()));
             return;
         }
+        if (planned.act() != Act.POUR && !filling) noteClick(player, hit);
         InteractionResult result = planned.act() == Act.POUR || filling ? client.gameMode.useItem(player, InteractionHand.MAIN_HAND)
                 : client.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
         if (result instanceof InteractionResult.Success success && success.swingSource() == InteractionResult.SwingSource.CLIENT) {
@@ -4555,6 +4578,7 @@ public final class SchematicBuilder {
             if (debug()) LOGGER.info("Climb at {}: not crouched yet over {}", cell.toShortString(), player.level().getBlockState(cell.below()));
             return false;
         }
+        noteClick(player, hit);
         InteractionResult result = client.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
         if (!(result instanceof InteractionResult.Success success)) {
             // Nothing went in, the body still in the cell, say: no helper block to count, nor ground filled in; the climb
@@ -4598,6 +4622,7 @@ public final class SchematicBuilder {
             return false;
         }
         if (!handReady(player) || tick - bridgeRefusedAt < 4) return false;
+        noteClick(player, hit);
         InteractionResult result = client.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
         if (!(result instanceof InteractionResult.Success success)) {
             // Nothing went in: no helper block counted where there is none. Clicked again a few ticks on, as before.
