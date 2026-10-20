@@ -103,6 +103,7 @@ public final class DonutClient implements ClientModInitializer {
         // One run of ChunkMiner, buying and SchematicBuilder, and GoNuts' guards over all three.
         AutoBase.init(config, this::save);
         ClientTickEvents.END_CLIENT_TICK.register(AutoBase::tick);
+        ClientTickEvents.END_CLIENT_TICK.register(this::followWorld);
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             boolean inputBlocked = ModuleKeybinds.inputBlocked(client);
             while (open.consumeClick()) {
@@ -213,4 +214,37 @@ public final class DonutClient implements ClientModInitializer {
     }
 
     private void save() { store.save(config); }
+
+    /** The world the schematic placement was last taken for, see {@link #followWorld}. */
+    private String placeWorld;
+
+    /**
+     * Each world, server and dimension keeps its own schematic placement: on leaving one, its placement is kept; on
+     * coming into one, its own comes back, or the origin is unset where none was ever set.
+     */
+    private void followWorld(Minecraft client) {
+        String world = worldKey(client);
+        if (world == null || world.equals(placeWorld)) return;
+        var schematic = config.schematic;
+        if (placeWorld != null) schematic.remember(placeWorld);
+        boolean known = schematic.recall(world);
+        placeWorld = world;
+        save();
+        if (known && schematic.originSet && client.player != null && !schematic.file.isEmpty()) {
+            client.player.sendSystemMessage(Component.literal("[Ven] Schematic " + schematic.file + " is placed at " + schematic.originX
+                    + " " + schematic.originY + " " + schematic.originZ + " here, as you left it").withStyle(net.minecraft.ChatFormatting.GRAY));
+        }
+    }
+
+    /** The server, or the single-player world's folder, and the dimension: null outside a world. */
+    private static String worldKey(Minecraft client) {
+        if (client.level == null || client.player == null) return null;
+        String dimension = client.level.dimension().identifier().toString();
+        if (client.getCurrentServer() != null) return "server:" + client.getCurrentServer().ip.toLowerCase(java.util.Locale.ROOT) + ":" + dimension;
+        if (client.getSingleplayerServer() != null) {
+            return "world:" + client.getSingleplayerServer().getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT)
+                    .toAbsolutePath().normalize().getFileName() + ":" + dimension;
+        }
+        return null;
+    }
 }

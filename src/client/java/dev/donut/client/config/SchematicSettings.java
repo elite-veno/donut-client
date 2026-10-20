@@ -1,6 +1,9 @@
 package dev.donut.client.config;
 
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.Locale;
+import java.util.Map;
 
 public final class SchematicSettings {
     /** The fastest and slowest allowed delay between two blocks, in seconds. */
@@ -13,6 +16,60 @@ public final class SchematicSettings {
     /** Where the schematic's origin goes; unset until the player picks a spot. */
     public boolean originSet = false;
     public int originX, originY, originZ;
+    /**
+     * The schematic, origin, turn and mirror last used in each world, by {@link #worldKey}: a world joined again gets its own
+     * back, and one never built in starts without an origin rather than with another world's.
+     */
+    public Map<String, Placement> places = new LinkedHashMap<>();
+    /** Worlds remembered; the oldest is forgotten first. */
+    public static final int MAX_PLACES = 64;
+
+    public static final class Placement {
+        public String file = "";
+        public boolean originSet;
+        public int originX, originY, originZ, rotation, mirror;
+    }
+
+    /** Keeps the current placement as {@code world}'s. */
+    public void remember(String world) {
+        if (world == null || world.isEmpty() || file.isEmpty() && !originSet) return;
+        Placement place = new Placement();
+        place.file = file;
+        place.originSet = originSet;
+        place.originX = originX;
+        place.originY = originY;
+        place.originZ = originZ;
+        place.rotation = rotation;
+        place.mirror = mirror;
+        places.remove(world);
+        places.put(world, place);
+        for (Iterator<String> it = places.keySet().iterator(); places.size() > MAX_PLACES && it.hasNext(); ) {
+            it.next();
+            it.remove();
+        }
+    }
+
+    /**
+     * Takes {@code world}'s placement back: true when it had one. Without one the origin is unset, as another world's
+     * spot means nothing here; the schematic stays chosen.
+     */
+    public boolean recall(String world) {
+        Placement place = world == null ? null : places.get(world);
+        if (place == null) {
+            originSet = false;
+            return false;
+        }
+        file = place.file == null ? "" : place.file;
+        originSet = place.originSet;
+        originX = place.originX;
+        originY = place.originY;
+        originZ = place.originZ;
+        rotation = place.rotation;
+        mirror = place.mirror;
+        sanitize();
+        return true;
+    }
+
     /** Quarter turns clockwise, seen from above. */
     public int rotation = 0;
     /** 0 none, 1 left to right (flips north and south), 2 front to back (flips east and west). */
@@ -61,6 +118,8 @@ public final class SchematicSettings {
     public String helperBlocks = "dirt, cobblestone, cobbled_deepslate, netherrack, stone, andesite, diorite, granite, tuff, blackstone";
 
     public void sanitize() {
+        if (places == null) places = new LinkedHashMap<>();
+        places.values().removeIf(place -> place == null);
         file = file == null ? "" : file.strip();
         helperBlocks = helperBlocks == null ? "" : helperBlocks.strip();
         if (helperBlocks.length() > 512) helperBlocks = helperBlocks.substring(0, 512);
