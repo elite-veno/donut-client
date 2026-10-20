@@ -30,9 +30,11 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.ChestType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -147,7 +149,7 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                         if (!preplace.contains(target.getBlock()) && pos.getY() >= fromY && !resumed.contains(pos.asLong())) continue;
                         BlockRules.Kind kind = BlockRules.kind(target);
                         if (kind == BlockRules.Kind.UNPLACEABLE) continue;
-                        s.overworld().setBlock(pos, target, Block.UPDATE_CLIENTS);
+                        s.overworld().setBlock(pos, asSet(schematic, target, pos, preplace, fromY, resumed), Block.UPDATE_CLIENTS);
                         Item item = BlockRules.item(target);
                         if (item != null) taken.merge(item, kind == BlockRules.Kind.FLUID ? 1 : BlockRules.itemsNeeded(air, target), Integer::sum);
                         if (kind == BlockRules.Kind.PLACE && BlockRules.soaked(target)) taken.merge(Items.WATER_BUCKET, 1, Integer::sum);
@@ -170,8 +172,9 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                         BlockState target = Schematic.place(schematic.state(i), Mirror.NONE, Rotation.NONE);
                         BlockPos pos = Schematic.place(schematic.pos(i), ORIGIN, Mirror.NONE, Rotation.NONE);
                         if (!preplace.contains(target.getBlock()) && pos.getY() >= fromY && !resumed.contains(pos.asLong())) continue;
-                        if (BlockRules.kind(target) == BlockRules.Kind.UNPLACEABLE || s.overworld().getBlockState(pos) == target) continue;
-                        s.overworld().setBlock(pos, target, Block.UPDATE_CLIENTS);
+                        BlockState set = asSet(schematic, target, pos, preplace, fromY, resumed);
+                        if (BlockRules.kind(target) == BlockRules.Kind.UNPLACEABLE || s.overworld().getBlockState(pos) == set) continue;
+                        s.overworld().setBlock(pos, set, Block.UPDATE_CLIENTS);
                         n++;
                     }
                     return n;
@@ -312,6 +315,18 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
             }
         }
         return placed;
+    }
+
+    /**
+     * The block set in place at {@code pos} for {@code target}: the target, but for half of a double chest whose other
+     * half isn't set in place as well. That stands alone, as it did in the run resumed: set as a half, nothing that is
+     * placed beside it later joins it, as blocks set in place don't update their neighbours.
+     */
+    private static BlockState asSet(Schematic schematic, BlockState target, BlockPos pos, Set<Block> preplace, int fromY, Set<Long> resumed) {
+        BlockPos partner = BlockRules.chestPartner(pos, target);
+        if (partner == null) return target;
+        boolean partnerSet = preplace.contains(target.getBlock()) || partner.getY() < fromY || resumed.contains(partner.asLong());
+        return partnerSet ? target : target.setValue(ChestBlock.TYPE, ChestType.SINGLE);
     }
 
     /** The blocks DONUT_SCHEMATIC_PREPLACE names, comma separated, by id with or without "minecraft:". */

@@ -116,6 +116,7 @@ class BuildPlanTest {
 
         assertEquals(BuildPlan.Status.PENDING, plan.update(i, single, air), "the first half waits for the other");
         assertEquals(BuildPlan.Status.MISPLACED, plan.update(i, single, single), "two lone chests never join by themselves");
+        assertEquals(BuildPlan.Status.MISPLACED, plan.update(i, single, right), "nor one alone beside a half set as joined to it");
         assertEquals(BuildPlan.Status.DONE, plan.update(i, left, right));
         assertEquals(BuildPlan.Status.DONE, plan.update(plan.indexOf(rightAt), right, left));
     }

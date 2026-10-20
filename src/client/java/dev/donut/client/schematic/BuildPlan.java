@@ -429,8 +429,11 @@ public final class BuildPlan {
         if (BlockRules.loneHalf(current, target)) {
             // Half of a double chest standing alone: not done until the other half joins it. With the other half
             // there alone as well, the two never join by themselves: one goes again, to be placed against the other.
+            // So too with the other half there as joined to this one, as a block set in place by a command leaves it:
+            // it stands as done, and this one is never clicked again. Broken, this one goes in again and joins it.
             if (failed[i]) return Status.FAILED;
-            boolean waiting = partner != null && BlockRules.loneHalf(partner, BlockRules.chestOther(target));
+            BlockState other = BlockRules.chestOther(target);
+            boolean waiting = partner != null && (BlockRules.loneHalf(partner, other) || BlockRules.joinedHalf(partner, other));
             return waiting ? Status.MISPLACED : Status.PENDING;
         }
         if (BlockRules.satisfied(current, target)) return done(i);

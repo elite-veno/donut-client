@@ -192,6 +192,13 @@ public final class BlockRules {
                 && current.getValue(ChestBlock.FACING) == target.getValue(ChestBlock.FACING);
     }
 
+    /** Whether the world's block is the half of a double chest {@code target} is, facing the same way: joined, or set so. */
+    public static boolean joinedHalf(BlockState current, BlockState target) {
+        return target.getBlock() instanceof ChestBlock && target.getValue(ChestBlock.TYPE) != ChestType.SINGLE
+                && current.getBlock() == target.getBlock() && current.getValue(ChestBlock.TYPE) == target.getValue(ChestBlock.TYPE)
+                && current.getValue(ChestBlock.FACING) == target.getValue(ChestBlock.FACING);
+    }
+
     /** The target of the other half of the double chest {@code target} is half of. */
     public static BlockState chestOther(BlockState target) {
         return target.setValue(ChestBlock.TYPE, target.getValue(ChestBlock.TYPE).getOpposite());
