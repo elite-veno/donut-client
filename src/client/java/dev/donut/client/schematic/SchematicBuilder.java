@@ -2,6 +2,7 @@ package dev.donut.client.schematic;
 
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.config.SchematicSettings;
+import dev.donut.client.finder.ChunkEvents;
 import dev.donut.client.finder.FinderSummary;
 import dev.donut.client.mixin.MultiPlayerGameModeAccess;
 import java.io.IOException;
@@ -319,6 +320,22 @@ public final class SchematicBuilder {
     private Navigator.Node walkEnd;
     /** Places tried and found useless since the last block went in, so the next walk goes somewhere else. */
     private final Set<Long> uselessSpots = new HashSet<>();
+    /**
+     * Blocks changed in or near the build, and chunks loaded, since the game started: a walk search that found no place to
+     * stand finds none again until one of them, or the player, the inventory or what the search leaves out, changes.
+     */
+    private long worldChanges;
+    /** How far round the build a changed block counts for {@link #worldChanges}: about what a walk search reaches. */
+    private static final double CHANGE_MARGIN = 24;
+    /**
+     * What the last walk searches that found nothing were made with, and when, see {@link #walkSearchKey}: one for walks on
+     * the ground, one for walks that climb through the build's cells ({@link #escaping}), as both are tried each time.
+     * And the same for the last pit search.
+     */
+    private final long[] failedWalkKey = new long[2], failedWalkAt = {Long.MIN_VALUE, Long.MIN_VALUE};
+    private long failedPitKey, failedPitAt = Long.MIN_VALUE;
+    /** However little changed, a search that found nothing is made again after this long. */
+    private static final long FAILED_SEARCH_NANOS = 5_000_000_000L;
     /** Where the last walk for blocks was to end, and whether anything was clicked since it started. */
     private Navigator.Node lastWalkEnd;
     private boolean clickedSinceWalk;
@@ -593,6 +610,17 @@ public final class SchematicBuilder {
         this.config = config;
         this.save = save;
         instance = this;
+        ChunkEvents.register(new ChunkEvents.Listener() {
+            @Override
+            public void blockChanged(ClientLevel level, BlockPos pos, BlockState previous, BlockState current) {
+                if (plan != null && plan.bounds.inflate(CHANGE_MARGIN).contains(Vec3.atCenterOf(pos))) worldChanges++;
+            }
+
+            @Override
+            public void chunkLoaded(ClientLevel level, net.minecraft.world.level.ChunkPos pos) {
+                worldChanges++;
+            }
+        });
     }
 
     public static SchematicBuilder getInstance() { return instance; }
@@ -4007,6 +4035,31 @@ public final class SchematicBuilder {
     }
 
     /**
+     * What a walk search for {@code near} goes by, folded into one number: the world round the build, where the player
+     * stands, what they carry, and the places and steps the search leaves out. Two searches with the same key find the same.
+     */
+    private long walkSearchKey(LocalPlayer player, List<Integer> near, boolean lift) {
+        long key = worldChanges;
+        key = key * 31 + player.blockPosition().asLong();
+        key = key * 31 + layerY;
+        key = key * 31 + near.hashCode();
+        key = key * 31 + (lift ? 1 : 0) + (escaping ? 2 : 0) + (orderLifted ? 4 : 0) + (sealsLifted ? 8 : 0);
+        key = key * 31 + uselessSpots.size();
+        key = key * 31 + traps.size();
+        key = key * 31 + carriedFrom.size();
+        key = key * 31 + missedFrom.size();
+        key = key * 31 + badSteps.size();
+        key = key * 31 + shutIn.size();
+        key = key * 31 + arrivalMisses.hashCode();
+        Inventory inventory = player.getInventory();
+        for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+            ItemStack stack = inventory.getItem(slot);
+            key = key * 31 + (stack.isEmpty() ? 0 : stack.getItem().hashCode() * 64L + stack.getCount());
+        }
+        return key;
+    }
+
+    /**
      * Plans a walk to where blocks left in the layer can go in with a real look, the most of them in reach, and starts
      * it. Spots already tried without placing anything are passed over.
      */
@@ -4036,6 +4089,11 @@ public final class SchematicBuilder {
             }
         }
         lastWalkEnd = null;
+        // The same search found nothing a moment ago, and nothing it goes by has changed since: it would find nothing again,
+        // and a search over some 20,000 places four times a second holds up the game.
+        long searchKey = walkSearchKey(player, near, lift);
+        int kind = escaping ? 1 : 0;
+        if (searchKey == failedWalkKey[kind] && System.nanoTime() - failedWalkAt[kind] < FAILED_SEARCH_NANOS) return false;
         // Blocks left that a block placed from the same place could hold, by position, whether or not they can go in yet.
         Map<Long, Integer> pool = new HashMap<>();
         for (int i : candidates) {
@@ -4148,6 +4206,8 @@ public final class SchematicBuilder {
         Navigator.Path path = navigator(player, true).climbUpTo(ceiling).vary(leaning).firmWhen(firm::contains).find(start, goal);
         if (path == null) {
             long now = System.nanoTime();
+            failedWalkKey[kind] = searchKey;
+            failedWalkAt[kind] = now;
             if (debug() && (near.getFirst() != lastExplained || now - explainedAt > 10_000_000_000L)) {
                 lastExplained = near.getFirst();
                 explainedAt = now;
@@ -4469,6 +4529,9 @@ public final class SchematicBuilder {
         boolean creative = player.hasInfiniteMaterials();
         long started = System.nanoTime();
         if (digAlong(player, candidates, materials, layerNumber, lift, reach, started)) return true;
+        // As for walks: a pit search that found nothing finds nothing again until something it goes by changes.
+        long searchKey = walkSearchKey(player, candidates, lift) * 31 + uselessPits.size();
+        if (searchKey == failedPitKey && System.nanoTime() - failedPitAt < FAILED_SEARCH_NANOS) return false;
         int tried = 0;
         for (int i : candidates) {
             if (plan.status(i) != BuildPlan.Status.PENDING || plan.kind(i) != BlockRules.Kind.PLACE || support(player, i, started) != 1) continue;
@@ -4510,6 +4573,8 @@ public final class SchematicBuilder {
                 }
             }
         }
+        failedPitKey = searchKey;
+        failedPitAt = System.nanoTime();
         return false;
     }
 
