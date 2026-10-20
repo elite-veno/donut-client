@@ -2310,6 +2310,16 @@ public final class SchematicBuilder {
         return true;
     }
 
+    /** Whether a cell over or beside {@code pos} is the build's own water, kelp or seagrass. */
+    private boolean bordersBuildWater(BlockPos pos) {
+        for (Direction side : Direction.values()) {
+            if (side == Direction.DOWN) continue;
+            int j = plan.indexOf(pos.relative(side));
+            if (j >= 0 && holdsWaterLater(j)) return true;
+        }
+        return false;
+    }
+
     /** Whether block {@code i} is water the build pours, or kelp or seagrass, which stand in water. */
     private boolean holdsWaterLater(int i) {
         BlockState target = plan.target(i);
@@ -2583,6 +2593,9 @@ public final class SchematicBuilder {
             // Shut in a flooded tunnel, every block round it has water beside it: the water runs into the opening, and
             // stops once the block goes in again.
             if (new AABB(at).distanceToSqr(eye) > reach * reach || !safeToBreak(level, at, 0, true)) continue;
+            // Not one with the build's water or kelp over or beside it, a kelp channel's floor say: once that water is in,
+            // a look back at its spot comes from neither side, and it stays out (v4-full3, 7,68,4 under kelp 7,69,4).
+            if (bordersBuildWater(at)) continue;
             candidates.add(at.immutable());
         }
         candidates.sort(Comparator.comparingDouble(at -> breakTicks(player, level, at) + new AABB(at).distanceToSqr(eye)));
