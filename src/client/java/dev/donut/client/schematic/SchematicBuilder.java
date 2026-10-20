@@ -5105,12 +5105,21 @@ public final class SchematicBuilder {
     /**
      * Whether block {@code i}, full of water in the schematic and one a bucket can't fill once in (see
      * {@link BlockRules#fillsInPlace}), goes into water poured into its spot first: once every other dry block of its
-     * layer is in. Before that, placed dry, it counts as in for those; after it, its water is next anyway.
+     * layer is in. Before that, placed dry, it counts as in for those; after it, its water is next anyway. And always
+     * beside the build's own water, a stream's corner say: broken there once that water runs, to go in again into
+     * water, its drop floats off down the stream before it is picked up, and the build is a block short (slabtop3,
+     * the waterlogged chest at 28,73,8).
      */
     private boolean waterFirst(int i, int[] layer) {
         BlockState target = plan.target(i);
         if (plan.kind(i) != BlockRules.Kind.PLACE || !BlockRules.soaked(target) || BlockRules.fillsInPlace(target)
                 || plan.refilling(i) || drains.getOrDefault(i, 0) >= REPAIRS) return false;
+        BlockPos pos = plan.pos(i);
+        for (Direction side : Direction.values()) {
+            if (side == Direction.UP) continue;
+            int j = plan.indexOf(pos.relative(side));
+            if (j >= 0 && plan.target(j).getBlock() instanceof LiquidBlock) return true;
+        }
         for (int j : layer) {
             if (j == i || plan.wet(j) || plan.status(j) != BuildPlan.Status.PENDING) continue;
             BlockState other = plan.target(j);
