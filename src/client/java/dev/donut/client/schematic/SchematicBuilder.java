@@ -3637,11 +3637,11 @@ public final class SchematicBuilder {
         // Never in a spot that grows kelp or seagrass, not even on the way out of a pocket: that spot holds the water of its
         // column, and a helper there shuts the water out of the kelp under it for good, as dirt in 13,72,16 did in v4-o.
         if (i >= 0 && plan.plant(i)) return false;
-        // Nor in a spot a water source goes into over kelp or seagrass, dry or with water only running through (v4-q bridged
-        // into 17,72,32): that source fills the column under it, as 5,72,4 and 6,72,4 over the kelp at 6,70,4 in v4-p.
-        // Other source spots stay open to a climb out of a pit before its water is poured.
-        if (i >= 0 && plan.kind(i) == BlockRules.Kind.FLUID && plan.target(i).getFluidState().isSource() && feedsPlant(cell)
-                && !state.getFluidState().isSource()) return false;
+        // Nor in a spot a water source goes into over kelp or seagrass, dry, with water running through or with its source
+        // already in: that source fills the column under it (5,72,4 and 6,72,4 over the kelp at 6,70,4 in v4-p), and a
+        // helper bridged into it once poured was taken away and bridged in again and again (v4-r, 5,72,4 and 14,72,4).
+        // Other source spots stay open to a climb out of a pit or a flooded shaft.
+        if (i >= 0 && plan.kind(i) == BlockRules.Kind.FLUID && plan.target(i).getFluidState().isSource() && feedsPlant(cell)) return false;
         if (!state.getFluidState().isEmpty()) {
             // Water run out of the build onto the ground round it, not a source and not falling: a helper block goes in as
             // into air, and the water runs back once it is gone. The cell is the schematic's to leave empty.
