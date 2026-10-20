@@ -379,7 +379,8 @@ public final class Navigator {
                 if (move != Move.WALK && narrow(nx, ny, nz)) continue;
                 // Honey holds a jump down to half its height, and slime throws back up what drops on it.
                 if (move == Move.JUMP && unsteady(from.floor(), Blocks.HONEY_BLOCK)) continue;
-                if (move == Move.DROP && unsteady(new BlockPos(nx, ny, nz), Blocks.SLIME_BLOCK)) continue;
+                // Coming down onto it at all, by a drop or a jump that lands lower, out of a bowl say.
+                if (rise < -STEP && unsteady(new BlockPos(nx, ny, nz), Blocks.SLIME_BLOCK)) continue;
                 Node next = new Node(nx, ny, nz, feet, move);
                 if (!badSteps.isEmpty() && badSteps.contains(stepKey(from, next))) continue;
                 out.add(next);
