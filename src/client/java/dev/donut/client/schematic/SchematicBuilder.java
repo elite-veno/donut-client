@@ -2373,6 +2373,25 @@ public final class SchematicBuilder {
         return true;
     }
 
+    /**
+     * Whether {@code cell} is where the look up at a block still to go in that is placed looking up comes from: one or two
+     * under it, or under a cell beside it. A helper block there hides every such look, as walk helpers at 1,69,9 and
+     * 2,69,10 hid the observer 2,70,9 of ikea_v4 (v4-clean2, 23:53).
+     */
+    private boolean inLookUpChannel(BlockPos cell) {
+        for (int up = 1; up <= 2; up++) {
+            BlockPos over = cell.above(up);
+            if (pendingLookingUp(over)) return true;
+            for (Direction side : Direction.Plane.HORIZONTAL) if (pendingLookingUp(over.relative(side))) return true;
+        }
+        return false;
+    }
+
+    private boolean pendingLookingUp(BlockPos pos) {
+        int j = plan.indexOf(pos);
+        return j >= 0 && plan.status(j) == BuildPlan.Status.PENDING && BlockRules.placedLookingUp(plan.target(j));
+    }
+
     /** Whether a cell over or beside {@code pos} is the build's own water, kelp or seagrass. */
     private boolean bordersBuildWater(BlockPos pos) {
         for (Direction side : Direction.values()) {
@@ -4093,6 +4112,8 @@ public final class SchematicBuilder {
         if (cleaning && cleared.contains(cell.asLong())) return false;
         // A guard against a current into a fall (see guardFor): in water, or water the build has there, for a while.
         if (guardSpot.containsValue(cell)) return true;
+        // Not where the look up at a block still to go in that takes one comes from (see inLookUpChannel).
+        if (!escaping && inLookUpChannel(cell)) return false;
         int i = plan.indexOf(cell);
         boolean water = i >= 0 && (plan.kind(i) == BlockRules.Kind.FLUID || plan.kind(i) == BlockRules.Kind.AUTO)
                 && plan.target(i).getBlock() instanceof LiquidBlock && plan.target(i).getFluidState().is(FluidTags.WATER);
@@ -4278,9 +4299,11 @@ public final class SchematicBuilder {
             }
             // One in a spot the build shuts in comes away while it can: once closed round, nothing reaches it, not the cleanup
             // either.
-            if (serves < 0 && (runOut || plan.enclosed(at)) && reclaimable(player, at, reach)) {
+            boolean inLook = serves < 0 && inLookUpChannel(at);
+            if (serves < 0 && (runOut || plan.enclosed(at) || inLook) && reclaimable(player, at, reach)) {
                 if (debug()) LOGGER.info("{}: taking back the helper block an earlier walk put down at {}",
-                        runOut ? "Short of helper blocks" : "Shut in by the build later", at.toShortString());
+                        runOut ? "Short of helper blocks" : inLook ? "In the look up at a block placed looking up"
+                                : "Shut in by the build later", at.toShortString());
                 startBreak(at);
                 return true;
             }
