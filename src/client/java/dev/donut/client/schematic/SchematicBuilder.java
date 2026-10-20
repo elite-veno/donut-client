@@ -1105,6 +1105,7 @@ public final class SchematicBuilder {
         uselessPits.clear();
         pitTries.clear();
         sealsLifted = false;
+        sealsLiftedAt = UNLIFTED;
         orderLifted = false;
         // A build begun again, or another with its bottom layer at the same height, starts its first layer afresh: no walks
         // or misses carried over from the last one.
@@ -1259,6 +1260,7 @@ public final class SchematicBuilder {
                 layer = plan.layers().get(heldY);
                 if (heldY != layerY) {
                     sealsLifted = false;
+                    sealsLiftedAt = UNLIFTED;
                     orderLifted = false;
                     // Walks, misses and useless places counted in the layer left: none of them is about this one.
                     walksSinceClick = 0;
@@ -1283,7 +1285,11 @@ public final class SchematicBuilder {
             if (first == -1 && !lift) {
                 // Only blocks that would shut in a neighbor are left: one of them goes in after all.
                 first = firstReady(player, entry.getValue(), true, started);
-                if (first >= 0) lift = true;
+                if (first >= 0) {
+                    lift = true;
+                    // A lift too: blocks waiting for an up-facing neighbour still get their few minutes.
+                    if (sealsLiftedAt == UNLIFTED) sealsLiftedAt = tick;
+                }
             }
             if (first == -2) { show("Working out the build order", false); return; }
             if (first < 0) continue;
@@ -1292,6 +1298,7 @@ public final class SchematicBuilder {
             if (entry.getKey() != layerY) {
                 pickupSweep = layerY != Integer.MIN_VALUE;
                 sealsLifted = false;
+                sealsLiftedAt = UNLIFTED;
                 orderLifted = false;
                 walksSinceClick = 0;
                 arrivalMisses.clear();
@@ -1784,7 +1791,7 @@ public final class SchematicBuilder {
         if (sealing && !lift) {
             // Every block left in reach of a walk would shut in another: let them go in after all.
             sealsLifted = true;
-            sealsLiftedAt = tick;
+            if (sealsLiftedAt == UNLIFTED) sealsLiftedAt = tick;
             nextAction = System.nanoTime();
             return;
         }
@@ -1908,7 +1915,9 @@ public final class SchematicBuilder {
 
     /** How long, after the seals are lifted, a block still waits for an up-facing neighbour: the walks get a few more tries. */
     private static final long UP_WAIT_TICKS = 6000;
-    private long sealsLiftedAt = Long.MIN_VALUE / 2;
+    private static final long UNLIFTED = Long.MIN_VALUE / 2;
+    /** When the seals of the layer were first lifted, by either way; UNLIFTED until then. */
+    private long sealsLiftedAt = UNLIFTED;
     private final Map<Integer, Long> upWaitLogged = new HashMap<>();
 
     /**
