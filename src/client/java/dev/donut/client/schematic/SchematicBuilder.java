@@ -1122,6 +1122,7 @@ public final class SchematicBuilder {
         unblockSearched.clear();
         noStand = List.of();
         noneInReach = 0;
+        lastDone = -1;
         standSearched.clear();
         escapeHelpers.clear();
         escapeWalk = false;
@@ -1251,6 +1252,11 @@ public final class SchematicBuilder {
         long started = System.nanoTime();
         boolean creative = player.hasInfiniteMaterials();
         Materials materials = Materials.of(player.getInventory());
+        int done = plan.count(BuildPlan.Status.DONE);
+        if (done != lastDone) {
+            lastDone = done;
+            lastProgress = tick;
+        }
         // Every look and walk is worked out from where the player stands: in the air after a jump, they land first.
         if (!player.onGround() && !player.isInWater() && !player.onClimbable()) return;
         if (!creative && eat(client, player)) return;
@@ -2840,6 +2846,12 @@ public final class SchematicBuilder {
         }
         return false;
     }
+
+    /** How long nothing may go in, with no place to stand for the next block, before it is given up on: five minutes. */
+    private static final long GIVE_UP_TICKS = 6000;
+    /** Blocks done at the last decision, and when that count last went up. */
+    private int lastDone = -1;
+    private long lastProgress;
 
     /** Walk searches in a row that found no place with a block in reach (see {@link #planWalk}). */
     private int noneInReach;
@@ -5109,6 +5121,16 @@ public final class SchematicBuilder {
             }
         }
         noStand = path == null ? List.copyOf(near) : List.of();
+        if (path == null && tick - lastProgress > GIVE_UP_TICKS) {
+            // Nothing has gone in for minutes, and still no place to stand with a look at it: given up on, as a player
+            // leaves what they can't reach, and counted as failed at the end; the build goes on with the rest.
+            int stuck = near.getFirst();
+            if (debug()) LOGGER.info("Giving up on {} at {}: nothing went in for {} s and no place to stand has a look at it",
+                    plan.target(stuck), plan.pos(stuck).toShortString(), (tick - lastProgress) / 20);
+            plan.giveUp(stuck);
+            plan.update(level, stuck);
+            lastProgress = tick;
+        }
         // Searches in a row that found no place at all with a block in reach: shut in somewhere, as after a fall into a
         // space under the build.
         noneInReach = path == null && seen[1] == 0 ? noneInReach + 1 : 0;
