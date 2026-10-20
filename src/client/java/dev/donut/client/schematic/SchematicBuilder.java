@@ -1250,7 +1250,9 @@ public final class SchematicBuilder {
         if (restockAfterWalk != null) {
             Item wanted = restockAfterWalk;
             restockAfterWalk = null;
-            if (!creative && materials.loose(wanted) == 0 && materials.total(wanted) > 0) {
+            // Helper blocks are fetched while some are still carried (helperToFetch): the walk to open ground was for them too.
+            boolean wants = materials.loose(wanted) == 0 || helperItems.contains(wanted) && helpersLoose(player) < HELPERS_LOW;
+            if (!creative && wants && materials.total(wanted) > 0) {
                 startRestock(client, player, wanted, materials);
                 return;
             }
@@ -1272,6 +1274,12 @@ public final class SchematicBuilder {
         }
         // Helper blocks running low: more out of a box before they run out mid-climb.
         Item fetch = creative || !settings().useShulkers ? null : helperToFetch(player, materials);
+        // While some are still carried, only where a box goes in right here: a walk off to open ground for them from the
+        // place a walk just came to, for the blocks there, sends the player away before any of those go in.
+        if (fetch != null && helpersLoose(player) > 0
+                && boxSpots(player, Navigator.standingAt(level, player).floor().above(), player.position()).isEmpty()) {
+            fetch = null;
+        }
         if (fetch != null) {
             // At most once a minute: with the inventory full, a box opened for them gives none, and is opened again and
             // again otherwise.
@@ -1575,7 +1583,14 @@ public final class SchematicBuilder {
                     settling = true;
                     continue;
                 }
-                if (edge) continue;
+                if (edge) {
+                    // Crouched on a narrow top over a drop, as on a row of closed gates: no bucket is emptied from there.
+                    if (noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH) == null && debug()) {
+                        LOGGER.info("Can't pour {} at {} from a narrow top over a drop", target, pos.toShortString());
+                    }
+                    if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
+                    continue;
+                }
                 if (sweptLayer != layerY && settings().walk) {
                     // Before the layer's first water: helper blocks lying in the build would be carried off by it.
                     pickupSweep = true;
@@ -4772,9 +4787,16 @@ public final class SchematicBuilder {
             inReach.sort(Comparator.comparingDouble(i -> Vec3.atCenterOf(plan.pos(i)).distanceToSqr(eye)));
             double good = 0;
             List<Integer> placeable = new ArrayList<>();
+            Boolean narrowTop = null;
             for (int i : inReach.subList(0, Math.min(VERIFY, inReach.size()))) {
                 long key = Navigator.pairKey(node.key(), i);
                 if (missedFrom.contains(key)) continue;
+                // On a narrow top over a drop the player stands crouched, and decide empties no bucket from there: water,
+                // and blocks that take water, aren't counted for such a place.
+                if (plan.kind(i) == BlockRules.Kind.FLUID || plan.soaking(i) || plan.needsPour(i)) {
+                    if (narrowTop == null) narrowTop = Navigator.narrowOverDrop(level, node);
+                    if (narrowTop) continue;
+                }
                 Integer ok = verified.get(key);
                 if (ok == null) {
                     ok = placeableFrom(player, feet, i, reach);
