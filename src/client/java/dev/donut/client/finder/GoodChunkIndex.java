@@ -118,7 +118,20 @@ final class GoodChunkIndex {
         if (last != null && last[0] == key) last[1]++;
         else trail.addLast(new long[] {key, 1});
         trailTicks++;
-        while (trailTicks > TRAIL_TICKS || trail.size() > TRAIL_SEGMENTS) trailTicks -= (int) trail.removeFirst()[1];
+        // Only the ticks past the limit go, from the oldest stay: a long one isn't forgotten all at once, nor the one under
+        // way when it is the only one.
+        while (trailTicks > TRAIL_TICKS) {
+            long[] first = trail.peekFirst();
+            int over = trailTicks - TRAIL_TICKS;
+            if (first[1] > over) {
+                first[1] -= over;
+                trailTicks -= over;
+            } else {
+                trailTicks -= (int) first[1];
+                trail.removeFirst();
+            }
+        }
+        while (trail.size() > TRAIL_SEGMENTS) trailTicks -= (int) trail.removeFirst()[1];
     }
 
     void tick(ClientLevel level, ChunkPos center, double range) {
@@ -132,9 +145,16 @@ final class GoodChunkIndex {
     /** A block turned open or solid, which can make or end a dug passage. */
     void passageChanged(BlockPos pos) { tunnels.markDirty(pos); }
 
-    /** A chunk arrived: it and its neighbors' passages are read again. */
+    /**
+     * A chunk arrived: it and its neighbors are read again, their passages too. A neighbor's blocks facing it were read
+     * with nothing known beyond them, a build's open face among them.
+     */
     void chunkLoaded(ChunkPos pos) {
         chunks.markDirty(pos.x(), pos.z());
+        chunks.markDirty(pos.x() - 1, pos.z());
+        chunks.markDirty(pos.x() + 1, pos.z());
+        chunks.markDirty(pos.x(), pos.z() - 1);
+        chunks.markDirty(pos.x(), pos.z() + 1);
         tunnels.markDirty(pos);
     }
 
@@ -190,10 +210,16 @@ final class GoodChunkIndex {
         int[] counts = new int[3];
         chunks.forEach(scan -> {
             long key = scan.chunk.pack();
+            // Its passages not read yet, a player's tunnel or staircase there not known: as a chunk not read.
+            if (!tunnels.indexed(scan.chunk.x(), scan.chunk.z())) return;
             boolean structure = structures.contains(key);
             String reason = reason(scan, live.remove(key), structure, settings);
-            cells.add(new SpotPicker.Cell(scan.chunk.x(), scan.chunk.z(), reason != null, structure, scan.sight.caves <= maxCaves,
-                    scan.sight.clocks));
+            // Too near a random teleport landing to dig in, though read and clean for the chunks round it: left out before
+            // the spots are picked and spaced, so the spacing doesn't keep away spots that do count.
+            double x = scan.chunk.getMinBlockX() + 8, z = scan.chunk.getMinBlockZ() + 8;
+            boolean far = settings.rtpDistance <= 0 || RtpZones.distance(rtpZones, x, z) >= settings.rtpDistance;
+            cells.add(new SpotPicker.Cell(scan.chunk.x(), scan.chunk.z(), reason != null, structure,
+                    scan.sight.caves <= maxCaves && far, scan.sight.clocks));
             if (scan.sight.clocks.clocks() > 0) counts[0]++;
             if (reason != null) {
                 counts[1]++;
@@ -209,12 +235,8 @@ final class GoodChunkIndex {
 
         int clearance = (int) Math.round(settings.minClearance);
         ChunkPos center = ChunkPos.containing(BlockPos.containing(origin));
-        // Spots near a random teleport landing are dropped after picking; more are picked so enough are left.
-        for (SpotPicker.Spot spot : SpotPicker.pick(cells, clearance, settings.maxUnseen, center.x(), center.z(), MAX_SPOTS * 4)) {
-            if (spots.size() == MAX_SPOTS) break;
+        for (SpotPicker.Spot spot : SpotPicker.pick(cells, clearance, settings.maxUnseen, center.x(), center.z(), MAX_SPOTS)) {
             Scan scan = chunks.get(spot.x(), spot.z());
-            double x = scan.chunk.getMinBlockX() + 8, z = scan.chunk.getMinBlockZ() + 8;
-            if (settings.rtpDistance > 0 && RtpZones.distance(rtpZones, x, z) < settings.rtpDistance) continue;
             spots.add(new GoodChunk(scan.chunk, scan.sight.surfaceY, spot.area().detectChance(CONFIDENCE_MINUTES), spot.clear(),
                     spot.area().clocks(), spot.unseenMinutes(), scan.sight.caves));
         }

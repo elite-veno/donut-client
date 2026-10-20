@@ -38,6 +38,9 @@ final class TunnelIndex {
 
     void tick(ClientLevel level, ChunkPos center, double range) { chunks.tick(level, center, range); }
 
+    /** Whether this chunk's passages have been read. */
+    boolean indexed(int chunkX, int chunkZ) { return chunks.indexed(chunkX, chunkZ); }
+
     /** A passage can start in a neighboring chunk and run through this one. */
     void markDirty(BlockPos pos) {
         int x = SectionPos.blockToSectionCoord(pos.getX()), z = SectionPos.blockToSectionCoord(pos.getZ());

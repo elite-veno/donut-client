@@ -76,6 +76,9 @@ final class ChunkIndex<T> {
     /** Indexed chunks, with or without a result. */
     int size() { return scans.size(); }
 
+    /** Whether this chunk has been read, with or without a result. */
+    boolean indexed(int chunkX, int chunkZ) { return scans.containsKey(ChunkPos.pack(chunkX, chunkZ)); }
+
     /** This chunk's result, or null when it has none or isn't indexed. */
     T get(int chunkX, int chunkZ) {
         Scan<T> scan = scans.get(ChunkPos.pack(chunkX, chunkZ));
