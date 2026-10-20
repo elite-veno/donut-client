@@ -3012,6 +3012,8 @@ public final class SchematicBuilder {
 
     /** How long nothing may go in, with no place to stand for the next block, before it is given up on: five minutes. */
     private static final long GIVE_UP_TICKS = 6000;
+    /** As {@link #GIVE_UP_TICKS}, for the blocks placed with a look up when no place a walk reaches has a look at any: a minute. */
+    private static final long UP_GIVE_UP_TICKS = 1200;
     /** Blocks done at the last decision, and when that count last went up. */
     private int lastDone = -1;
     private long lastProgress;
@@ -5327,6 +5329,24 @@ public final class SchematicBuilder {
                 guardSpot.put(i, guard);
                 if (debug()) LOGGER.info("{} at {}: its place to stand is in a current into a fall at {}, a helper block goes there first",
                         plan.target(i).getBlock().getName().getString(), plan.pos(i).toShortString(), guard.toShortString());
+            }
+        }
+        if (path == null && seen[2] == 0 && seen[0] < Navigator.MAX_NODES && tick - lastProgress > UP_GIVE_UP_TICKS) {
+            // Every place a walk reaches searched, well short of the limit, and not one with a look at any of these: the
+            // blocks placed with a look up among them have none anywhere, as a row of up-facing observers over a solid
+            // column, with only a water stream beside it (v4-z3, y 73). Given up on together, a row at a time, rather than
+            // one every five minutes; counted as failed at the end.
+            List<Integer> up = new ArrayList<>();
+            // Not one a helper block in the current beside it is to give a place to stand first (see guardFor).
+            for (int i : near) if (BlockRules.placedLookingUp(plan.target(i)) && !guardSpot.containsKey(i)) up.add(i);
+            if (!up.isEmpty()) {
+                if (debug()) LOGGER.info("Giving up on {} blocks placed with a look up, such as {} at {}: {} places reached, none with a look at any",
+                        up.size(), plan.target(up.getFirst()), plan.pos(up.getFirst()).toShortString(), seen[0]);
+                for (int i : up) {
+                    plan.giveUp(i);
+                    plan.update(level, i);
+                }
+                lastProgress = tick;
             }
         }
         if (path == null && tick - lastProgress > GIVE_UP_TICKS) {
