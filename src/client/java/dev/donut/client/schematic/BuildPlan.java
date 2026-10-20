@@ -401,11 +401,11 @@ public final class BuildPlan {
         if (kinds[i] == BlockRules.Kind.FLUID) {
             // Only a source counts: water flowing past is no source, and the builder pours over it. Kelp grown up into
             // it, or a bubble column it turned into, is that water still.
-            if (BlockRules.holdsFluid(current, target)) return Status.DONE;
+            if (BlockRules.holdsFluid(current, target)) return done(i);
             if (failed[i]) return Status.FAILED;
             return current.canBeReplaced() ? Status.PENDING : Status.WRONG;
         }
-        if (BlockRules.satisfied(current, target)) return Status.DONE;
+        if (BlockRules.satisfied(current, target)) return done(i);
         dryDone[i] = soak[i] && BlockRules.needsWater(current, target) && BlockRules.placedFully(current, target);
         waterIn[i] = drained[i] && current.getBlock() instanceof LiquidBlock && current.getFluidState().isSourceOfType(Fluids.WATER);
         if (failed[i]) return Status.FAILED;
@@ -413,6 +413,16 @@ public final class BuildPlan {
             return BlockRules.placementMatches(current, target) ? Status.PENDING : Status.MISPLACED;
         }
         return current.canBeReplaced() ? Status.PENDING : Status.WRONG;
+    }
+
+    /**
+     * Block {@code i} stands as the schematic has it: a block given up on before, or clicked at in vain, starts afresh, so
+     * that if it goes again, broken, washed away or pushed off, it gets its tries again rather than counting as failed.
+     */
+    private Status done(int i) {
+        failed[i] = false;
+        tries[i] = 0;
+        return Status.DONE;
     }
 
     /**
