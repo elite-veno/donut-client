@@ -1927,7 +1927,7 @@ public final class SchematicBuilder {
         // weighs those): shut in, as after a fall under the build. Climbing out through cells the build fills later is
         // tried at once, not after walks there are none to make.
         if (settings().walk && noneInReach >= 2) {
-            if (debug()) LOGGER.info("No place reached has a block in reach, {} searches in a row: climbing out", noneInReach);
+            if (debug()) LOGGER.info("No place reached has a block in reach or a look, {} searches in a row: climbing out", noneInReach);
             noneInReach = 0;
             if (climbOut(client, player, candidates, materials, layerNumber, lift)) return;
         }
@@ -2853,8 +2853,10 @@ public final class SchematicBuilder {
     private int lastDone = -1;
     private long lastProgress;
 
-    /** Walk searches in a row that found no place with a block in reach (see {@link #planWalk}). */
+    /** Walk searches in a row that found no place with a block in reach, or with a look from a few places only (see {@link #planWalk}). */
     private int noneInReach;
+    /** Places a walk search reaches at most for the player to count as shut in when none of them has a look. */
+    private static final int SHUT_IN_PLACES = 200;
 
     /**
      * With no place to stand found any other way: one more look, where a walk may climb through cells the build fills
@@ -5155,8 +5157,10 @@ public final class SchematicBuilder {
             lastProgress = tick;
         }
         // Searches in a row that found no place at all with a block in reach: shut in somewhere, as after a fall into a
-        // space under the build.
-        noneInReach = path == null && seen[1] == 0 ? noneInReach + 1 : 0;
+        // space under the build. So too a search that ran out of places long before its limit with blocks in reach but no
+        // look at any: a few tops between two channels say, every look from them shut off.
+        boolean shutIn = seen[1] == 0 || seen[2] == 0 && seen[0] < SHUT_IN_PLACES;
+        noneInReach = path == null && shutIn ? noneInReach + 1 : 0;
         if (path == null) {
             long now = System.nanoTime();
             failedWalkKey[kind] = searchKey;
