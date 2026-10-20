@@ -1192,6 +1192,18 @@ public final class SchematicBuilder {
                 return;
             }
         }
+        // Standing where a box goes in, blocks of the layer that are only in boxes come out now, before a walk takes the
+        // player up onto the build, where there may be no room for a box at all.
+        if (!creative && settings().walk && tick - aheadChecked >= 20) {
+            aheadChecked = tick;
+            Item ahead = restockAhead(player, materials);
+            if (ahead != null && !boxSpots(player, Navigator.standingAt(level, player).floor().above(), player.position()).isEmpty()) {
+                aheadLayer.put(ahead, layerY);
+                if (debug()) LOGGER.info("Taking {} out of a shulker box while there is room for one here", name(ahead));
+                startRestock(client, player, ahead, materials);
+                if (restock != Restock.NONE || swapFrom >= 0 || walker.active()) return;
+            }
+        }
         // Helper blocks running low: more out of a box before they run out mid-climb.
         Item fetch = creative || !settings().useShulkers ? null : helperToFetch(player, materials);
         if (fetch != null) {
@@ -6057,6 +6069,8 @@ public final class SchematicBuilder {
 
     /** The layer each item was last taken out of a box ahead for, by {@link #restockAhead}. */
     private final Map<Item, Integer> aheadLayer = new HashMap<>();
+    /** The tick {@link #restockAhead} was last asked from where the player stands. */
+    private long aheadChecked = -100;
 
     /** What the layers up to height {@code top} still take, by item: the layer being built and those below it still waiting, at the least. */
     private Map<Item, Integer> needsUpTo(Level level, int top) {
