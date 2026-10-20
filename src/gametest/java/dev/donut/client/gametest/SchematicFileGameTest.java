@@ -7,6 +7,7 @@ import dev.donut.client.schematic.Materials;
 import dev.donut.client.schematic.Schematic;
 import dev.donut.client.schematic.SchematicBuilder;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -15,6 +16,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
@@ -109,11 +112,15 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
             Map<Item, Integer> bill = new LinkedHashMap<>(context.computeOnClient(client -> builder.bill()));
             // DONUT_SCHEMATIC_PREPLACE names blocks (deepslate, say) set in place before the build: a plain fill that
             // teaches the builder nothing and takes long. DONUT_SCHEMATIC_FROM_Y sets every block below that height in
-            // place, so a run starts at the layer where the last one went wrong. Either way they count as built, and
-            // what they take isn't handed out.
+            // place, so a run starts at the layer where the last one went wrong. DONUT_SCHEMATIC_RESUME=<log>[@hh:mm:ss] also
+            // sets every block that log's run placed (before that time), so a run goes on at the very block where the
+            // last one went wrong, not at the start of its layer. Either way they count as built, and what they take
+            // isn't handed out.
             Set<Block> preplace = preplaced();
             String fromText = System.getenv("DONUT_SCHEMATIC_FROM_Y");
-            int fromY = fromText == null || fromText.isBlank() ? Integer.MIN_VALUE : Integer.parseInt(fromText.strip());
+            int givenY = fromText == null || fromText.isBlank() ? Integer.MIN_VALUE : Integer.parseInt(fromText.strip());
+            Set<Long> resumed = resumed(schematic);
+            int fromY = resumed.isEmpty() ? givenY : Math.max(givenY, Integer.MIN_VALUE + 1);
             if (!preplace.isEmpty() || fromY != Integer.MIN_VALUE) {
                 Map<Item, Integer> taken = new HashMap<>();
                 int placed = server.computeOnServer(s -> {
@@ -122,7 +129,7 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                     for (int i = 0; i < schematic.size(); i++) {
                         BlockState target = Schematic.place(schematic.state(i), Mirror.NONE, Rotation.NONE);
                         BlockPos pos = Schematic.place(schematic.pos(i), ORIGIN, Mirror.NONE, Rotation.NONE);
-                        if (!preplace.contains(target.getBlock()) && pos.getY() >= fromY) continue;
+                        if (!preplace.contains(target.getBlock()) && pos.getY() >= fromY && !resumed.contains(pos.asLong())) continue;
                         BlockRules.Kind kind = BlockRules.kind(target);
                         if (kind == BlockRules.Kind.UNPLACEABLE) continue;
                         s.overworld().setBlock(pos, target, Block.UPDATE_CLIENTS);
@@ -136,8 +143,9 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                 for (Map.Entry<Item, Integer> e : taken.entrySet()) {
                     bill.computeIfPresent(e.getKey(), (item, count) -> count > e.getValue() ? count - e.getValue() : null);
                 }
-                LOGGER.info("Set {} blocks in place before the build ({}{})", placed, preplace.isEmpty() ? "" : preplace + " ",
-                        fromY == Integer.MIN_VALUE ? "" : "everything below y " + fromY);
+                LOGGER.info("Set {} blocks in place before the build ({}{}{})", placed, preplace.isEmpty() ? "" : preplace + " ",
+                        fromY <= Integer.MIN_VALUE + 1 ? "" : "everything below y " + fromY + " ",
+                        resumed.isEmpty() ? "" : resumed.size() + " placed in " + System.getenv("DONUT_SCHEMATIC_RESUME"));
                 context.waitTicks(20);
                 // A machine set in place can move itself once its blocks update, a piston pushed or a torch knocked
                 // off: what came out otherwise is set again, so the build starts on the layers it was asked to.
@@ -146,7 +154,7 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                     for (int i = 0; i < schematic.size(); i++) {
                         BlockState target = Schematic.place(schematic.state(i), Mirror.NONE, Rotation.NONE);
                         BlockPos pos = Schematic.place(schematic.pos(i), ORIGIN, Mirror.NONE, Rotation.NONE);
-                        if (!preplace.contains(target.getBlock()) && pos.getY() >= fromY) continue;
+                        if (!preplace.contains(target.getBlock()) && pos.getY() >= fromY && !resumed.contains(pos.asLong())) continue;
                         if (BlockRules.kind(target) == BlockRules.Kind.UNPLACEABLE || s.overworld().getBlockState(pos) == target) continue;
                         s.overworld().setBlock(pos, target, Block.UPDATE_CLIENTS);
                         n++;
@@ -233,6 +241,38 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
         } finally {
             context.runOnClient(client -> builder.setEnabled(false));
         }
+    }
+
+    /**
+     * The places, as {@link BlockPos#asLong}, of the schematic's blocks that DONUT_SCHEMATIC_RESUME's log says were
+     * placed there ("Placed Block{id}... at x, y, z"), up to the time after an @ if one is given. Empty without it.
+     */
+    private static Set<Long> resumed(Schematic schematic) {
+        String spec = System.getenv("DONUT_SCHEMATIC_RESUME");
+        Set<Long> placed = new HashSet<>();
+        if (spec == null || spec.isBlank()) return placed;
+        int at = spec.lastIndexOf('@');
+        String until = at > 1 ? spec.substring(at + 1).strip() : null;
+        Path log = Path.of(at > 1 ? spec.substring(0, at).strip() : spec.strip());
+        Map<Long, String> logged = new HashMap<>();
+        Pattern line = Pattern.compile("^\\[(\\d\\d:\\d\\d:\\d\\d)\\].*?Placed Block\\{([a-z0-9_:]+)\\}\\S* at (-?\\d+), (-?\\d+), (-?\\d+):");
+        try {
+            for (String text : Files.readAllLines(log)) {
+                Matcher m = line.matcher(text);
+                if (!m.find()) continue;
+                if (until != null && m.group(1).compareTo(until) >= 0) break;
+                logged.put(BlockPos.asLong(Integer.parseInt(m.group(3)), Integer.parseInt(m.group(4)), Integer.parseInt(m.group(5))), m.group(2));
+            }
+        } catch (IOException e) {
+            throw new AssertionError("Can't read DONUT_SCHEMATIC_RESUME " + log, e);
+        }
+        for (int i = 0; i < schematic.size(); i++) {
+            BlockState target = Schematic.place(schematic.state(i), Mirror.NONE, Rotation.NONE);
+            long pos = Schematic.place(schematic.pos(i), ORIGIN, Mirror.NONE, Rotation.NONE).asLong();
+            String id = logged.get(pos);
+            if (id != null && id.equals(BuiltInRegistries.BLOCK.getKey(target.getBlock()).toString())) placed.add(pos);
+        }
+        return placed;
     }
 
     /** The blocks DONUT_SCHEMATIC_PREPLACE names, comma separated, by id with or without "minecraft:". */
