@@ -1559,7 +1559,7 @@ public final class SchematicBuilder {
                     continue;
                 }
             }
-            else if (upWaitHolds(player.level(), i)) {
+            else if (liftHolds(player.level(), i)) {
                 passedOver(i, "it waits for an up-facing block");
                 continue;
             }
@@ -1587,6 +1587,9 @@ public final class SchematicBuilder {
             if (plan.kind(i) == BlockRules.Kind.FLUID) {
                 // Just filled a bucket from it: it comes back by itself, or is found not to, in a moment.
                 if (pos.equals(filledFrom)) continue;
+                if (lift && debug() && feedsPendingPlant(level, i, false)) {
+                    LOGGER.info("Pouring {} at {} with kelp under it still to go in: the seals are lifted", target, pos.toShortString());
+                }
                 Item bucket = BlockRules.item(target);
                 if (!creative && materials.total(bucket) == 0) {
                     // Out of water buckets: an empty one is filled where water comes back, as a player does.
@@ -1994,7 +1997,7 @@ public final class SchematicBuilder {
                     if (seals == 0) return -2;
                     if (seals == 1) continue;
                 }
-                else if (upWaitHolds(player.level(), i)) continue;
+                else if (liftHolds(player.level(), i)) continue;
             } else if (st != BuildPlan.Status.UNLOADED) {
                 // An unloaded block may well be missing too; the layer waits until the player is near enough to see it.
                 continue;
@@ -2086,6 +2089,15 @@ public final class SchematicBuilder {
         return level.getBlockState(pos).canBeReplaced() || helpers.containsKey(pos.asLong());
     }
 
+    /**
+     * Whether block {@code i} still waits with the seals lifted for this decision alone, as when only blocks held back are
+     * left in its layer: for an up-facing neighbour (see {@link #upWaitHolds}), or, a water source, for the kelp under it
+     * (see {@link #feedsPendingPlant}) until the seals are lifted for good, after the walks found nothing.
+     */
+    private boolean liftHolds(Level level, int i) {
+        return upWaitHolds(level, i) || !sealsLifted && plan.kind(i) == BlockRules.Kind.FLUID && feedsPendingPlant(level, i, false);
+    }
+
     /** With the seals lifted, block {@code i} still waits for an up-facing neighbour, for {@link #UP_WAIT_TICKS} after. */
     private boolean upWaitHolds(Level level, int i) {
         int wait = upWait(level, i);
@@ -2111,6 +2123,7 @@ public final class SchematicBuilder {
      * closed side. Such a block waits for its neighbor. 1 yes, 2 no, 0 out of time.
      */
     private byte seals(LocalPlayer player, int i, long started) {
+        if (plan.kind(i) == BlockRules.Kind.FLUID) return feedsPendingPlant(player.level(), i, true) ? (byte) 1 : 2;
         if (plan.kind(i) != BlockRules.Kind.PLACE) return 2;
         Level level = player.level();
         BlockPos pos = plan.pos(i);
@@ -3676,6 +3689,34 @@ public final class SchematicBuilder {
         return escaping && (plan.status(i) == BuildPlan.Status.PENDING || view instanceof Overlay overlay && overlay.changes(cell));
     }
 
+    /**
+     * Whether water source {@code i} waits for kelp or seagrass one or two cells under it, still to go in, with no water a
+     * block deep in its spot yet: poured first, its water runs off the plant under it into the spots beside, as
+     * water running, never a block deep, and kelp goes into none of them; ikea_v4's row of kelp at z 8 went in as a chain,
+     * each against the one before, with the water over it poured after. A plain seal, lifted with the others, as when
+     * the kelp gets its water from this source only.
+     */
+    private boolean feedsPendingPlant(Level level, int i, boolean log) {
+        BlockPos pos = plan.pos(i);
+        if (!plan.target(i).getFluidState().isSource() || !level.getBlockState(pos).canBeReplaced()) return false;
+        for (int down = 1; down <= 2; down++) {
+            BlockPos at = pos.below(down);
+            int j = plan.indexOf(at);
+            if (j < 0 || !plan.plant(j) || plan.status(j) != BuildPlan.Status.PENDING) continue;
+            FluidState there = level.getFluidState(at);
+            if (there.getType().isSame(Fluids.WATER) && there.getAmount() == 8) continue;
+            if (log && debug() && tick - plantWaitLogged.getOrDefault(i, -1000L) > 200) {
+                plantWaitLogged.put(i, tick);
+                LOGGER.info("Water at {} waits: {} at {} under it still to go in", pos.toShortString(),
+                        plan.target(j).getBlock().getName().getString(), at.toShortString());
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private final Map<Integer, Long> plantWaitLogged = new HashMap<>();
+
     /** Whether kelp or seagrass grows one or two cells under {@code cell}, in the column its water fills. */
     private boolean feedsPlant(BlockPos cell) {
         for (int down = 1; down <= 2; down++) {
@@ -4786,7 +4827,7 @@ public final class SchematicBuilder {
         for (int i : candidates) {
             if (plan.status(i) != BuildPlan.Status.PENDING || support(player, i, started) != 1) continue;
             if (!lift && seals(player, i, started) == 1) continue;
-            if (lift && upWaitHolds(player.level(), i)) continue;
+            if (lift && liftHolds(player.level(), i)) continue;
             Item item = plan.item(i);
             if (item == null || !creative && (materials.total(item) == 0 || waitsForDrop(level, i, materials))) continue;
             // Only in a box, with no room for one a moment ago: it waits for that on arrival too, and a walk for it is for
@@ -5345,7 +5386,7 @@ public final class SchematicBuilder {
         for (int i : candidates) {
             if (plan.status(i) != BuildPlan.Status.PENDING || plan.kind(i) != BlockRules.Kind.PLACE || support(player, i, started) != 1) continue;
             if (!lift && seals(player, i, started) == 1) continue;
-            if (lift && upWaitHolds(player.level(), i)) continue;
+            if (lift && liftHolds(player.level(), i)) continue;
             BlockPos pos = plan.pos(i);
             BlockState target = plan.target(i);
             if (level.getBlockState(pos).getBlock() == target.getBlock()) continue;
@@ -5402,7 +5443,7 @@ public final class SchematicBuilder {
         for (int i : candidates) {
             if (plan.status(i) != BuildPlan.Status.PENDING || plan.kind(i) != BlockRules.Kind.PLACE || support(player, i, started) != 1) continue;
             if (!lift && seals(player, i, started) == 1) continue;
-            if (lift && upWaitHolds(player.level(), i)) continue;
+            if (lift && liftHolds(player.level(), i)) continue;
             BlockPos pos = plan.pos(i);
             BlockState target = plan.target(i);
             if (level.getBlockState(pos).getBlock() == target.getBlock()) continue;
