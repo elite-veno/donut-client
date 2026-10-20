@@ -3035,8 +3035,10 @@ public final class SchematicBuilder {
     /** A place to swim at, held at {@code feet} in still water, and the click on block {@code i} from there. */
     record SwimSpot(int i, Vec3 feet, PlacementSolver.Click click) { }
 
-    /** Heights in a cell of still water the feet may be held at, swimming: low in it, its middle, and up near its top. */
-    private static final double[] SWIM_FEET = {0.1, 0.4, 0.7};
+    /** Heights in a cell of still water the feet may be held at, swimming, from low in it to near its top. */
+    private static final double[] SWIM_FEET = {0.05, 0.2, 0.35, 0.5, 0.65, 0.8, 0.95};
+    /** How far off the middle of the cell, each way, the body may be held: a swimmer drifts to a side as a walker does. */
+    private static final double[] SWIM_OFF = {-0.25, 0, 0.25};
     private long swimLogged = Long.MIN_VALUE / 2;
     private int swimLoggedLayer = Integer.MIN_VALUE;
 
@@ -3064,13 +3066,18 @@ public final class SchematicBuilder {
             FluidState fluid = level.getFluidState(cell);
             if (!fluid.is(FluidTags.WATER) || !fluid.isSource() || fluid.getFlow(level, cell).lengthSqr() > 0) continue;
             for (double up : SWIM_FEET) {
-                Vec3 feet = new Vec3(cell.getX() + 0.5, cell.getY() + up, cell.getZ() + 0.5);
-                double away = feet.add(0, 1.62, 0).distanceToSqr(middle);
-                if (away > (reach + 0.5) * (reach + 0.5) || away >= bestAway) continue;
-                PlacementSolver.Click click = PlacementSolver.fromSwim(player, view, feet, pos, target, stack, reach, at -> unclickable(at, i));
-                if (click == null) continue;
-                best = new SwimSpot(i, feet, click);
-                bestAway = away;
+                for (double dx : SWIM_OFF) {
+                    for (double dz : SWIM_OFF) {
+                        Vec3 feet = new Vec3(cell.getX() + 0.5 + dx, cell.getY() + up, cell.getZ() + 0.5 + dz);
+                        double away = feet.add(0, 1.62, 0).distanceToSqr(middle);
+                        if (away > (reach + 0.5) * (reach + 0.5) || away >= bestAway) continue;
+                        PlacementSolver.Click click = PlacementSolver.fromSwim(player, view, feet, pos, target, stack, reach,
+                                at -> unclickable(at, i));
+                        if (click == null) continue;
+                        best = new SwimSpot(i, feet, click);
+                        bestAway = away;
+                    }
+                }
             }
         }
         return best;
@@ -3093,7 +3100,7 @@ public final class SchematicBuilder {
         Map<Long, BlockState> placed = new HashMap<>();
         long started = System.nanoTime();
         boolean more = true;
-        while (more && !left.isEmpty() && System.nanoTime() - started < 200_000_000L) {
+        while (more && !left.isEmpty() && System.nanoTime() - started < 2_000_000_000L) {
             more = false;
             BlockGetter view = placed.isEmpty() ? player.level() : new Overlay(player.level(), Map.copyOf(placed));
             for (Iterator<Integer> it = left.iterator(); it.hasNext(); ) {
