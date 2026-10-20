@@ -411,6 +411,10 @@ public final class Navigator {
                 BlockPos floor = new BlockPos(nx, from.y(), nz);
                 if (!level.getBlockState(floor).canBeReplaced() || !pillarAllowed.test(floor) || placed != null && placed.contains(floor.asLong())) continue;
                 if (!clear(nx, nz, from.feet(), from.feet() + BODY, Integer.MIN_VALUE) || crosses(placed, nx, nz, from.feet(), from.feet() + BODY)) continue;
+                // The look down at the side of the block underfoot passes through the cells over the gap: an open fence
+                // gate there, or a pane, has no collision but stops the crosshair on its outline, and the block to step
+                // across on never goes in.
+                if (!seeThrough(nx, nz, from.y() + 1, from.y() + 2)) continue;
                 Node next = new Node(nx, from.y(), nz, from.feet(), Move.BRIDGE);
                 if (badSteps.isEmpty() || !badSteps.contains(stepKey(from, next))) out.add(next);
             }

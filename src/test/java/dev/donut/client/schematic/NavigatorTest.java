@@ -166,6 +166,26 @@ class NavigatorTest {
     }
 
     @Test
+    void noBridgeThroughAnOpenGate() {
+        // The same gap with an open fence gate over it: no collision, but its outline stops the look down at the side
+        // of the ledge, so no block goes in there to step across on.
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        for (int x : new int[] {0, 1, 3, 4}) {
+            blocks.put(new BlockPos(x, 65, 0), Blocks.STONE.defaultBlockState());
+            blocks.put(new BlockPos(x, 66, 0), Blocks.STONE.defaultBlockState());
+        }
+        blocks.put(new BlockPos(2, 67, 0), Blocks.SPRUCE_FENCE_GATE.defaultBlockState()
+                .setValue(net.minecraft.world.level.block.FenceGateBlock.OPEN, true));
+        BlockGetter level = world(blocks);
+        Navigator.Node start = new Navigator.Node(1, 66, 0, 67, Navigator.Move.START);
+        Navigator.Goal across = node -> node.x() == 3 && node.z() == 0 && node.feet() == 67 ? 1 : 0;
+        Navigator.Path path = new Navigator(level, AREA, cell -> true, key -> false).find(start, across);
+        if (path != null) {
+            for (Navigator.Node node : path.nodes()) assertFalse(node.move() == Navigator.Move.BRIDGE && node.x() == 2, "bridged through the gate");
+        }
+    }
+
+    @Test
     void aStepThatFailedIsWalkedAround() {
         BlockGetter level = world(Map.of());
         Navigator.Node start = new Navigator.Node(0, 64, 0, 65, Navigator.Move.START);
