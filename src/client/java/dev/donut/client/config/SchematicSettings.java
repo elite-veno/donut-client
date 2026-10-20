@@ -113,6 +113,11 @@ public final class SchematicSettings {
     public boolean sprint = true;
     /** Take missing blocks out of shulker boxes carried in the inventory: place one, empty what is needed, break it. */
     public boolean useShulkers = true;
+    /**
+     * When the build runs out of a block, take it out of the player's own buy orders on the server, filled by others,
+     * through GoNuts' order pages: /orders, Your Orders, Collect. Only with GoNuts' live execution allowed on that server.
+     */
+    public boolean fromOrders = false;
     /** Within each layer, redstone components go after the plain blocks, and pistons, observers and dispensers last. */
     public boolean redstoneLast = true;
     /** Outline the schematic and the blocks left in the layer being built. */

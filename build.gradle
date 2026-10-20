@@ -25,6 +25,9 @@ dependencies {
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
     // GoNuts ships inside the Ven Client jar as a nested mod: its auction house buying orders a build's materials.
     include(implementation("dev.doughbay:trader-fabric:0.1.0+26.2"))
+    // Its order pages driver is called for a build's trips to the player's orders; its interfaces live in trader-core,
+    // which ships inside trader-fabric.
+    compileOnly "dev.doughbay:trader-core:0.1.0"
     testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
 }

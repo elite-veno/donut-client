@@ -76,6 +76,14 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
             if (client.player != null && client.player.getAbilities().flying) flew.set(true);
         });
         context.getInput().resizeWindow(1280, 800);
+        // DONUT_SCHEMATIC_ORDERS=1: as on the server, no shulker boxes handed out: everything the build takes waits on the
+        // player's own buy orders, delivered in full, behind a copy of DonutSMP's order pages, and the builder collects it
+        // from there through GoNuts' order driver whenever it runs out, as much as fits each time.
+        boolean fromOrders = "1".equals(System.getenv("DONUT_SCHEMATIC_ORDERS"));
+        if (fromOrders) {
+            DonutOrders.register();
+            DonutOrders.clear();
+        }
         try (var world = context.worldBuilder().adjustSettings(creator -> creator.setAllowCommands(true)).create()) {
             TestServerContext server = world.getServer();
             server.runCommand("difficulty peaceful");
@@ -107,7 +115,14 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                 settings.redstoneLast = true;
                 settings.walk = true;
                 settings.useShulkers = true;
+                settings.fromOrders = fromOrders;
                 settings.helperBlocks = "dirt";
+                if (fromOrders) {
+                    // GoNuts' driver only acts where its live execution is allowed: here, on this single-player world.
+                    var driver = dev.doughbay.fabric.DoughBayClient.executionDriver();
+                    driver.setAuthorizedServers(List.of("singleplayer"));
+                    driver.setAuthorizedExecutionEnabled(true);
+                }
             });
             Map<Item, Integer> bill = new LinkedHashMap<>(context.computeOnClient(client -> builder.bill()));
             // DONUT_SCHEMATIC_PREPLACE names blocks (deepslate, say) set in place before the build: a plain fill that
@@ -174,7 +189,16 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
             String spareText = System.getenv("DONUT_SCHEMATIC_SPARE");
             int spare = spareText == null || spareText.isBlank() ? 0 : Integer.parseInt(spareText.trim());
             if (spare > 0) bill.replaceAll((item, count) -> item == Items.DIRT ? count : count + Math.max(1, count * spare / 100));
-            giveInShulkers(server, bill);
+            java.util.UUID player = server.computeOnServer(s -> s.getPlayerList().getPlayers().getFirst().getUUID());
+            if (fromOrders) {
+                // The helper dirt stays in hand, as a player brings their own.
+                Map<Item, Integer> ordered = new LinkedHashMap<>(bill);
+                ordered.remove(Items.DIRT);
+                DonutOrders.fill(player, ordered);
+                LOGGER.info("Orders waiting to be collected: {}", DonutOrders.waiting(player));
+            } else {
+                giveInShulkers(server, bill);
+            }
             // DONUT_SCHEMATIC_DIRT: fewer helper blocks than the default 448, to see the builder take back those of earlier walks.
             String dirtText = System.getenv("DONUT_SCHEMATIC_DIRT");
             server.runCommand("give @a minecraft:dirt " + (dirtText == null || dirtText.isBlank() ? 448 : Integer.parseInt(dirtText.trim())));
@@ -189,8 +213,15 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                 // place may run off, a machine move itself): what the build's own plan finds short is handed out too.
                 context.waitTicks(5);
                 Map<Item, Integer> topUp = context.computeOnClient(client -> builder.shortage(Materials.of(client.player.getInventory())));
+                // What waits on the orders counts as had: it is collected when the build runs out.
+                if (fromOrders) {
+                    Map<Item, Integer> waiting = DonutOrders.waiting(player);
+                    topUp.replaceAll((item, count) -> count - waiting.getOrDefault(item, 0));
+                    topUp.values().removeIf(count -> count <= 0);
+                }
                 if (!topUp.isEmpty()) {
-                    giveInShulkers(server, topUp);
+                    if (fromOrders) DonutOrders.fill(player, topUp);
+                    else giveInShulkers(server, topUp);
                     LOGGER.info("Topped up what the plan still needs: {}", topUp);
                 }
             }
@@ -214,6 +245,7 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                 }
             }
             String finalStatus = context.computeOnClient(client -> builder.status());
+            if (fromOrders) LOGGER.info("Left waiting on the orders: {}", DonutOrders.waiting(player));
             LOGGER.info("Builder finished in {} s: {}", (System.currentTimeMillis() - started) / 1000, finalStatus);
             context.waitTicks(20);
             context.takeScreenshot(TestScreenshotOptions.of("schematic-file-built").withSize(1280, 800));

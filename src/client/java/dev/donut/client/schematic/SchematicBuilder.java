@@ -440,6 +440,11 @@ public final class SchematicBuilder {
     private final Map<Integer, Long> placedAt = new HashMap<>();
     /** How often each block was broken to be placed again; and the one being broken for that now, or -1. */
     private final Map<Integer, Integer> repairs = new HashMap<>();
+    /** Trips to the player's orders for blocks the build ran out of; see {@link SchematicSettings#fromOrders}. */
+    private final dev.donut.client.order.OrderCollector orders = new dev.donut.client.order.OrderCollector();
+    private long ordersTriedAt = Long.MIN_VALUE / 2;
+    /** After a trip that found nothing, or couldn't start, the next waits this long. */
+    private static final int ORDERS_RETRY_TICKS = 200;
     /** Last rounds over the blocks given up on, once nothing else is left; see {@link #lastRound}. */
     private int lastRounds;
     /** The most last rounds a build makes before it counts what is still wrong. */
@@ -847,6 +852,13 @@ public final class SchematicBuilder {
         walker.pace(settings().hesitate, settings().sprint);
         if (swapFrom >= 0) {
             swapTick(client, player);
+            return;
+        }
+        if (orders.busy()) {
+            // Taking what the build ran out of from the player's orders: the order pages are GoNuts', the build waits.
+            orders.tick(client);
+            show("Collecting what the build needs from your orders", false);
+            if (!orders.busy()) nextAction = System.nanoTime();
             return;
         }
         if (restock != Restock.NONE) {
@@ -1881,8 +1893,25 @@ public final class SchematicBuilder {
         next = nearest < 0 ? null : plan.pos(nearest);
         nextIndex = nearest;
         String where = " in layer " + layerNumber + " of " + plan.layers().size() + " (y " + layerY + ")";
+        if (!missing.isEmpty() && settings().fromOrders && tick - ordersTriedAt > ORDERS_RETRY_TICKS) {
+            // Out of something: to the orders for it, those blocks first and then the rest the build still needs, as much
+            // as fits.
+            ordersTriedAt = tick;
+            Map<Item, Integer> all = shortage(Materials.of(player.getInventory())), shortOf = new LinkedHashMap<>();
+            for (Item item : missing) shortOf.put(item, Math.max(1, all.getOrDefault(item, 1)));
+            all.forEach(shortOf::putIfAbsent);
+            String why = orders.start(player, shortOf);
+            if (why == null) {
+                walker.stop(client);
+                releaseKeys(client);
+                show("Collecting " + names(missing) + " from your orders", false);
+                return;
+            }
+            LOGGER.info("No trip to your orders: {}", why);
+        }
         if (!missing.isEmpty()) {
-            show("Out of " + names(missing) + where + ": put more in your inventory or a shulker box in it", true);
+            show("Out of " + names(missing) + where + ": put more in your inventory or a shulker box in it"
+                    + (orders.result().isEmpty() ? "" : "; orders: " + orders.result()), true);
         } else if (seen == PlacementSolver.Problem.IN_THE_WAY) {
             show("Step aside: you stand where the next block goes", true);
         } else if (settings().walk) {
@@ -5763,6 +5792,7 @@ public final class SchematicBuilder {
     }
 
     private void finish(Minecraft client, String text, boolean warn) {
+        orders.stop("the build stopped");
         if (restock != Restock.NONE) abandonRestock(client);
         abandonSwap(client);
         aim = null;
