@@ -10,7 +10,11 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
 import java.util.concurrent.ThreadLocalRandom;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.level.block.state.BlockState;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Walks the player along a {@link Navigator} path with the movement keys, as the player would: turning toward each
@@ -133,6 +137,37 @@ final class Walker {
     private boolean sprints = true;
 
     Walker(Head head) { this.head = head; }
+
+    private static final Logger LOGGER = LoggerFactory.getLogger("Donut/Schematic");
+
+    /**
+     * For the debug log, once a step is held still short of its spot: crouched or not, on the ground or not, which way a
+     * small move toward the spot is refused (a collision, or the sneak edge's fall check), and the blocks round the body.
+     */
+    private static void explainHeld(LocalPlayer player, Navigator.Node to, double dx, double dz) {
+        if (!Boolean.getBoolean("donut.schematic.debug")) return;
+        var level = player.level();
+        AABB box = player.getBoundingBox();
+        double len = Math.max(1e-6, Math.sqrt(dx * dx + dz * dz));
+        double mx = dx / len * 0.05, mz = dz / len * 0.05;
+        boolean collides = !level.noCollision(player, box.move(mx, 0, mz));
+        AABB under = new AABB(box.minX + 1e-7 + mx, box.minY - player.maxUpStep() - 1e-7, box.minZ + 1e-7 + mz,
+                box.maxX - 1e-7 + mx, box.minY, box.maxZ - 1e-7 + mz);
+        boolean wouldFall = level.noCollision(player, under);
+        StringBuilder cells = new StringBuilder();
+        for (BlockPos pos : BlockPos.betweenClosed(BlockPos.containing(box.minX - 0.3, box.minY - 1, box.minZ - 0.3),
+                BlockPos.containing(box.maxX + 0.3, box.minY + 1, box.maxZ + 0.3))) {
+            BlockState state = level.getBlockState(pos);
+            if (state.isAir()) continue;
+            var shape = state.getCollisionShape(level, pos);
+            cells.append(String.format(Locale.ROOT, " %d,%d,%d %s%s;", pos.getX(), pos.getY(), pos.getZ(),
+                    state.getBlock().getDescriptionId().replace("block.minecraft.", ""),
+                    shape.isEmpty() ? " (no collision)" : " " + shape.bounds().move(pos)));
+        }
+        LOGGER.info("Held still short of {}: at {}, box {}, crouching {}, on the ground {}, a move toward it {}{}; round the body:{}",
+                to, player.position(), box, player.isShiftKeyDown(), player.onGround(), collides ? "collides" : "is free",
+                wouldFall ? ", and has nothing under it (the sneak edge stops it)" : "", cells);
+    }
 
     /** The pace the settings ask for, from the next walk on. */
     void pace(int hesitateChance, boolean sprints) {
@@ -317,6 +352,7 @@ final class Walker {
             stuck = 0;
         } else if (player.onGround() && there && distance < 0.3 && player.getDeltaMovement().horizontalDistanceSqr() < 1e-6
                 && stuck >= 4) {
+            explainHeld(player, to, dx, dz);
             // Held still a few tenths short of the middle, and no key gets the player further: along a channel beside water
             // over an open gate every step stopped at 0.20 off, motionless, and failed as stuck after twelve ticks (v4-full5,
             // 20:11:17 and :23), the walk and the look it was for lost. That close, it counts as there; decide works the
@@ -326,6 +362,7 @@ final class Walker {
             closest = Double.MAX_VALUE;
             return State.WALKING;
         } else if (++stuck > (wading ? STUCK_TICKS * 2 : STUCK_TICKS)) {
+            if (distance < 0.6) explainHeld(player, to, dx, dz);
             return fail(client, "stuck on the way to " + to + (player.onGround() ? ", on the ground" : ", in the air") + ", moving "
                     + player.getDeltaMovement() + (client.options.keyJump.isDown() ? ", jumping" : ""));
         }
