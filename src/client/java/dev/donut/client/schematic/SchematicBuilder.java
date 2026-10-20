@@ -3841,6 +3841,10 @@ public final class SchematicBuilder {
                     BlockState state = level.getBlockState(at);
                     if (!(state.getBlock() instanceof LiquidBlock) || !state.getFluidState().isSource()
                             || !state.getFluidState().is(FluidTags.WATER) || finiteSources.contains(at.asLong())) continue;
+                    // Not a spot of the build still to go in, as kelp poured into first (da-45): the bucket would take the
+                    // water it waits for, to be poured back (v1-clean6, 9,69,16, twice).
+                    int j = plan.indexOf(at);
+                    if (j >= 0 && plan.status(j) == BuildPlan.Status.PENDING) continue;
                     int sources = 0;
                     for (Direction side : Direction.Plane.HORIZONTAL) {
                         FluidState beside = level.getFluidState(at.relative(side));
