@@ -1926,7 +1926,7 @@ public final class SchematicBuilder {
         BlockPos pos = plan.pos(i);
         // A helper block of the builder's own counts as open: it comes away again, as v4-e's bridge under 1,70,21 did not.
         if (!openForLook(level, pos.below()) || !level.getBlockState(pos).canBeReplaced()) return false;
-        boolean upFacing = BlockRules.facesUp(plan.target(i));
+        boolean upFacing = BlockRules.placedLookingUp(plan.target(i));
         // One beside it, or one or two layers up beside the cells over it: a column of them stacked, each a layer higher,
         // takes its look up past this spot from as far below as the eye is.
         for (int up = 0; up <= 2; up++) {
@@ -1936,7 +1936,7 @@ public final class SchematicBuilder {
             for (Direction side : Direction.Plane.HORIZONTAL) {
                 BlockPos at = pos.relative(side).above(up);
                 int j = plan.indexOf(at);
-                if (j < 0 || plan.status(j) != BuildPlan.Status.PENDING || !BlockRules.facesUp(plan.target(j))) continue;
+                if (j < 0 || plan.status(j) != BuildPlan.Status.PENDING || !BlockRules.placedLookingUp(plan.target(j))) continue;
                 if (!level.getBlockState(at).canBeReplaced()) continue;
                 if (debug() && tick - upWaitLogged.getOrDefault(i, -UP_WAIT_TICKS) > 200) {
                     upWaitLogged.put(i, tick);
@@ -3084,7 +3084,7 @@ public final class SchematicBuilder {
                 restockSwaps = 0;
                 if (planned.act() == Act.PLACE) placedAt.put(i, tick);
                 // An up-facing block in: what waited for one gets its minutes again, should another stall the build.
-                if (planned.act() == Act.PLACE && BlockRules.facesUp(plan.target(i))) sealsLiftedAt = UNLIFTED;
+                if (planned.act() == Act.PLACE && BlockRules.placedLookingUp(plan.target(i))) sealsLiftedAt = UNLIFTED;
                 sealsLifted = false;
                 orderLifted = false;
                 shutIn.remove(i);
@@ -4050,7 +4050,7 @@ public final class SchematicBuilder {
      * waits for its water, and get one later.
      */
     private boolean mayUnblock(LocalPlayer player, int i) {
-        if (!BlockRules.facesUp(plan.target(i))) return false;
+        if (!BlockRules.placedLookingUp(plan.target(i))) return false;
         if (plan.kind(i) != BlockRules.Kind.PLACE || plan.status(i) != BuildPlan.Status.PENDING || brokeOut.contains(i)
                 || unblocking.containsKey(i) || unblocks.getOrDefault(i, 0) >= UNBLOCKS) return false;
         if (unblocking.values().stream().anyMatch(u -> u.stuck() == i)) return false;
@@ -4075,7 +4075,7 @@ public final class SchematicBuilder {
             if (at.equals(standing.floor()) || player.getBoundingBox().intersects(new AABB(at))) continue;
             // One facing up goes in again only with a look up from below, as shut as the stuck block's own may be; and the
             // one under the stuck block holds up what is under that, up-facers in a column.
-            if (BlockRules.facesUp(plan.target(j)) || at.equals(pos.below())) continue;
+            if (BlockRules.placedLookingUp(plan.target(j)) || at.equals(pos.below())) continue;
             // Only one that goes in the same whichever face is clicked, with any look: glass, ice, a full block.
             if (!BlockRules.placementMatches(plan.target(j).getBlock().defaultBlockState(), plan.target(j))) continue;
             BlockState state = level.getBlockState(at);

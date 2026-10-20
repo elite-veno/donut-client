@@ -413,7 +413,7 @@ public final class BlockRules {
         if (state.getFluidState().isSource() && !state.hasProperty(BlockStateProperties.WATERLOGGED)) return 4;
         // One facing up takes a look up at it from below, from a place the blocks round it close off once they stand:
         // it goes in with the plain blocks of its layer, before them.
-        if (facesUp(state)) return 0;
+        if (placedLookingUp(state)) return 0;
         if (block instanceof PistonBaseBlock || block instanceof ObserverBlock || block instanceof DispenserBlock
                 || block instanceof CrafterBlock || block instanceof TntBlock) return 2;
         if (state.isSignalSource() || block instanceof RedStoneWireBlock || block instanceof DiodeBlock
@@ -427,19 +427,21 @@ public final class BlockRules {
     }
 
     /**
-     * Whether the block faces up the way a look gives it: an observer, piston, dispenser or dropper facing up, or a
-     * crafter turned up. Placed, those take a look up from below.
+     * Whether the block only takes its state from a look up at it, from below: an observer facing up (it faces the way the
+     * look goes), or a piston, dispenser, dropper or crafter facing down (they face back at the player). Placed, those take
+     * a look up past their sides; the blocks round them that would close that look wait for them.
      */
-    static boolean facesUp(BlockState state) {
+    static boolean placedLookingUp(BlockState state) {
         Block block = state.getBlock();
-        if (block instanceof ObserverBlock || block instanceof PistonBaseBlock || block instanceof DispenserBlock) {
-            return state.hasProperty(BlockStateProperties.FACING) && state.getValue(BlockStateProperties.FACING) == Direction.UP;
+        if (!state.hasProperty(BlockStateProperties.FACING)) {
+            return block instanceof CrafterBlock && state.hasProperty(BlockStateProperties.ORIENTATION)
+                    && state.getValue(BlockStateProperties.ORIENTATION).front() == Direction.DOWN;
         }
-        if (block instanceof CrafterBlock && state.hasProperty(BlockStateProperties.ORIENTATION)) {
-            return state.getValue(BlockStateProperties.ORIENTATION).front() == Direction.UP;
-        }
-        return false;
+        Direction facing = state.getValue(BlockStateProperties.FACING);
+        if (block instanceof ObserverBlock) return facing == Direction.UP;
+        return (block instanceof PistonBaseBlock || block instanceof DispenserBlock) && facing == Direction.DOWN;
     }
+
 
     /**
      * Whether the block is water or lava, or something that grows in water such as kelp. These go in once every other
