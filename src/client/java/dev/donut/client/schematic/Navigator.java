@@ -292,7 +292,8 @@ public final class Navigator {
     private double stepCost(Node from, Node to) {
         double cost = switch (to.move()) {
             case WALK -> from.x() != to.x() && from.z() != to.z() ? 1.41 : 1;
-            case JUMP -> 2;
+            // A jump that comes down past the usual drop, off a build, costs as such a drop does.
+            case JUMP -> 2 + Math.max(0, from.feet() - to.feet() - DROP) * 6;
             // Past the usual drop, each block more costs the player some health: only where nothing else does.
             case DROP -> 1.5 + (from.feet() - to.feet()) * 0.5 + Math.max(0, from.feet() - to.feet() - DROP) * 6;
             case PILLAR -> 6;
@@ -351,6 +352,9 @@ public final class Navigator {
                 // than where they rest: a step that looks small can take a jump.
                 double over = Math.max(rise, Math.max(rim(nx, ny, nz), rim(from.x(), from.y(), from.z())) - from.feet());
                 if (over > JUMP) continue;
+                // A drop off the build begun with a jump, out of a bowl or over a rim, falls from the top of the jump: a
+                // fall that much longer than the drop, and more harm than the drop was allowed.
+                if (farOff && over > STEP && rise < -DROP && JUMP - rise > farDrop) continue;
                 double top = Math.max(feet, from.feet() + Math.max(over, 0)) + BODY;
                 // The way across: the new spot's column is clear from its feet to the head at the higher of the two;
                 // a jump needs the head room above the old spot too, and a diagonal both corners clear.
