@@ -16,6 +16,29 @@ import org.junit.jupiter.api.Test;
 
 final class MinerPartsTest {
     @Test
+    void noSwingUnderGravelThatWaterFollows() {
+        // A wall of stone to dig into, with gravel over the block and water over the gravel, as under a riverbed: once the
+        // block goes, the gravel falls and the water comes after it.
+        GridSite site = new GridSite(70);
+        BlockPos target = new BlockPos(1, 66, 0);
+        for (int y = 65; y <= 66; y++) site.set(new BlockPos(0, y, 0), GridSite.Block.AIR);
+        site.set(target.above(), GridSite.Block.GRAVEL);
+        site.set(target.above(2), GridSite.Block.GRAVEL);
+        site.set(target.above(3), GridSite.Block.WATER);
+        net.minecraft.world.phys.Vec3 eye = new net.minecraft.world.phys.Vec3(0.5, 65 + 1.62, 0.5);
+        net.minecraft.world.phys.AABB body = new net.minecraft.world.phys.AABB(0.2, 65, 0.2, 0.8, 66.8, 0.8);
+        Swings.Reach at = new Swings.Reach(eye, body, 65, 4.5, 0.6, false, new java.util.Random(1));
+        Set<BlockPos> blocked = new HashSet<>();
+        assertNull(Swings.choose(site, at, ToolShape.SINGLE, List.of(target), cell -> false, cell -> true, blocked, 0),
+                "the water would come down into the tunnel");
+        assertTrue(blocked.contains(target));
+
+        site.set(target.above(3), GridSite.Block.STONE);
+        assertTrue(Swings.choose(site, at, ToolShape.SINGLE, List.of(target), cell -> false, cell -> true, new HashSet<>(), 0) != null,
+                "gravel under stone only falls");
+    }
+
+    @Test
     void roomHasSpaceAroundTheSchematicAndKeepsItsFloor() {
         Box schematic = new Box(0, 10, 0, 14, 23, 24);
         Room room = Room.of(schematic, 3, 2, Direction.SOUTH, 6, 4);

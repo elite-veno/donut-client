@@ -108,16 +108,34 @@ public final class Swings {
             if ((flags & Site.DIG) == 0) {
                 // A container caught by an area swing would spill; bedrock just stays.
                 if ((flags & Site.HARD) != 0 && cell != cells.getFirst()) return Verdict.HARD;
+                // A block holding water, caught by an area swing, is broken and leaves its water in the room.
+                if ((flags & Site.FLUID) != 0) return Verdict.WET;
                 continue;
             }
             if (guarded.test(cell)) return Verdict.GUARDED;
             for (Direction side : Direction.values()) {
                 if (site.is(cell.relative(side), Site.FLUID)) return Verdict.WET;
             }
+            if (fallsFromWater(site, cell)) return Verdict.WET;
             // Sand or gravel over a block in the player's own column would come down on their head.
             if (site.is(cell.above(), Site.FALLS) && cell.getY() >= at.feetY() && overColumn(at.body(), cell)) return Verdict.FALLS;
         }
         return Verdict.OK;
+    }
+
+    /**
+     * Whether sand or gravel over {@code cell} comes down once it goes, and water or lava follows it: over the stack, or
+     * beside a block of it, which the fall opens. A riverbed or a beach over the staircase or the room.
+     */
+    private static boolean fallsFromWater(Site site, BlockPos cell) {
+        BlockPos up = cell.above();
+        int falling = 0;
+        for (; falling < 64 && site.is(up, Site.FALLS); falling++, up = up.above()) {
+            for (Direction side : Direction.Plane.HORIZONTAL) {
+                if (site.is(up.relative(side), Site.FLUID)) return true;
+            }
+        }
+        return falling > 0 && site.is(up, Site.FLUID);
     }
 
     private static boolean overColumn(AABB body, BlockPos cell) {
