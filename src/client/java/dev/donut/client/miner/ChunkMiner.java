@@ -111,6 +111,20 @@ public final class ChunkMiner {
     private final Head head = new Head();
     private final List<Vec3> waypoints = new ArrayList<>();
     private int walkTicks, stuckTicks, walkFailures;
+    /** Climbs back up on a block under the feet that timed out in a row; a few and the run stops. */
+    private int towerFailures;
+    private static final int TOWER_FAILURES = 4;
+    /** Where the player was last tick, to tell a teleport from a step: a jump this far ends the dig planned from before. */
+    private Vec3 lastPos;
+    private static final double TELEPORTED = 8;
+    /**
+     * The good chunk and the origin of a room a run stopped in before it was done, in that world: started again, as the
+     * guard's hold and let go does, the run goes on with that room rather than starting another in whatever chunk is
+     * first now.
+     */
+    private Target resumeTarget;
+    private BlockPos resumeOrigin;
+    private ClientLevel resumeLevel;
     private BlockPos walkTarget;
     private double closest;
     private float walkPitch;
@@ -204,6 +218,9 @@ public final class ChunkMiner {
     public void reset() {
         Minecraft client = Minecraft.getInstance();
         if (pressing) releaseKeys(client);
+        resumeTarget = null;
+        resumeOrigin = null;
+        resumeLevel = null;
         settings().enabled = false;
         active = false;
         dig = null;
@@ -235,6 +252,14 @@ public final class ChunkMiner {
         if (!player.isAlive()) { finish(client, "stopped: you died.", true); return; }
         if (player.isSpectator()) { finish(client, "stopped: spectators can't dig.", true); return; }
         if (client.level != level) { finish(client, "stopped: you left the world it was started in.", true); return; }
+        Vec3 now = player.position();
+        boolean teleported = lastPos != null && now.distanceToSqr(lastPos) > TELEPORTED * TELEPORTED;
+        lastPos = now;
+        if (teleported && dig != null) {
+            // An /rtp sent just before, /spawn, or a teleport by someone else: the dig was planned from where the player was.
+            finish(client, "stopped: you were teleported away from the dig.", true);
+            return;
+        }
         float health = player.getHealth();
         boolean hurt = lastHealth >= 0 && health < lastHealth;
         lastHealth = health;
@@ -288,6 +313,10 @@ public final class ChunkMiner {
         if (!player.hasInfiniteMaterials() && player.getFoodData().getFoodLevel() <= FOOD_PAUSE) {
             return "Paused: you are hungry; eat something";
         }
+        // Everything dug from here on would stay on the floor: the player empties some slots first.
+        if (!player.hasInfiniteMaterials() && Kit.freeSlots(player.getInventory()) == 0) {
+            return "Paused: your inventory is full; make room";
+        }
         return "";
     }
 
@@ -327,8 +356,20 @@ public final class ChunkMiner {
         target = null;
         doing = Doing.NONE;
         walkFailures = 0;
+        towerFailures = 0;
+        lastPos = null;
         left = -1;
         schematicName = schematic.name;
+        // Chunks passed over before were for other settings, or another world: looked at again.
+        passedOver.clear();
+        SchematicSettings resumed = config.schematic;
+        if (s.goodChunks && resumeTarget != null && client.level == resumeLevel && resumed.originSet && resumeOrigin.equals(
+                new BlockPos(resumed.originX, resumed.originY, resumed.originZ))) {
+            target = resumeTarget;
+            message(client, "goes on with the room it began under the good chunk at " + target.chunk().getMiddleBlockX() + " "
+                    + target.chunk().getMiddleBlockZ() + ".", ChatFormatting.GRAY);
+            return plan(client, player, schematic, resumeOrigin);
+        }
         if (s.goodChunks) {
             if (finderOn.getAsBoolean()) message(client, "turned ChunkFinder on to look for a good chunk.", ChatFormatting.GRAY);
             show("Waiting for ChunkFinder to find a good chunk", false);
@@ -406,6 +447,9 @@ public final class ChunkMiner {
         headFor = null;
         int x = found.chunk().getMiddleBlockX(), z = found.chunk().getMiddleBlockZ();
         target = found;
+        resumeTarget = found;
+        resumeOrigin = origin.immutable();
+        resumeLevel = client.level;
         place.originSet = true;
         place.originX = origin.getX();
         place.originY = origin.getY();
@@ -959,6 +1003,11 @@ public final class ChunkMiner {
             releaseKeys(client);
             dig.stuck(towerFeet);
             doing = Doing.NONE;
+            // The block refused, or the jump held back by a cobweb or water: the same climb would come next again.
+            if (++towerFailures >= TOWER_FAILURES) {
+                finish(client, "stopped: can't climb back up from " + towerFeet.getX() + " " + towerFeet.getY() + " " + towerFeet.getZ()
+                        + ".", true);
+            }
             return;
         }
         if (!towerJumped) {
@@ -973,6 +1022,7 @@ public final class ChunkMiner {
         if (towerPlaced) {
             if (player.onGround()) {
                 releaseKeys(client);
+                towerFailures = 0;
                 waitTicks(delayTicks());
             }
             return;
@@ -1107,6 +1157,9 @@ public final class ChunkMiner {
 
     private void done(Minecraft client, String summary) {
         roomsFinished++;
+        resumeTarget = null;
+        resumeOrigin = null;
+        resumeLevel = null;
         int dugLeft = left;
         String text = "finished the room for " + schematicName + " (" + room.main + ")" + (summary.isEmpty() ? "." : "; " + summary + ".");
         finish(client, text, false);
