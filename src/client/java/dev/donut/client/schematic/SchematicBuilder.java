@@ -2343,16 +2343,27 @@ public final class SchematicBuilder {
     }
 
     /**
-     * Whether the water at a place to stand stands still: at the feet and the head only sources, as in a kelp channel,
-     * and where one is empty none running beside it to run in, and a full block underfoot. Still water pushes no one; a look from there holds
-     * as on dry ground, as a player placing a dispenser from the kelp channel in front of it (v4-full8, 3,70,9).
+     * Whether the water at a place to stand holds the player still: at the feet and the head only sources, or water running
+     * straight into a wall, which presses the player against it and carries them nowhere, as the row's water running into
+     * the kelp channel z 4 of ikea_v4 against the dispensers of z 3; where a cell is empty, no water running beside it to
+     * run in; and a full block underfoot. A look from there holds as on dry ground, as a player placing a dispenser from the
+     * kelp channel in front of it (v4-full8 3,70,9, v4-full11 3,70,3).
      */
     private static boolean stillWater(Level level, Navigator.Node node) {
         BlockPos floor = node.floor();
         if (!level.getBlockState(floor).isCollisionShapeFullBlock(level, floor)) return false;
         for (BlockPos cell : new BlockPos[] {node.feetCell(), node.feetCell().above()}) {
             FluidState fluid = level.getFluidState(cell);
-            if (!fluid.isEmpty() && !fluid.isSource()) return false;
+            if (!fluid.isEmpty() && !fluid.isSource()) {
+                // Running: only into walls. Each way it runs, the cell that way holds the player back.
+                Vec3 flow = fluid.getFlow(level, cell);
+                for (Direction side : Direction.Plane.HORIZONTAL) {
+                    if (flow.x * side.getStepX() + flow.z * side.getStepZ() < 0.3) continue;
+                    BlockPos toward = cell.relative(side);
+                    if (level.getBlockState(toward).getCollisionShape(level, toward).isEmpty()) return false;
+                }
+                continue;
+            }
             // A cell full of water takes none in from beside it; an empty one may.
             if (fluid.isSource()) continue;
             for (Direction side : Direction.Plane.HORIZONTAL) {
