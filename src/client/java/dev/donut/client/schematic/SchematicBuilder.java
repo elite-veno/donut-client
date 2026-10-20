@@ -1897,6 +1897,11 @@ public final class SchematicBuilder {
                     WALKS_WITHOUT_CLICK, layerNumber);
             if (climbOut(client, player, candidates, materials, layerNumber, lift)) return;
         }
+        // In a trench along a row of up-facing blocks: the next of them from a pit beside this one first, before a walk out
+        // to whatever the last one let go in up there, and back down into a new pit for the next (v1-reg: three walks per
+        // step along the row at x 11). What waited up there goes in on one walk along the row once the trench is done.
+        if (settings().walk && digAlong(player, candidates, materials, layerNumber, lift, player.blockInteractionRange() - 0.2,
+                System.nanoTime(), true)) return;
         if (settings().walk && planWalk(client, player, candidates, materials, layerNumber, lift)) return;
         if (settings().walk && planPit(client, player, candidates, materials, layerNumber, lift)) return;
         if (settings().walk && walkToSpareHelper(client, player)) return;
@@ -5410,7 +5415,7 @@ public final class SchematicBuilder {
         double reach = player.blockInteractionRange() - 0.2;
         boolean creative = player.hasInfiniteMaterials();
         long started = System.nanoTime();
-        if (digAlong(player, candidates, materials, layerNumber, lift, reach, started)) return true;
+        if (digAlong(player, candidates, materials, layerNumber, lift, reach, started, false)) return true;
         // As for walks: a pit search that found nothing finds nothing again until something it goes by changes.
         long searchKey = walkSearchKey(player, candidates, lift) * 31 + uselessPits.size();
         if (searchKey == failedPitKey && System.nanoTime() - failedPitAt < FAILED_SEARCH_NANOS) return false;
@@ -5468,13 +5473,14 @@ public final class SchematicBuilder {
      * blocks to place from below, rather than climbing out and digging in again for each. True when one is begun.
      */
     private boolean digAlong(LocalPlayer player, List<Integer> candidates, Materials materials, int layerNumber, boolean lift,
-                             double reach, long started) {
+                             double reach, long started, boolean lookingUpOnly) {
         if (lastPit == null || !inPit(player, lastPit)) return false;
         Level level = player.level();
         boolean creative = player.hasInfiniteMaterials();
         int tried = 0;
         for (int i : candidates) {
             if (plan.status(i) != BuildPlan.Status.PENDING || plan.kind(i) != BlockRules.Kind.PLACE || support(player, i, started) != 1) continue;
+            if (lookingUpOnly && !BlockRules.placedLookingUp(plan.target(i))) continue;
             if (!lift && seals(player, i, started) == 1) continue;
             if (lift && liftHolds(player.level(), i)) continue;
             BlockPos pos = plan.pos(i);
