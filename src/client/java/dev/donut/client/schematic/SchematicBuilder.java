@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -802,6 +803,7 @@ public final class SchematicBuilder {
         helperSpot.clear();
         guardSpot.clear();
         guardWalks.clear();
+        guardMemoCleared.clear();
         helpersLeft.clear();
         leftRetried = false;
         cleanupWide = false;
@@ -1139,6 +1141,7 @@ public final class SchematicBuilder {
         helperSpot.clear();
         guardSpot.clear();
         guardWalks.clear();
+        guardMemoCleared.clear();
         helpersLeft.clear();
         leftRetried = false;
         cleanupWide = false;
@@ -2434,6 +2437,8 @@ public final class SchematicBuilder {
      */
     private final Map<Integer, BlockPos> guardSpot = new HashMap<>();
     private final Map<Integer, Integer> guardWalks = new HashMap<>();
+    /** Blocks whose guard stands, for which the walk searches were made afresh once. */
+    private final Set<Integer> guardMemoCleared = new HashSet<>();
 
     /**
      * Where a helper block makes a place to stand for block {@code i} safe, or null: a place near it with a look at it,
@@ -2497,6 +2502,14 @@ public final class SchematicBuilder {
     private boolean placeGuard(Minecraft client, LocalPlayer player, int layerNumber) {
         if (guardSpot.isEmpty() || helperItem(player) == null) return false;
         Level level = player.level();
+        // One guard at a time: one standing, for a block still to go in, gets its block first. The walk search made before
+        // it went in found nothing, and would find nothing again for a while: made afresh.
+        for (Map.Entry<Integer, BlockPos> entry : guardSpot.entrySet()) {
+            Helper standing = helpers.get(entry.getValue().asLong());
+            if (standing == null || standing.serves() != entry.getKey() || plan.status(entry.getKey()) != BuildPlan.Status.PENDING) continue;
+            if (guardMemoCleared.add(entry.getKey())) Arrays.fill(failedWalkKey, 0);
+            return false;
+        }
         for (Iterator<Map.Entry<Integer, BlockPos>> it = guardSpot.entrySet().iterator(); it.hasNext(); ) {
             Map.Entry<Integer, BlockPos> entry = it.next();
             int i = entry.getKey();
