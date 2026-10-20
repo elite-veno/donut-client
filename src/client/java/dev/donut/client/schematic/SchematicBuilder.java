@@ -1895,12 +1895,13 @@ public final class SchematicBuilder {
     private boolean waitsForUpFacing(Level level, int i) {
         if (plan.kind(i) != BlockRules.Kind.PLACE) return false;
         BlockPos pos = plan.pos(i);
-        if (!level.getBlockState(pos.below()).canBeReplaced() || !level.getBlockState(pos).canBeReplaced()) return false;
+        // A helper block of the builder's own counts as open: it comes away again, as v4-e's bridge under 1,70,21 did not.
+        if (!openForLook(level, pos.below()) || !level.getBlockState(pos).canBeReplaced()) return false;
         boolean upFacing = BlockRules.facesUp(plan.target(i));
         // One beside it, or one or two layers up beside the cells over it: a column of them stacked, each a layer higher,
         // takes its look up past this spot from as far below as the eye is.
         for (int up = 0; up <= 2; up++) {
-            if (up > 0 && !level.getBlockState(pos.above(up)).canBeReplaced()) break;
+            if (up > 0 && !openForLook(level, pos.above(up))) break;
             // A row of them goes in in any order: each is placed from below, not past the other.
             if (up == 0 && upFacing) continue;
             for (Direction side : Direction.Plane.HORIZONTAL) {
@@ -1919,6 +1920,11 @@ public final class SchematicBuilder {
         return false;
     }
 
+
+    /** Whether a look can come past {@code pos}: nothing there, or only a helper block of the builder's that comes away. */
+    private boolean openForLook(Level level, BlockPos pos) {
+        return level.getBlockState(pos).canBeReplaced() || helpers.containsKey(pos.asLong());
+    }
 
     /** With the seals lifted, block {@code i} still waits for an up-facing neighbour, for {@link #UP_WAIT_TICKS} after. */
     private boolean upWaitHolds(Level level, int i) {
