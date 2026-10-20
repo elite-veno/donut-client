@@ -7165,6 +7165,9 @@ public final class SchematicBuilder {
                 // only at a corner is kept for last, for where nothing better is: on top of a build, say.
                 if (besideDrop(level, at, false)) continue;
                 boolean corner = besideDrop(level, at, true);
+                // A corner that drops more than a block is no place either: v4-clean3 lost a box so, broken on the glass at
+                // 20 72 23 with the corner at 21 72 22 open down to the ground seven blocks under, the only spot up there.
+                if (corner && deepCorner(level, at)) continue;
                 // Nor where the dropped box is carried off before it is picked up: into a hopper, or down a stream.
                 if (carriedOff(level, at)) continue;
                 // Never on a spot the schematic fills.
@@ -7249,6 +7252,18 @@ public final class SchematicBuilder {
                 if (dx == 0 && dz == 0 || (dx != 0 && dz != 0) != corners) continue;
                 BlockPos next = at.offset(dx, 0, dz);
                 if (level.getBlockState(next).getCollisionShape(level, next).isEmpty() && !catches(level, next.below())) return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether a corner beside {@code at} is open with nothing to stop a dropped item within a block under it. */
+    private static boolean deepCorner(Level level, BlockPos at) {
+        for (int dx = -1; dx <= 1; dx += 2) {
+            for (int dz = -1; dz <= 1; dz += 2) {
+                BlockPos next = at.offset(dx, 0, dz), under = next.below();
+                if (!level.getBlockState(next).getCollisionShape(level, next).isEmpty() || catches(level, under)) continue;
+                if (!level.getBlockState(under).getCollisionShape(level, under).isEmpty() || !catches(level, under.below())) return true;
             }
         }
         return false;
@@ -7584,9 +7599,10 @@ public final class SchematicBuilder {
 
     /** The dropped shulker box item near where the box stood, or null. */
     private ItemEntity droppedBox(ClientLevel level, LocalPlayer player) {
-        // Within a few blocks of where it stood: a box can bounce, slide on ice nearby, or fall a few blocks.
-        List<ItemEntity> items = level.getEntitiesOfClass(ItemEntity.class, new AABB(box).inflate(8),
-                item -> Materials.isShulkerBox(item.getItem()) && item.getY() - player.getY() < 3 && player.getY() - item.getY() < 6);
+        // Within a few blocks of where it stood: a box can bounce, slide on ice nearby, or fall a few blocks, or as far as
+        // the ground: one that fell seven off the top of v4 was not in sight from up there, and was waited for for good.
+        List<ItemEntity> items = level.getEntitiesOfClass(ItemEntity.class, new AABB(box).inflate(8, 16, 8),
+                item -> Materials.isShulkerBox(item.getItem()) && item.getY() - player.getY() < 3 && player.getY() - item.getY() < 16);
         return items.stream().min(Comparator.comparingDouble(item -> item.distanceToSqr(player))).orElse(null);
     }
 
