@@ -1922,10 +1922,18 @@ public final class SchematicBuilder {
      * after: once in, such a block shuts the other in for good.
      */
     private boolean waitsForUpFacing(Level level, int i) {
-        if (plan.kind(i) != BlockRules.Kind.PLACE) return false;
+        return upWait(level, i) != 0;
+    }
+
+    /**
+     * As {@link #waitsForUpFacing}: 0 no, 1 for one beside it in its own layer, 2 for one a layer or two up, which can't
+     * be tried until the build gets there.
+     */
+    private int upWait(Level level, int i) {
+        if (plan.kind(i) != BlockRules.Kind.PLACE) return 0;
         BlockPos pos = plan.pos(i);
         // A helper block of the builder's own counts as open: it comes away again, as v4-e's bridge under 1,70,21 did not.
-        if (!openForLook(level, pos.below()) || !level.getBlockState(pos).canBeReplaced()) return false;
+        if (!openForLook(level, pos.below()) || !level.getBlockState(pos).canBeReplaced()) return 0;
         boolean upFacing = BlockRules.placedLookingUp(plan.target(i));
         // One beside it, or one or two layers up beside the cells over it: a column of them stacked, each a layer higher,
         // takes its look up past this spot from as far below as the eye is.
@@ -1943,10 +1951,10 @@ public final class SchematicBuilder {
                     LOGGER.info("{} at {} waits: it would take the look up at {} at {}", plan.target(i).getBlock().getName().getString(),
                             pos.toShortString(), plan.target(j).getBlock().getName().getString(), at.toShortString());
                 }
-                return true;
+                return up == 0 ? 1 : 2;
             }
         }
-        return false;
+        return 0;
     }
 
 
@@ -1990,7 +1998,10 @@ public final class SchematicBuilder {
 
     /** With the seals lifted, block {@code i} still waits for an up-facing neighbour, for {@link #UP_WAIT_TICKS} after. */
     private boolean upWaitHolds(Level level, int i) {
-        return (sealsLiftedAt == UNLIFTED || tick - sealsLiftedAt < UP_WAIT_TICKS) && waitsForUpFacing(level, i);
+        int wait = upWait(level, i);
+        // One a layer or two up isn't timed out: it can't even be tried before the build reaches its layer, and once this
+        // block is in it never can (v4-g let the ice in after five minutes, before the observers a layer up).
+        return wait == 2 || wait == 1 && (sealsLiftedAt == UNLIFTED || tick - sealsLiftedAt < UP_WAIT_TICKS);
     }
 
     /** How long, after the seals are lifted, a block still waits for an up-facing neighbour: the walks get a few more tries. */
