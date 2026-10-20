@@ -365,12 +365,16 @@ public final class BuildPlan {
     public Status update(Level level, int i) {
         if (!placed(i)) return set(i, Status.SKIPPED);
         if (!LoadedChunks.has(level, pos(i))) return set(i, Status.UNLOADED);
-        return update(i, level.getBlockState(pos(i)));
+        BlockPos partner = BlockRules.chestPartner(pos(i), targets[i]);
+        return update(i, level.getBlockState(pos(i)), partner == null ? null : level.getBlockState(partner));
     }
 
     /** What block {@code i} needs with {@code current} in its spot, as read from the world. */
-    Status update(int i, BlockState current) {
-        return set(i, placed(i) ? compute(current, i) : Status.SKIPPED);
+    Status update(int i, BlockState current) { return update(i, current, null); }
+
+    /** As {@link #update(int, BlockState)}, with what stands where the other half of a double chest goes, if known. */
+    Status update(int i, BlockState current, BlockState partner) {
+        return set(i, placed(i) ? compute(current, i, partner) : Status.SKIPPED);
     }
 
     private Status set(int i, Status now) {
@@ -394,7 +398,7 @@ public final class BuildPlan {
         return now;
     }
 
-    private Status compute(BlockState current, int i) {
+    private Status compute(BlockState current, int i, BlockState partner) {
         BlockState target = targets[i];
         dryDone[i] = false;
         waterIn[i] = false;
@@ -404,6 +408,13 @@ public final class BuildPlan {
             if (BlockRules.holdsFluid(current, target)) return done(i);
             if (failed[i]) return Status.FAILED;
             return current.canBeReplaced() ? Status.PENDING : Status.WRONG;
+        }
+        if (BlockRules.loneHalf(current, target)) {
+            // Half of a double chest standing alone: not done until the other half joins it. With the other half
+            // there alone as well, the two never join by themselves: one goes again, to be placed against the other.
+            if (failed[i]) return Status.FAILED;
+            boolean waiting = partner != null && BlockRules.loneHalf(partner, BlockRules.chestOther(target));
+            return waiting ? Status.MISPLACED : Status.PENDING;
         }
         if (BlockRules.satisfied(current, target)) return done(i);
         dryDone[i] = soak[i] && BlockRules.needsWater(current, target) && BlockRules.placedFully(current, target);

@@ -157,6 +157,21 @@ public final class BlockRules {
     }
 
     /**
+     * Whether the world's block is a lone chest, facing as the target does, where the target is half of a double chest:
+     * the first half placed, before the other joins it.
+     */
+    public static boolean loneHalf(BlockState current, BlockState target) {
+        return target.getBlock() instanceof ChestBlock && target.getValue(ChestBlock.TYPE) != ChestType.SINGLE
+                && current.getBlock() == target.getBlock() && current.getValue(ChestBlock.TYPE) == ChestType.SINGLE
+                && current.getValue(ChestBlock.FACING) == target.getValue(ChestBlock.FACING);
+    }
+
+    /** The target of the other half of the double chest {@code target} is half of. */
+    public static BlockState chestOther(BlockState target) {
+        return target.setValue(ChestBlock.TYPE, target.getValue(ChestBlock.TYPE).getOpposite());
+    }
+
+    /**
      * Whether a block just placed, or about to be, starts the target: the same block, with every setting placing
      * decides the same. A slab of a double slab, the first of several candles and the first half of a double chest
      * count.

@@ -91,6 +91,25 @@ class BuildPlanTest {
     }
 
     @Test
+    void aHalfOfADoubleChestStandingAloneIsNotDone() {
+        BlockState left = Blocks.CHEST.defaultBlockState().setValue(net.minecraft.world.level.block.ChestBlock.TYPE,
+                net.minecraft.world.level.block.state.properties.ChestType.LEFT);
+        BlockPos leftAt = new BlockPos(0, 0, 0), rightAt = BlockRules.chestPartner(leftAt, left);
+        BlockState right = BlockRules.chestOther(left), single = Blocks.CHEST.defaultBlockState();
+        Map<BlockPos, BlockState> blocks = new LinkedHashMap<>();
+        blocks.put(leftAt, left);
+        blocks.put(rightAt, right);
+        BuildPlan plan = BuildPlan.of(blocks, true);
+        int i = plan.indexOf(leftAt);
+        BlockState air = Blocks.AIR.defaultBlockState();
+
+        assertEquals(BuildPlan.Status.PENDING, plan.update(i, single, air), "the first half waits for the other");
+        assertEquals(BuildPlan.Status.MISPLACED, plan.update(i, single, single), "two lone chests never join by themselves");
+        assertEquals(BuildPlan.Status.DONE, plan.update(i, left, right));
+        assertEquals(BuildPlan.Status.DONE, plan.update(plan.indexOf(rightAt), right, left));
+    }
+
+    @Test
     void aBlockFullOfWaterCountsAsInOncePlacedDryAndGetsItsWaterWithItsLayer() {
         Map<BlockPos, BlockState> blocks = new LinkedHashMap<>();
         BlockPos chestAt = new BlockPos(0, 0, 0), hopperAt = new BlockPos(1, 0, 0), waterAt = new BlockPos(2, 0, 0);
