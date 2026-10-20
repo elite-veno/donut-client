@@ -4993,11 +4993,24 @@ public final class SchematicBuilder {
             BlockState state = Block.byItem(item).defaultBlockState();
             PlacementSolver.Result result = PlacementSolver.find(player, cell, state, new ItemStack(item), player.blockInteractionRange(),
                     helpers::containsKey);
-            if (result.click() != null) {
-                if (!creative && Materials.of(player.getInventory()).loose(item) == 0) {
-                    startRestock(client, player, item, Materials.of(player.getInventory()));
+            if (result.click() != null && !creative && Materials.of(player.getInventory()).loose(item) == 0) {
+                Materials carried = Materials.of(player.getInventory());
+                if (settings().useShulkers && !waitsForRoom(item, carried) && !noBoxHere(item)) {
+                    startRestock(client, player, item, carried);
                     return true;
                 }
+                // What was there is only in a box that can't be fetched now, shulker boxes off, no room or no spot for one:
+                // helper blocks carried fill it as well, else it waits, rather than asking for the box again each time
+                // and holding up the build.
+                Item helper = helperItem(player);
+                if (helper == null || helper == item || carried.loose(helper) == 0) continue;
+                PlacementSolver.Click instead = PlacementSolver.find(player, cell, Block.byItem(helper).defaultBlockState(), new ItemStack(helper),
+                        player.blockInteractionRange(), helpers::containsKey).click();
+                if (instead == null) continue;
+                startAim(client, player, new Aim(Act.REFILL, -1, instead, helper, cell, level.getBlockState(cell), 0));
+                return true;
+            }
+            if (result.click() != null) {
                 startAim(client, player, new Aim(Act.REFILL, -1, result.click(), item, cell, level.getBlockState(cell), 0));
                 return true;
             }
