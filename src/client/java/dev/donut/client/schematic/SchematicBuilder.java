@@ -397,6 +397,9 @@ public final class SchematicBuilder {
     private boolean leftRetried;
     /** Whether the cleanup's last try is on: climbing searches that go much further before a helper block is left. */
     private boolean cleanupWide;
+    /** Climbs out of where the cleanup's walks shut the player in, over cells the build has open (see {@link #cleanUp}). */
+    private int cleanupEscapes;
+    private static final int CLEANUP_ESCAPES = 3;
     /**
      * Whether the cleanup's walks may jump down off the build, as {@link Navigator#dropsOff} lets them: a last round, for
      * helper blocks on the ground round a build the player is up on, with no other way down.
@@ -814,6 +817,7 @@ public final class SchematicBuilder {
         leftRetried = false;
         cleanupWide = false;
         cleanupDrop = false;
+        cleanupEscapes = 0;
         cleared.clear();
         pitWalks.clear();
         pitFill = null;
@@ -1152,6 +1156,7 @@ public final class SchematicBuilder {
         leftRetried = false;
         cleanupWide = false;
         cleanupDrop = false;
+        cleanupEscapes = 0;
         cleared.clear();
         pitWalks.clear();
         pitFill = null;
@@ -4564,6 +4569,26 @@ public final class SchematicBuilder {
             nearWalks.clear();
             if (debug()) LOGGER.info("Cleanup: {} helper blocks out of reach, looking again with a jump down off the build", helpers.size());
             return true;
+        }
+        if (settings().walk && cleanupEscapes < CLEANUP_ESCAPES && helperItem(player) != null
+                && exitFrom(player, player.level(), here, null) == null) {
+            // Shut in where a cleanup walk took the player down for a helper block, as a slot a block wide between a row of
+            // crafters and the glass wall, floored with hoppers no pillar goes up from: every search from here finds nothing,
+            // and every helper block would be left. Out first, climbing as a way out of a pocket does, then the rest again.
+            Navigator.Path out = escapeFrom(player, player.level(), here, null);
+            if (out != null && out.nodes().size() > 1) {
+                cleanupEscapes++;
+                if (!climbReady(client, player, out)) return true;
+                releaseKeys(client);
+                walker.start(out.nodes());
+                escapeWalk = true;
+                cleanupSkipped.clear();
+                nearWalks.clear();
+                show("Climbing out to take the rest of the helper blocks away", false);
+                if (debug()) LOGGER.info("Cleanup: shut in at {} with {} helper blocks left: climbing out first, {} steps", here,
+                        helpers.size(), out.nodes().size() - 1);
+                return true;
+            }
         }
         for (long key : helpers.keySet()) {
             BlockPos pos = BlockPos.of(key);
