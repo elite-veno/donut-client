@@ -7791,7 +7791,11 @@ public final class SchematicBuilder {
             } else if (needs.containsKey(item) && !soon.containsKey(item)) {
                 rank = 0;
             } else if (!needs.containsKey(item)) {
-                continue;
+                // What the player carries of their own stays; but one left over of the build's own blocks, of a kind all placed
+                // now, goes back first. The crafter run stopped in layer 9 so, 22 slots holding one each of a repeater, a
+                // note block, a door and the like, with nothing to put back for the chests it opened a box for.
+                if (!bill().containsKey(item)) continue;
+                rank = 0;
             } else if (!now.containsKey(item)) {
                 rank = 2;
             } else if (carried.loose(item) - stack.getCount() >= now.get(item)) {
