@@ -16,6 +16,7 @@ import net.minecraft.tags.BlockTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
@@ -372,6 +373,9 @@ public final class Navigator {
                 // Landing a jump or a drop on a narrow top takes more aim than a walk has: a few centimetres off and the
                 // body comes down beside it. Narrow tops are walked onto at their own height only.
                 if (move != Move.WALK && narrow(nx, ny, nz)) continue;
+                // Honey holds a jump down to half its height, and slime throws back up what drops on it.
+                if (move == Move.JUMP && unsteady(from.floor(), Blocks.HONEY_BLOCK)) continue;
+                if (move == Move.DROP && unsteady(new BlockPos(nx, ny, nz), Blocks.SLIME_BLOCK)) continue;
                 Node next = new Node(nx, ny, nz, feet, move);
                 if (!badSteps.isEmpty() && badSteps.contains(stepKey(from, next))) continue;
                 out.add(next);
@@ -383,7 +387,8 @@ public final class Navigator {
                 && pillarAllowed.test(cell)
                 && clear(from.x(), from.z(), from.feet() + 1, from.feet() + 1 + BODY, Integer.MIN_VALUE)
                 && !crosses(placed, from.x(), from.z(), from.feet() + 1, from.feet() + 1 + BODY)
-                && seeThrough(from.x(), from.z(), cell.getY(), cell.getY() + 2)) {
+                && seeThrough(from.x(), from.z(), cell.getY(), cell.getY() + 2)
+                && !unsteady(from.floor(), Blocks.HONEY_BLOCK)) {
             Node next = new Node(cell.getX(), cell.getY(), cell.getZ(), from.feet() + 1, Move.PILLAR);
             if (badSteps.isEmpty() || !badSteps.contains(stepKey(from, next))) out.add(next);
         }
@@ -550,6 +555,11 @@ public final class Navigator {
             if (!state.getCollisionShape(level, pos).isEmpty()) return false;
         }
         return true;
+    }
+
+    /** Whether the block at {@code pos} is {@code block}: honey under a jump, slime under a drop. */
+    private boolean unsteady(BlockPos pos, Block block) {
+        return level.getBlockState(pos).is(block);
     }
 
     static boolean hurts(BlockState state) {
