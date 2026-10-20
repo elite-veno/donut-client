@@ -6982,7 +6982,7 @@ public final class SchematicBuilder {
         boolean boxHasRoom = false;
         for (int slot = 0; slot < 27; slot++) if (menu.getSlot(slot).getItem().isEmpty()) boxHasRoom = true;
         if (!boxHasRoom) return -1;
-        return toPutBack(menu, player, carried);
+        return toPutBack(menu, player, carried, false);
     }
 
     /**
@@ -6999,7 +6999,7 @@ public final class SchematicBuilder {
             if (debug()) LOGGER.info("No swap for {} in the full inventory: the open box holds none", name(restockItem));
             return false;
         }
-        int back = toPutBack(menu, player, carried);
+        int back = toPutBack(menu, player, carried, true);
         if (back < 0) {
             if (debug()) LOGGER.info("No swap for {} in the full inventory: nothing carried can go back into the box", name(restockItem));
             return false;
@@ -7011,8 +7011,15 @@ public final class SchematicBuilder {
         return true;
     }
 
-    /** The slot of the player's inventory, in the box's menu, best put back into the box; -1 when nothing can go back. */
-    private int toPutBack(ShulkerBoxMenu menu, LocalPlayer player, Materials carried) {
+    /**
+     * The slot of the player's inventory, in the box's menu, best put back into the box; -1 when nothing can go back.
+     * With {@code swap}, for a swap with what the box was opened for, a stack the layer still takes all of comes last: the
+     * one with the most carried. With the inventory full of boxes and every stack one the layer takes, as on ikea_v4's
+     * layer 8 (26 boxes, crafters, iron doors and observers all at y 72), nothing else could go back, the box was closed
+     * without what it was opened for, and the walks for its blocks came to nothing. Swapped, those blocks go in, and the
+     * stack put back comes out again when its blocks come up.
+     */
+    private int toPutBack(ShulkerBoxMenu menu, LocalPlayer player, Materials carried, boolean swap) {
         Map<Item, Integer> needs = plan.needs(), now = needsUpTo(player.level(), layerY);
         Map<Item, Integer> helperKept = new HashMap<>();
         int best = -1, bestRank = Integer.MAX_VALUE;
@@ -7040,10 +7047,12 @@ public final class SchematicBuilder {
                 rank = 2;
             } else if (carried.loose(item) - stack.getCount() >= now.get(item)) {
                 rank = 3;
+            } else if (swap) {
+                rank = 6;
             } else {
                 continue;
             }
-            if (rank < bestRank) {
+            if (rank < bestRank || rank == 6 && bestRank == 6 && stack.getCount() > menu.getSlot(best).getItem().getCount()) {
                 best = slot;
                 bestRank = rank;
             }
