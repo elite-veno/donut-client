@@ -401,6 +401,9 @@ public final class Excavator {
         }
         BlockPos here = path.get(reached), next = path.get(reached + 1);
         List<BlockPos> need = new ArrayList<>(Staircase.clears(here, next));
+        // A step or two behind the furthest reached, the way back up to it is walked too: sand or gravel come down into it
+        // since, as when the block over its head was dug from a step back, is dug again first.
+        for (int k = index; k < reached; k++) need.addAll(Staircase.clears(path.get(k), path.get(k + 1)));
         // An area pickaxe digs a level step and the climb or drop after it from the same place: see Staircase.
         if (landings && next.getY() == here.getY() && reached + 2 < path.size() && path.get(reached + 2).getY() != next.getY()) {
             need.addAll(Staircase.clears(next, path.get(reached + 2)));
@@ -412,7 +415,10 @@ public final class Excavator {
             if ((flags & Site.UNLOADED) != 0) return new Wait("waiting for the blocks ahead to load");
             if ((flags & Site.FLUID) != 0) {
                 avoid.add(cell);
-                return replan(site, feet, ((flags & Site.LAVA) != 0 ? "lava" : "water") + " in the way at " + str(cell));
+                String why = ((flags & Site.LAVA) != 0 ? "lava" : "water") + " in the way at " + str(cell);
+                // Climbing in the room, a new climb from the same place winds the same way, into the same water: from
+                // somewhere else.
+                return phase == Phase.CLIMB ? climbElsewhere(site, feet, why) : replan(site, feet, why);
             }
             if ((flags & Site.HARD) != 0) {
                 // A chest, spawner or bedrock in the way: go round it.
@@ -441,7 +447,8 @@ public final class Excavator {
             if (swing != null) return new Dig(swing);
             if (!blocked.isEmpty()) {
                 avoid.addAll(blocked);
-                return replan(site, feet, "water or lava is right behind the way at " + str(blocked.iterator().next()));
+                String why = "water or lava is right behind the way at " + str(blocked.iterator().next());
+                return phase == Phase.CLIMB ? climbElsewhere(site, feet, why) : replan(site, feet, why);
             }
             // On open or broken ground, such as a hillside, an area pickaxe can't always go on without taking the block
             // underfoot: it digs into the ground, drops into the pit, and plans the way in again from there, with rock
