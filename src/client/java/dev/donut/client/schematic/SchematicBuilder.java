@@ -756,6 +756,12 @@ public final class SchematicBuilder {
         attackHeld = false;
         walker.stop(client);
         releaseKeys(client);
+        // Disconnected while eating: use let go, and the next build doesn't take up a meal begun in another world, with
+        // whatever is in hand then, a block that use would place.
+        if (eatingSince >= 0) {
+            client.options.keyUse.setDown(false);
+            eatingSince = -1;
+        }
         breaking = null;
         pit = null;
         pitAlong = false;
