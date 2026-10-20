@@ -338,6 +338,8 @@ public final class SchematicBuilder {
     private Navigator.Node walkEnd;
     /** Places tried and found useless since the last block went in, so the next walk goes somewhere else. */
     private final Set<Long> uselessSpots = new HashSet<>();
+    /** Places walked to since the last block went in to search again from nearer the blocks (see planWalk): once each. */
+    private final Set<Long> approached = new HashSet<>();
     /**
      * Blocks changed in or near the build, and chunks loaded, since the game started: a walk search that found no place to
      * stand finds none again until one of them, or the player, the inventory or what the search leaves out, changes.
@@ -1110,6 +1112,7 @@ public final class SchematicBuilder {
         buildSlot = -1;
         walkFailures = 0;
         uselessSpots.clear();
+        approached.clear();
         lastWalkEnd = null;
         shutIn.clear();
         traps.clear();
@@ -1372,6 +1375,7 @@ public final class SchematicBuilder {
                     liftedFor.clear();
                     arrivalMisses.clear();
                     uselessSpots.clear();
+                    approached.clear();
                     lastWalkEnd = null;
                     shutIn.clear();
                     traps.clear();
@@ -1410,6 +1414,7 @@ public final class SchematicBuilder {
                 liftedFor.clear();
                 arrivalMisses.clear();
                 uselessSpots.clear();
+                approached.clear();
                 lastWalkEnd = null;
                 shutIn.clear();
                 traps.clear();
@@ -3639,6 +3644,7 @@ public final class SchematicBuilder {
             // helpers go down, one after another, and never the block, is still passed over.
             walksSinceClick = 0;
             uselessSpots.clear();
+            approached.clear();
             clickedSinceWalk = true;
         }
         forgetNoClicks();
@@ -5488,6 +5494,9 @@ public final class SchematicBuilder {
         // For the log: every place with the eye near the first block, whatever the goal makes of it.
         Vec3 firstMiddle = Vec3.atCenterOf(plan.pos(near.getFirst()));
         List<Navigator.Node> close = new ArrayList<>();
+        // The highest place with a block in reach, nearest the first block: where a search that ran out of places goes on
+        // from (see below).
+        Navigator.Node[] nearest = new Navigator.Node[1];
         Navigator.Goal goal = node -> {
             seen[0]++;
             if (debug() && close.size() < 300 && node.eye().distanceToSqr(firstMiddle) < 25) close.add(node);
@@ -5515,6 +5524,9 @@ public final class SchematicBuilder {
             // Places for the log: those standing on top of the layer, nearest the first block, are picked out below.
             seen[1]++;
             if (debug() && sample.size() < 400) sample.add(node);
+            Navigator.Node was = nearest[0];
+            if (was == null || node.feet() > was.feet() + 1e-3 || Math.abs(node.feet() - was.feet()) < 1e-3
+                    && node.eye().distanceToSqr(firstMiddle) < was.eye().distanceToSqr(firstMiddle)) nearest[0] = node;
             // Close enough by distance; whether a real look reaches them from here is checked for the nearest few.
             inReach.sort(Comparator.comparingDouble(i -> Vec3.atCenterOf(plan.pos(i)).distanceToSqr(eye)));
             double good = 0;
@@ -5611,6 +5623,19 @@ public final class SchematicBuilder {
                             path.end().feet(), path.end().z());
                 }
             }
+        }
+        if (path == null && seen[2] == 0 && seen[0] >= Navigator.MAX_NODES && nearest[0] != null && approached.add(nearest[0].key())
+                && approach(client, player, start, nearest[0], ceiling, leaning)) {
+            // The search ran out of places before it got to one with a look: from far off, the open ground beside the
+            // build after a restock say, every place below and round the build costs less than a climb up onto its top,
+            // and those are searched first. Over to the highest place it did get to beside the blocks, and searched again
+            // from there, as the place on top the walk was for before the restock is a few steps off from there (the
+            // bone-meal crafter's bubble column at 12, 78, 34).
+            if (debug()) LOGGER.info("No place to stand for {} blocks, such as {} at {}, among the {} places reached from {}: over to {} {} {}, nearer them, to search again",
+                    near.size(), plan.target(near.getFirst()), plan.pos(near.getFirst()).toShortString(), seen[0], start, nearest[0].x(),
+                    nearest[0].feet(), nearest[0].z());
+            show("Layer " + layerNumber + " of " + plan.layers().size() + ": walking nearer the blocks left", false);
+            return true;
         }
         noStand = path == null ? List.copyOf(near) : List.of();
         if (path == null) {
@@ -5759,6 +5784,30 @@ public final class SchematicBuilder {
         liftedFor.clear();
         if (lift) liftedFor.addAll(walkExpects);
         walkEnd = end;
+        return true;
+    }
+
+    /**
+     * A walk over to {@code to}, a place planWalk's search got to: the way there worked out again, as that search went,
+     * with or without a drop off the build. True once it is under way, or helper blocks are on their way for its climbs.
+     */
+    private boolean approach(Minecraft client, LocalPlayer player, Navigator.Node start, Navigator.Node to, double ceiling, long leaning) {
+        Navigator.Goal there = node -> node.key() == to.key() ? 1 : 0;
+        Navigator.Path path = navigator(player, true).climbUpTo(ceiling).vary(leaning).find(start, there);
+        double down = farDrop(player);
+        if (path == null && down > 0) path = navigator(player, true).climbUpTo(ceiling).vary(leaning).dropsOff(down, plan.bounds).find(start, there);
+        if (path == null || path.nodes().size() < 2 || dropsIntoTrap(player, path)) return false;
+        if (!climbReady(client, player, path)) {
+            // Tried again once they are there.
+            approached.remove(to.key());
+            return true;
+        }
+        releaseKeys(client);
+        walker.start(path.nodes());
+        // Not a walk for any block: nothing is expected to go in on arriving, and the place isn't passed over for it.
+        walkEnd = null;
+        walkExpects.clear();
+        liftedFor.clear();
         return true;
     }
 
