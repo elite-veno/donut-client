@@ -89,11 +89,16 @@ public final class MaterialOrder {
     }
 
     /** Buys what the quote found, up to its total and GoNuts' margin over it; null, or why not. */
-    public static String buy(boolean thenBuild) {
+    public static String buy(boolean thenBuild) { return buy(thenBuild, Long.MAX_VALUE); }
+
+    /** As {@link #buy(boolean)}, never spending more than {@code ceiling} dollars in all. */
+    public static String buy(boolean thenBuild, long ceiling) {
         String blocked = blocker();
         if (blocked != null) return blocked;
         MaterialBuyer.Snapshot quote = GoNutsApi.materials();
-        String why = GoNutsApi.buyMaterials(Math.round(quote.quoteTotal() * MaterialBuyer.BUDGET_MARGIN));
+        long budget = Math.min(Math.round(quote.quoteTotal() * MaterialBuyer.BUDGET_MARGIN), ceiling);
+        if (budget <= 0) return "No money left to spend";
+        String why = GoNutsApi.buyMaterials(budget);
         if (why == null) buildAfter = thenBuild;
         return why;
     }

@@ -25,6 +25,9 @@ import net.minecraft.sounds.SoundEvents;
 public final class AutoBase {
     public enum Step { IDLE, MINE, QUOTE, CONFIRM, BUY, BUILD, DONE, STOPPED }
 
+    /** The most one run spends in all, whatever the auto-spend amount or a Confirm: real money on the server. */
+    public static final long RUN_CAP = 10_000_000;
+
     private static ClientConfig config;
     private static Runnable save = () -> { };
     private static Step step = Step.IDLE;
@@ -33,6 +36,11 @@ public final class AutoBase {
     /** Whether the step's module has been seen at work, so that it stopping means the step is over. */
     private static boolean seenWorking;
     private static boolean minerBuildAfter;
+    /** ChunkMiner's finished rooms when the run started: one more, and the room is dug. */
+    private static int roomsBefore;
+    /** What this run has spent so far, and the quote total a Confirm waits on. */
+    private static long runSpent;
+    private static long confirmTotal;
 
     private static long staffSeenAt = -1;
     private static boolean heldMiner, heldBuilder;
@@ -75,6 +83,8 @@ public final class AutoBase {
         // The miner would start the build itself when done; here the buying comes between.
         minerBuildAfter = config.miner.buildAfter;
         config.miner.buildAfter = false;
+        roomsBefore = miner.roomsFinished();
+        runSpent = 0;
         settings().enabled = true;
         enter(Step.MINE, "Digging the room");
         miner.setEnabled(true);
@@ -97,16 +107,36 @@ public final class AutoBase {
         SchematicBuilder builder = SchematicBuilder.getInstance();
         if (builder != null && builder.isActive()) builder.setEnabled(false);
         MaterialOrder.stop();
+        // Stopped is stopped: nothing the guard held goes on by itself afterwards.
+        heldMiner = heldBuilder = false;
+        clearSince = -1;
     }
 
     /** The player's Confirm on a quote over the auto-spend amount. */
     public static String confirm() {
         if (step != Step.CONFIRM) return "Nothing waits for a confirm";
-        return buy();
+        // The quote confirmed is the one announced, not one got since from the menu.
+        MaterialBuyer.Snapshot order = MaterialOrder.snapshot();
+        if (order == null || order.state() != MaterialBuyer.State.QUOTED || order.quoteTotal() != confirmTotal) {
+            end(Step.STOPPED, "The quote changed while it waited for a confirm", true);
+            return "The quote changed; start AutoBase again";
+        }
+        return buy(Long.MAX_VALUE);
     }
 
     public static void tick(Minecraft client) {
-        if (config == null || client.player == null) return;
+        if (config == null) return;
+        if (client.player == null || client.level == null) {
+            // Disconnected, or between worlds: ChunkMiner and SchematicBuilder are reset without a word, which must not
+            // read as their step done, or the run would go on to buy and build over a room never dug.
+            if (running()) {
+                halt();
+                end(Step.STOPPED, "Left the world", true);
+            }
+            heldMiner = heldBuilder = false;
+            clearSince = -1;
+            return;
+        }
         guard(client);
         if (!running()) return;
         if (!settings().enabled) {
@@ -121,7 +151,9 @@ public final class AutoBase {
                     return;
                 }
                 if (heldMiner) return;
-                if (seenWorking && miner.statusWarn()) {
+                // Only a room dug to the end goes on to buying: a stop from the menu, a refusal to start or a warning
+                // ends the run.
+                if (miner.roomsFinished() <= roomsBefore) {
                     end(Step.STOPPED, "ChunkMiner " + lower(miner.status()), true);
                     return;
                 }
@@ -136,9 +168,13 @@ public final class AutoBase {
                 }
                 if (order.quoteTotal() <= 0) {
                     build();
+                } else if (Math.round(order.quoteTotal() * MaterialBuyer.BUDGET_MARGIN) > RUN_CAP - runSpent) {
+                    end(Step.STOPPED, "Quote " + money(order.quoteTotal()) + " goes over the run's " + money(RUN_CAP) + " cap", true);
                 } else if (order.quoteTotal() <= settings().autoSpend) {
-                    buy();
+                    // Without asking, never more than the auto-spend amount, the margin for prices gone up included.
+                    buy(settings().autoSpend);
                 } else {
+                    confirmTotal = order.quoteTotal();
                     enter(Step.CONFIRM, "Quote " + money(order.quoteTotal()) + " is over " + money(settings().autoSpend)
                             + ": confirm it in AutoBase, or stop");
                     tell(client, "AutoBase: the materials come to about " + money(order.quoteTotal()) + "; open the menu to confirm.", false);
@@ -154,6 +190,13 @@ public final class AutoBase {
                     end(Step.STOPPED, "Buying " + lower(order.message()), true);
                     return;
                 }
+                // Done also when the budget ran out or the inventory filled: the build would only run out halfway.
+                String shortfall = shortfall(order);
+                if (shortfall != null) {
+                    end(Step.STOPPED, "Bought only part of it (" + shortfall + "): " + lower(order.message()), true);
+                    return;
+                }
+                runSpent += order.spent();
                 build();
             }
             case BUILD -> {
@@ -186,13 +229,23 @@ public final class AutoBase {
         enter(Step.QUOTE, "Checking prices on the auction house");
     }
 
-    private static String buy() {
-        String why = MaterialOrder.buy(false);
+    private static String buy(long ceiling) {
+        String why = MaterialOrder.buy(false, Math.min(ceiling, RUN_CAP - runSpent));
         if (why != null) {
             end(Step.STOPPED, "Buying didn't start: " + lower(why), true);
             return why;
         }
         enter(Step.BUY, "Buying the materials");
+        return null;
+    }
+
+    /** The first item bought short of what the quote wanted, as "12 of 64 minecraft:stone", or null. */
+    private static String shortfall(MaterialBuyer.Snapshot order) {
+        for (MaterialBuyer.Line line : order.quote()) {
+            int bought = 0;
+            for (MaterialBuyer.Progress progress : order.progress()) if (progress.itemId().equals(line.itemId())) bought += progress.bought();
+            if (bought < line.units()) return bought + " of " + line.units() + " " + line.itemId();
+        }
         return null;
     }
 
@@ -209,6 +262,8 @@ public final class AutoBase {
     }
 
     private static void end(Step last, String text, boolean warn) {
+        MaterialBuyer.Snapshot order = MaterialOrder.snapshot();
+        if (step == Step.BUY && order != null) runSpent += order.spent();
         step = last;
         status = text;
         statusWarn = warn;
@@ -274,7 +329,8 @@ public final class AutoBase {
         ChunkMiner miner = ChunkMiner.getInstance();
         SchematicBuilder builder = SchematicBuilder.getInstance();
         return running() || heldMiner || heldBuilder || miner != null && miner.isActive() || builder != null && builder.isActive()
-                || MaterialOrder.snapshot() != null && GoNutsApi.materials().state() == MaterialBuyer.State.BUYING;
+                || MaterialOrder.snapshot() != null && (GoNutsApi.materials().state() == MaterialBuyer.State.BUYING
+                        || GoNutsApi.materials().state() == MaterialBuyer.State.QUOTING);
     }
 
     private static void tell(Minecraft client, String text, boolean warn) {

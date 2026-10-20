@@ -177,6 +177,11 @@ public final class ChunkMiner {
 
     public boolean statusWarn() { return statusWarn; }
 
+    /** Rooms dug to the end since the game started: a stop for any other reason doesn't count one. */
+    public int roomsFinished() { return roomsFinished; }
+
+    private int roomsFinished;
+
     public Room room() { return room; }
 
     /** The good chunk being dug under, or null. */
@@ -1101,6 +1106,7 @@ public final class ChunkMiner {
     // Finishing ----------------------------------------------------------------------------------------------------
 
     private void done(Minecraft client, String summary) {
+        roomsFinished++;
         int dugLeft = left;
         String text = "finished the room for " + schematicName + " (" + room.main + ")" + (summary.isEmpty() ? "." : "; " + summary + ".");
         finish(client, text, false);
