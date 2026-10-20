@@ -368,7 +368,13 @@ final class Walker {
             // Held still a few tenths short of the middle, and no key gets the player further: along a channel beside water
             // over an open gate every step stopped at 0.20 off, motionless, and failed as stuck after twelve ticks (v4-full5,
             // 20:11:17 and :23), the walk and the look it was for lost. That close, it counts as there; decide works the
-            // looks out from where the player stands.
+            // looks out from where the player stands. As on reaching a step's spot, a bridge's crouch ends there: left on,
+            // the walk's end waited for the player to stand up, which never came (v1-reg2 21:03:52, crafter-full5 21:04:19,
+            // both "never came to rest at the end" after a bridge held 0.17 short).
+            if (bridgeCrouch) {
+                climb.crouch(false);
+                bridgeCrouch = false;
+            }
             index++;
             stuck = 0;
             closest = Double.MAX_VALUE;
