@@ -3650,12 +3650,22 @@ public final class SchematicBuilder {
         // Never in a spot that grows kelp or seagrass, not even on the way out of a pocket: that spot holds the water of its
         // column, and a helper there shuts the water out of the kelp under it for good, as dirt in 13,72,16 did in v4-o.
         if (plan.plant(i)) return false;
-        // Nor in a dry spot a water source goes into: that source is poured there later, and fills the kelp column under it,
-        // as 5,72,4 and 6,72,4 over the kelp at 6,70,4 in v4-p. (Water already there is the flooded shaft above.)
-        if (plan.kind(i) == BlockRules.Kind.FLUID && plan.target(i).getFluidState().isSource()) return false;
+        // Nor in a dry spot a water source goes into over kelp or seagrass: that source fills the column under it, as 5,72,4
+        // and 6,72,4 over the kelp at 6,70,4 in v4-p. Other dry source spots stay open to a climb out of a pit before its
+        // water is poured; water already there is the flooded shaft above.
+        if (plan.kind(i) == BlockRules.Kind.FLUID && plan.target(i).getFluidState().isSource() && feedsPlant(cell)) return false;
         // With no other place to stand, a walk may climb through cells the build fills later: those blocks wait until the
         // player is out.
         return escaping && (plan.status(i) == BuildPlan.Status.PENDING || view instanceof Overlay overlay && overlay.changes(cell));
+    }
+
+    /** Whether kelp or seagrass grows one or two cells under {@code cell}, in the column its water fills. */
+    private boolean feedsPlant(BlockPos cell) {
+        for (int down = 1; down <= 2; down++) {
+            int j = plan.indexOf(cell.below(down));
+            if (j >= 0 && plan.plant(j)) return true;
+        }
+        return false;
     }
 
     /** Forgets what has no click from where the player stands, and the helper blocks held back with it. */
