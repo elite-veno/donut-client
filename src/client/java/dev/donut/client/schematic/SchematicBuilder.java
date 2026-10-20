@@ -5623,6 +5623,9 @@ public final class SchematicBuilder {
         return false;
     }
 
+    /** How long the look onto a placed shulker box may take before it is tried from elsewhere. */
+    private static final int BOX_OPEN_TICKS = 80;
+
     private void restockTick(Minecraft client, LocalPlayer player) {
         restockTicks++;
         ClientLevel level = client.level;
@@ -5643,6 +5646,12 @@ public final class SchematicBuilder {
                 if (hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(boxClick.hit().getBlockPos())
                         || !Materials.isShulkerBox(player.getMainHandItem())) {
                     restockFailed(client, "the spot for the shulker box went out of view");
+                    return;
+                }
+                // On the right block but another face of it, an edge looked at: clicked, the box would go into the cell
+                // beside that face, not the one it is fetched from, and stay there with what is in it. The look settles first.
+                if (hit.getDirection() != boxClick.hit().getDirection()) {
+                    if (restockTicks > 60) restockFailed(client, "the crosshair stayed on another side of where the shulker box goes");
                     return;
                 }
                 if (!handReady(player)) return;
@@ -5669,8 +5678,21 @@ public final class SchematicBuilder {
                 }
                 PlacementSolver.Click open = PlacementSolver.use(player, player.getEyePosition(), box, player.blockInteractionRange(), at);
                 if (open == null) {
-                    if (stepToBox(client, player)) return;
+                    if (stepToBox(client, player)) {
+                        restockTicks = 0;
+                        return;
+                    }
                     restockFailed(client, "the shulker box is out of view");
+                    return;
+                }
+                // A look that never settles on the box, or a crosshair that stays on a block in front of it: from
+                // somewhere else, or the box comes back up, rather than looking at it for ever.
+                if (restockTicks > BOX_OPEN_TICKS) {
+                    if (stepToBox(client, player)) {
+                        restockTicks = 0;
+                        return;
+                    }
+                    restockFailed(client, "it couldn't look at the shulker box");
                     return;
                 }
                 if (restockTicks < 4 || !looked(player, open.yaw(), open.pitch(), onBlock(player, box, null))) return;
