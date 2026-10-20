@@ -2677,8 +2677,11 @@ public final class SchematicBuilder {
         Navigator.Node viewStart = Navigator.standingAt(view, player);
         if ((exitEscapes ? escapeFrom(player, view, viewStart, reached) : exitFrom(player, view, viewStart, reached)) != null) return true;
         // A climb out over cells the build fills later is a way out too, as up a kelp channel the block walls in: out that
-        // way once it is in (climbOut), the helper blocks coming away after.
-        if (!exitEscapes && escapeFrom(player, view, viewStart, null) != null) {
+        // way once it is in (climbOut), the helper blocks coming away after. Only from a cell of the build's own water or
+        // kelp, such a channel: elsewhere the climb a search finds through cells of blocks still to go in may not go up in
+        // the end (v1-clean, 22:10: walled in under IKEA v1's machine by a piston and a gate, every step up failed).
+        int standing = plan.indexOf(viewStart.feetCell());
+        if (!exitEscapes && standing >= 0 && holdsWaterLater(standing) && escapeFrom(player, view, viewStart, null) != null) {
             if (debug()) LOGGER.info("{} at {} walls you in, but a climb out stays", plan.target(i).getBlock().getName().getString(),
                     pos.toShortString());
             return true;
