@@ -139,12 +139,14 @@ final class Walker {
     Walker(Head head) { this.head = head; }
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Donut/Schematic");
+    /** The player's motion at the start of this tick and the one before, for {@link #explainHeld}. */
+    private Vec3 lastMotion = Vec3.ZERO, thisMotion = Vec3.ZERO;
 
     /**
      * For the debug log, once a step is held still short of its spot: crouched or not, on the ground or not, which way a
      * small move toward the spot is refused (a collision, or the sneak edge's fall check), and the blocks round the body.
      */
-    private static void explainHeld(LocalPlayer player, Navigator.Node to, double dx, double dz) {
+    private void explainHeld(LocalPlayer player, Navigator.Node to, double dx, double dz) {
         if (!Boolean.getBoolean("donut.schematic.debug")) return;
         var level = player.level();
         AABB box = player.getBoundingBox();
@@ -155,8 +157,8 @@ final class Walker {
                 box.maxX - 1e-7 + mx, box.minY, box.maxZ - 1e-7 + mz);
         boolean wouldFall = level.noCollision(player, under);
         StringBuilder cells = new StringBuilder();
-        for (BlockPos pos : BlockPos.betweenClosed(BlockPos.containing(box.minX - 0.3, box.minY - 1, box.minZ - 0.3),
-                BlockPos.containing(box.maxX + 0.3, box.minY + 1, box.maxZ + 0.3))) {
+        for (BlockPos pos : BlockPos.betweenClosed(BlockPos.containing(box.minX - 0.6, box.minY - 1, box.minZ - 0.6),
+                BlockPos.containing(box.maxX + 0.6, box.minY + 1, box.maxZ + 0.6))) {
             BlockState state = level.getBlockState(pos);
             if (state.isAir()) continue;
             var shape = state.getCollisionShape(level, pos);
@@ -164,9 +166,13 @@ final class Walker {
                     state.getBlock().getDescriptionId().replace("block.minecraft.", ""),
                     shape.isEmpty() ? " (no collision)" : " " + shape.bounds().move(pos)));
         }
-        LOGGER.info("Held still short of {}: at {}, box {}, crouching {}, on the ground {}, a move toward it {}{}; round the body:{}",
+        BlockPos feet = player.blockPosition();
+        Vec3 flow = level.getFluidState(feet).getFlow(level, feet);
+        LOGGER.info("Held still short of {}: at {}, box {}, crouching {}, on the ground {}, a move toward it {}{}; motion {} (a tick"
+                        + " before {}), input {} (keys {}), in water {}, flow at the feet {}; round the body:{}",
                 to, player.position(), box, player.isShiftKeyDown(), player.onGround(), collides ? "collides" : "is free",
-                wouldFall ? ", and has nothing under it (the sneak edge stops it)" : "", cells);
+                wouldFall ? ", and has nothing under it (the sneak edge stops it)" : "", player.getDeltaMovement(), lastMotion,
+                player.input.getMoveVector(), player.input.keyPresses, player.isInWater(), flow, cells);
     }
 
     /** The pace the settings ask for, from the next walk on. */
@@ -223,6 +229,8 @@ final class Walker {
     Navigator.Node target() { return path == null ? null : path.getLast(); }
 
     State tick(Minecraft client, LocalPlayer player, Climb climb) {
+        lastMotion = thisMotion;
+        thisMotion = player.getDeltaMovement();
         if (path == null) return State.FAILED;
         if (index >= path.size()) {
             release(client);
