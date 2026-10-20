@@ -183,6 +183,15 @@ public final class ChunkMiner {
     /** Whether a dig is under way, not just waiting for a good chunk; Auto RTP waits for it. */
     public static boolean busy() { return instance != null && instance.active && instance.dig != null; }
 
+    /**
+     * While the miner aims, breaks, fills a gap or climbs on a block, the player's own clicks wait: vanilla's
+     * continueAttack, with the attack key up, would stop the breaking every tick, and the next tick start it over.
+     */
+    public static boolean holdsHands() {
+        return busy() && (instance.doing == Doing.AIM || instance.doing == Doing.BREAK || instance.doing == Doing.FILL
+                || instance.doing == Doing.TOWER);
+    }
+
     public MinerSettings settings() { return config.miner; }
 
     public boolean isActive() { return active; }
