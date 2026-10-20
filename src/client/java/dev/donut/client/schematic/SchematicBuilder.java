@@ -1059,6 +1059,14 @@ public final class SchematicBuilder {
         pitTries.clear();
         sealsLifted = false;
         orderLifted = false;
+        // A build begun again, or another with its bottom layer at the same height, starts its first layer afresh: no walks
+        // or misses carried over from the last one.
+        layerY = Integer.MIN_VALUE;
+        walksSinceClick = 0;
+        arrivalMisses.clear();
+        lastWalkEnd = null;
+        walkEnd = null;
+        walkExpects.clear();
         nextAction = System.nanoTime() + 500_000_000L;
         int layers = plan.layers().size();
         String span = layers == 0 ? "" : " (y " + plan.layers().firstKey() + (layers > 1 ? " to " + plan.layers().lastKey() : "") + ")";
@@ -1174,6 +1182,11 @@ public final class SchematicBuilder {
                 if (heldY != layerY) {
                     sealsLifted = false;
                     orderLifted = false;
+                    // Walks, misses and useless places counted in the layer left: none of them is about this one.
+                    walksSinceClick = 0;
+                    arrivalMisses.clear();
+                    uselessSpots.clear();
+                    lastWalkEnd = null;
                     shutIn.clear();
                     traps.clear();
                     badSteps.clear();
