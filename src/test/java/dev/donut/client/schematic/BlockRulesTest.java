@@ -8,6 +8,7 @@ import java.util.Map;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.FrontAndTop;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -343,5 +344,38 @@ class BlockRulesTest {
         assertEquals(2, BlockRules.itemsNeeded(Blocks.AIR.defaultBlockState(), both));
         assertFalse(BlockRules.satisfied(floor, both));
         assertTrue(BlockRules.satisfied(both, both));
+    }
+
+    @Test
+    void theEyeIsOnTheSideALookGivesTheBlockItsStateFrom() {
+        BlockState pistonSouth = Blocks.PISTON.defaultBlockState().setValue(BlockStateProperties.FACING, Direction.SOUTH);
+        assertEquals(Direction.SOUTH, BlockRules.eyeSide(pistonSouth), "a piston faces back at the player");
+        assertEquals(Direction.WEST, BlockRules.eyeSide(Blocks.DISPENSER.defaultBlockState().setValue(BlockStateProperties.FACING, Direction.WEST)));
+        assertEquals(Direction.EAST, BlockRules.eyeSide(Blocks.DROPPER.defaultBlockState().setValue(BlockStateProperties.FACING, Direction.EAST)));
+        assertEquals(Direction.NORTH, BlockRules.eyeSide(Blocks.OBSERVER.defaultBlockState().setValue(BlockStateProperties.FACING, Direction.SOUTH)),
+                "an observer faces the way the look goes");
+        assertEquals(Direction.NORTH, BlockRules.eyeSide(Blocks.CRAFTER.defaultBlockState()
+                .setValue(BlockStateProperties.ORIENTATION, FrontAndTop.NORTH_UP)));
+        assertNull(BlockRules.eyeSide(Blocks.STONE.defaultBlockState()));
+        assertNull(BlockRules.eyeSide(Blocks.HOPPER.defaultBlockState()), "a hopper takes its facing from the face clicked");
+
+        assertTrue(BlockRules.placedLookingUp(Blocks.OBSERVER.defaultBlockState().setValue(BlockStateProperties.FACING, Direction.UP)));
+        assertTrue(BlockRules.placedLookingUp(Blocks.PISTON.defaultBlockState().setValue(BlockStateProperties.FACING, Direction.DOWN)));
+        assertFalse(BlockRules.placedLookingUp(Blocks.PISTON.defaultBlockState().setValue(BlockStateProperties.FACING, Direction.UP)),
+                "a piston facing up takes a look down");
+        assertTrue(BlockRules.placedLookingUp(Blocks.CRAFTER.defaultBlockState().setValue(BlockStateProperties.ORIENTATION, FrontAndTop.DOWN_NORTH)));
+    }
+
+    @Test
+    void aLevelLookComesPastTheTwoCellsOnTheEyesSide() {
+        BlockPos piston = new BlockPos(10, 71, 3);
+        BlockState south = Blocks.PISTON.defaultBlockState().setValue(BlockStateProperties.FACING, Direction.SOUTH);
+        assertEquals(1, BlockRules.inLookChannel(piston.south(), piston, south));
+        assertEquals(2, BlockRules.inLookChannel(piston.south(2), piston, south), "the gate row of ikea_v4, two cells south");
+        assertEquals(0, BlockRules.inLookChannel(piston.south(3), piston, south));
+        assertEquals(0, BlockRules.inLookChannel(piston.north(), piston, south), "behind it, where the click goes");
+        assertEquals(0, BlockRules.inLookChannel(piston.south().east(), piston, south));
+        assertEquals(0, BlockRules.inLookChannel(piston.below(), piston,
+                Blocks.OBSERVER.defaultBlockState().setValue(BlockStateProperties.FACING, Direction.UP)), "up and down are another rule's");
     }
 }

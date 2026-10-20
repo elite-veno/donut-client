@@ -1950,6 +1950,39 @@ public final class SchematicBuilder {
     }
 
 
+    /**
+     * Whether block {@code i} waits for a block one or two cells off it, still to go in, that only takes its state from a
+     * level look past this spot: a piston facing south takes a look north from south of it, and a row of fence gates
+     * there, open ones too, puts an outline in every such look but the steep ones. Only with the cell between them open,
+     * else this one takes nothing more, and only for a block with an outline. A plain seal, lifted with the others: a
+     * level look still comes past at a slant, and two such blocks each in the other's way would wait for good.
+     */
+    private boolean waitsForChannel(Level level, int i) {
+        if (plan.kind(i) != BlockRules.Kind.PLACE) return false;
+        BlockPos pos = plan.pos(i);
+        BlockState own = plan.target(i);
+        if (!level.getBlockState(pos).canBeReplaced() || own.getShape(level, pos).isEmpty()) return false;
+        for (Direction eye : Direction.Plane.HORIZONTAL) {
+            for (int k = 1; k <= 2; k++) {
+                BlockPos at = pos.relative(eye.getOpposite(), k);
+                if (k == 2 && !openForLook(level, pos.relative(eye.getOpposite()))) break;
+                int j = plan.indexOf(at);
+                if (j < 0 || plan.status(j) != BuildPlan.Status.PENDING || BlockRules.inLookChannel(pos, at, plan.target(j)) != k) continue;
+                // Facing each other, each in the other's way: neither waits, the order they go in in decides.
+                if (BlockRules.inLookChannel(at, pos, own) > 0 || !level.getBlockState(at).canBeReplaced()) continue;
+                if (debug() && tick - channelLogged.getOrDefault(i, -UP_WAIT_TICKS) > 200) {
+                    channelLogged.put(i, tick);
+                    LOGGER.info("{} at {} waits: it would stand in the level look at {} at {}", own.getBlock().getName().getString(),
+                            pos.toShortString(), plan.target(j).getBlock().getName().getString(), at.toShortString());
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private final Map<Integer, Long> channelLogged = new HashMap<>();
+
     /** Whether a look can come past {@code pos}: nothing there, or only a helper block of the builder's that comes away. */
     private boolean openForLook(Level level, BlockPos pos) {
         return level.getBlockState(pos).canBeReplaced() || helpers.containsKey(pos.asLong());
@@ -1986,7 +2019,7 @@ public final class SchematicBuilder {
         if (System.nanoTime() - started > PLAN_NANOS) return 0;
         Overlay view = null;
         byte result = 2;
-        if (waitsForUpFacing(level, i)) {
+        if (waitsForUpFacing(level, i) || waitsForChannel(level, i)) {
             sealStamp[i] = stamp;
             seal[i] = 1;
             return 1;

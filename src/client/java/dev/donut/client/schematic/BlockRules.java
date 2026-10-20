@@ -432,14 +432,34 @@ public final class BlockRules {
      * a look up past their sides; the blocks round them that would close that look wait for them.
      */
     static boolean placedLookingUp(BlockState state) {
+        return eyeSide(state) == Direction.DOWN;
+    }
+
+    /**
+     * The side of the block the eye is on for the look that gives the block its state, or null for a block whose state
+     * doesn't come from the look: a piston, dispenser, dropper or crafter faces back at the player, so the eye is on the
+     * side it faces; an observer faces the way the look goes, so the eye is on the side behind it.
+     */
+    static Direction eyeSide(BlockState state) {
         Block block = state.getBlock();
-        if (!state.hasProperty(BlockStateProperties.FACING)) {
-            return block instanceof CrafterBlock && state.hasProperty(BlockStateProperties.ORIENTATION)
-                    && state.getValue(BlockStateProperties.ORIENTATION).front() == Direction.DOWN;
+        if (block instanceof CrafterBlock) {
+            return state.hasProperty(BlockStateProperties.ORIENTATION) ? state.getValue(BlockStateProperties.ORIENTATION).front() : null;
         }
+        if (!state.hasProperty(BlockStateProperties.FACING)) return null;
         Direction facing = state.getValue(BlockStateProperties.FACING);
-        if (block instanceof ObserverBlock) return facing == Direction.UP;
-        return (block instanceof PistonBaseBlock || block instanceof DispenserBlock) && facing == Direction.DOWN;
+        if (block instanceof ObserverBlock) return facing.getOpposite();
+        return block instanceof PistonBaseBlock || block instanceof DispenserBlock ? facing : null;
+    }
+
+    /**
+     * How many cells, one or two, the spot {@code at} lies straight out from {@code pos} on the side the eye is on for a
+     * level look at {@code target} there (see {@link #eyeSide}): the cells such a look comes past. 0 when it doesn't.
+     */
+    static int inLookChannel(BlockPos at, BlockPos pos, BlockState target) {
+        Direction eye = eyeSide(target);
+        if (eye == null || eye.getAxis() == Direction.Axis.Y) return 0;
+        for (int k = 1; k <= 2; k++) if (pos.relative(eye, k).equals(at)) return k;
+        return 0;
     }
 
 
