@@ -1490,7 +1490,8 @@ public final class SchematicBuilder {
         }
         candidates.clear();
         candidates.addAll(backToFront);
-        if (settings().walk && wetSoon(player.level(), player.blockPosition(), recentPours(), new HashMap<>())) {
+        if (settings().walk && wetSoon(player.level(), player.blockPosition(), recentPours(), new HashMap<>())
+                && !wetPourStand(player.level(), Navigator.standingAt(player.level(), player).feetCell(), null)) {
             // Water running past pushes the player about and spoils every look: out of it first, onto dry ground.
             nextAction = System.nanoTime() + 250_000_000L;
             if (planWalk(client, player, candidates, materials, layerNumber, lift)) return;
@@ -1626,7 +1627,7 @@ public final class SchematicBuilder {
                     if (debug() && walkExpects.remove(i)) LOGGER.info("Can't pour {} at {} from where the walk for it ended: no look", target, pos.toShortString());
                     continue;
                 }
-                if (floods(level, pos, player.position())) {
+                if (floods(level, pos, player.position()) && !wetPourStand(level, Navigator.standingAt(level, player).feetCell(), pos)) {
                     // It would run where the player stands and push them off: poured from somewhere else.
                     if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
                     noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH);
@@ -1709,7 +1710,8 @@ public final class SchematicBuilder {
                 }
                 if (debug() && plan.plant(i)) LOGGER.info("{} at {} is dry: water poured in first", target.getBlock().getName().getString(),
                         pos.toShortString());
-                if (floods(level, pos, player.position())) {
+                if (floods(level, pos, player.position())
+                        && (plan.soaking(i) || !wetPourStand(level, Navigator.standingAt(level, player).feetCell(), pos))) {
                     if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
                     noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH);
                     continue;
@@ -2275,6 +2277,36 @@ public final class SchematicBuilder {
      * falls where it can, and spreads sideways up to a flow's length, a source always and falling water once it lands.
      * A player it reaches is pushed about, off a narrow top or down into a channel.
      */
+    /**
+     * Whether water may be poured with the feet in {@code feet}, though it runs there or past: a cell the build fills with
+     * water itself, as kelp or water, so the player standing there gets wet anyway, on a full block, with no drop beside
+     * it the water could push them into: beside it, a cell open at the feet has something under it to stand on, or is one
+     * of the build's own water, kelp or the spot {@code pouredAt}, which the water fills. Out again by wading or swimming
+     * along it, as a kelp channel walled in on its sides. The checks that keep blocks still to go in dry stay as they are.
+     */
+    private boolean wetPourStand(Level level, BlockPos feet, BlockPos pouredAt) {
+        int i = plan.indexOf(feet);
+        if (i < 0 || !holdsWaterLater(i)) return false;
+        BlockPos floor = feet.below();
+        if (!level.getBlockState(floor).isCollisionShapeFullBlock(level, floor)) return false;
+        for (Direction side : Direction.Plane.HORIZONTAL) {
+            BlockPos beside = feet.relative(side);
+            if (!level.getBlockState(beside).getCollisionShape(level, beside).isEmpty()) continue;
+            if (beside.equals(pouredAt)) continue;
+            int j = plan.indexOf(beside);
+            if (j >= 0 && holdsWaterLater(j)) continue;
+            BlockPos under = beside.below();
+            if (level.getBlockState(under).getCollisionShape(level, under).isEmpty()) return false;
+        }
+        return true;
+    }
+
+    /** Whether block {@code i} is water the build pours, or kelp or seagrass, which stand in water. */
+    private boolean holdsWaterLater(int i) {
+        BlockState target = plan.target(i);
+        return plan.plant(i) || target.getBlock() instanceof LiquidBlock && target.getFluidState().getType().isSame(Fluids.WATER);
+    }
+
     static boolean floods(BlockGetter level, BlockPos at, Vec3 feet) {
         AABB body = new AABB(feet.x - 0.3, feet.y, feet.z - 0.3, feet.x + 0.3, feet.y + 1.8, feet.z + 0.3);
         Map<Long, Integer> spread = new HashMap<>();
@@ -4900,8 +4932,10 @@ public final class SchematicBuilder {
             seen[0]++;
             if (debug() && close.size() < 300 && node.eye().distanceToSqr(firstMiddle) < 25) close.add(node);
             if (uselessSpots.contains(node.key()) || traps.contains(node.key()) || carriedFrom.contains(node.key())) return 0;
-            // Waded through, never stood in: water would push the player off every look.
-            if (wetSoon(player.level(), node.feetCell(), poured, wetCells)) return 0;
+            // Waded through, never stood in: water would push the player off every look. But for a cell the build fills
+            // with water itself, a kelp channel say, with a floor and no drop beside it: water is poured from there.
+            boolean wetHere = wetSoon(player.level(), node.feetCell(), poured, wetCells);
+            if (wetHere && !wetPourStand(level, node.feetCell(), null)) return 0;
             Vec3 feet = node.standing(), eye = node.eye();
             AABB body = new AABB(node.x() + 0.2, node.feet(), node.z() + 0.2, node.x() + 0.8, node.feet() + 1.8, node.z() + 0.8);
             BlockPos floor = node.floor();
@@ -4926,6 +4960,7 @@ public final class SchematicBuilder {
             for (int i : inReach.subList(0, Math.min(VERIFY, inReach.size()))) {
                 long key = Navigator.pairKey(node.key(), i);
                 if (missedFrom.contains(key)) continue;
+                if (wetHere && plan.kind(i) != BlockRules.Kind.FLUID && !plan.needsPour(i)) continue;
                 // On a narrow top over a drop the player stands crouched: water is poured from there with the crouched eye,
                 // and a block filled where it stands, which takes the click standing, isn't counted for such a place.
                 boolean crouched = false;
@@ -5171,7 +5206,7 @@ public final class SchematicBuilder {
     private int pourCrouched(LocalPlayer player, Vec3 feet, int i, double reach) {
         Level level = player.level();
         BlockPos pos = plan.pos(i);
-        if (floods(level, pos, feet)) return 0;
+        if (floods(level, pos, feet) && !wetPourStand(level, BlockPos.containing(feet), pos)) return 0;
         Fluid fluid = plan.kind(i) == BlockRules.Kind.FLUID ? plan.target(i).getFluidState().getType() : Fluids.WATER;
         return PlacementSolver.pour(level, player, feet.add(0, PlacementSolver.CROUCH_EYE, 0), pos, fluid, reach) != null ? 1 : 0;
     }
@@ -5197,7 +5232,7 @@ public final class SchematicBuilder {
         BlockState target = plan.target(i), current = level.getBlockState(pos);
         Vec3 eye = feet.add(0, PlacementSolver.STAND_EYE, 0);
         if (plan.kind(i) == BlockRules.Kind.FLUID) {
-            if (floods(level, pos, feet)) return 0;
+            if (floods(level, pos, feet) && !wetPourStand(level, BlockPos.containing(feet), pos)) return 0;
             PlacementSolver.Click pour = PlacementSolver.pour(level, player, eye, pos, target.getFluidState().getType(), reach);
             // As for a block: a pour that only works from the very middle, at the edge of reach say, counts for little, and
             // the walk for it ends there exactly.
@@ -5205,7 +5240,8 @@ public final class SchematicBuilder {
         }
         if (plan.soaking(i) && !BlockRules.fillsInPlace(current)) return inView(player, eye, pos, reach - 0.25) ? 2 : 0;
         if (plan.soaking(i)) return !floods(level, pos, feet) && PlacementSolver.fill(player, eye, pos, reach) != null ? 2 : 0;
-        if (plan.needsPour(i)) return !floods(level, pos, feet) && PlacementSolver.pour(level, player, eye, pos, Fluids.WATER, reach) != null ? 2 : 0;
+        if (plan.needsPour(i)) return (!floods(level, pos, feet) || wetPourStand(level, BlockPos.containing(feet), pos))
+                && PlacementSolver.pour(level, player, eye, pos, Fluids.WATER, reach) != null ? 2 : 0;
         if (BlockRules.needsTool(current, target)) {
             return carriedTool(player, target) != null && PlacementSolver.till(player, eye, pos, reach) != null ? 2 : 0;
         }
