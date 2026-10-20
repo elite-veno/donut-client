@@ -1694,6 +1694,13 @@ public final class SchematicBuilder {
                 repairing = i;
                 return;
             }
+            if (current.canBeReplaced() && current.getFluidState().isEmpty() && waterFirst(i, layer)) {
+                // Full of water in the schematic, and one a bucket can't fill once in, a chest or a wooden trapdoor, with
+                // nothing else of its layer left to stand on it as in: the water goes into its spot first and the block into
+                // that, rather than in dry, broken again and placed a second time (the bubble shaft's trapdoor, s37-43).
+                if (debug()) LOGGER.info("{} at {} goes into water: its spot gets the water first", target, pos.toShortString());
+                plan.drain(i);
+            }
             if (plan.soaking(i) || plan.needsPour(i)) {
                 // A block in place but dry where the schematic has it full of water gets a bucket emptied onto it; the spot
                 // of one broken for that gets the water before the block goes in again. Either goes in with the layer's
@@ -5022,6 +5029,24 @@ public final class SchematicBuilder {
             if (there.isCollisionShapeFullBlock(level, next) || standsAlone(there)) continue;
             if (side != Direction.UP && restsOnFloor(there)) continue;
             if (there.getBlock() instanceof MultifaceBlock && !MultifaceBlock.hasFace(there, side.getOpposite())) continue;
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Whether block {@code i}, full of water in the schematic and one a bucket can't fill once in (see
+     * {@link BlockRules#fillsInPlace}), goes into water poured into its spot first: once every other dry block of its
+     * layer is in. Before that, placed dry, it counts as in for those; after it, its water is next anyway.
+     */
+    private boolean waterFirst(int i, int[] layer) {
+        BlockState target = plan.target(i);
+        if (plan.kind(i) != BlockRules.Kind.PLACE || !BlockRules.soaked(target) || BlockRules.fillsInPlace(target)
+                || plan.refilling(i) || drains.getOrDefault(i, 0) >= REPAIRS) return false;
+        for (int j : layer) {
+            if (j == i || plan.wet(j) || plan.status(j) != BuildPlan.Status.PENDING) continue;
+            BlockState other = plan.target(j);
+            if (BlockRules.soaked(other) && !BlockRules.fillsInPlace(other)) continue;
             return false;
         }
         return true;
