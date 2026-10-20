@@ -6996,6 +6996,48 @@ public final class SchematicBuilder {
         return damage < 1 ? 0 : player.getAttributeValue(Attributes.SAFE_FALL_DISTANCE) + damage;
     }
 
+    /**
+     * The carried box to open for {@code item}: one this restock takes everything out of, what the next layers still want
+     * of each stack in it and in the room there is, and as much of the item as the box with the most would give, the one
+     * with fewest stacks; else the one with the most of the item.
+     * The most alone took a few stacks out of box after box and left them all part full, each opened again and again for
+     * what is left in it; a box emptied is never opened again.
+     */
+    private int boxFor(LocalPlayer player, Item item) {
+        Inventory inventory = player.getInventory();
+        int most = Materials.shulkerWith(inventory, item);
+        if (most < 0 || plan == null) return most;
+        Materials carried = Materials.of(inventory);
+        // The box's own slot comes free once it is put down; two stay free, and four before other items (nextToTake).
+        int free = carried.freeSlots() + 1;
+        if (free <= 2) return most;
+        Map<Item, Integer> wanted = soonNeeds(player.level());
+        int missing = Math.max(1, wanted.getOrDefault(item, 0) - carried.loose(item));
+        int enough = Math.min(missing, Materials.countInside(inventory.getItem(most), item));
+        int best = -1, fewest = Integer.MAX_VALUE;
+        for (int slot = 0; slot < Materials.SLOTS; slot++) {
+            ItemStack stack = inventory.getItem(slot);
+            if (!Materials.isShulkerBox(stack) || Materials.countInside(stack, item) == 0) continue;
+            Map<Item, Integer> inside = new HashMap<>();
+            int stacks = 0;
+            for (ItemStack held : Materials.contents(stack)) {
+                if (held.isEmpty()) continue;
+                inside.merge(held.getItem(), held.getCount(), Integer::sum);
+                stacks++;
+            }
+            boolean others = inside.size() > 1;
+            if (stacks > free - (others ? 4 : 2) || stacks >= fewest || inside.get(item) < enough) continue;
+            boolean all = true;
+            for (Map.Entry<Item, Integer> held : inside.entrySet()) {
+                if (held.getValue() > wanted.getOrDefault(held.getKey(), 0) - carried.loose(held.getKey())) all = false;
+            }
+            if (!all) continue;
+            best = slot;
+            fewest = stacks;
+        }
+        return best >= 0 ? best : most;
+    }
+
     private void startRestock(Minecraft client, LocalPlayer player, Item item, Materials materials) {
         Inventory inventory = player.getInventory();
         if (!settings().useShulkers) {
@@ -7003,7 +7045,7 @@ public final class SchematicBuilder {
             nextAction = System.nanoTime() + 1_000_000_000L;
             return;
         }
-        int slot = Materials.shulkerWith(inventory, item);
+        int slot = boxFor(player, item);
         if (slot < 0) return;
         ItemStack shulker = inventory.getItem(slot);
         BlockState boxState = ((BlockItem) shulker.getItem()).getBlock().defaultBlockState().setValue(ShulkerBoxBlock.FACING, Direction.UP);
