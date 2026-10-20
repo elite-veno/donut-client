@@ -256,7 +256,7 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
         String until = at > 1 ? spec.substring(at + 1).strip() : null;
         Path log = Path.of(at > 1 ? spec.substring(0, at).strip() : spec.strip());
         Map<Long, String> logged = new HashMap<>();
-        Pattern line = Pattern.compile("^\\[(\\d\\d:\\d\\d:\\d\\d)\\].*?Placed Block\\{([a-z0-9_:]+)\\}\\S* at (-?\\d+), (-?\\d+), (-?\\d+):");
+        Pattern line = Pattern.compile("^\\[(\\d\\d:\\d\\d:\\d\\d)\\].*?(?:Placed|Resumed) Block\\{\\{?([a-z0-9_:]+)\\}\\}?\\S* at (-?\\d+), (-?\\d+), (-?\\d+):");
         try {
             for (String text : Files.readAllLines(log)) {
                 Matcher m = line.matcher(text);
@@ -275,7 +275,8 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                 placed.add(pos);
                 // In this run's log too, so a run after it can go on from there with this log alone.
                 BlockPos cell = BlockPos.of(pos);
-                LOGGER.info("Resumed Block{{{}}} at {}, {}, {}:", id, cell.getX(), cell.getY(), cell.getZ());
+                // Not "{{{}}}": slf4j has no escape for a brace, and printed both.
+                LOGGER.info("Resumed Block" + "{" + id + "} at {}, {}, {}:", cell.getX(), cell.getY(), cell.getZ());
             }
         }
         return placed;
