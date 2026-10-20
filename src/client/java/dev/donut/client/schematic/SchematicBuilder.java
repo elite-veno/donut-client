@@ -1080,6 +1080,7 @@ public final class SchematicBuilder {
         restock = Restock.NONE;
         restockAfterWalk = null;
         aheadLayer.clear();
+        fetchedBeforeWalk.clear();
         swappedIn.clear();
         restockWalks = 0;
         restockSwaps = 0;
@@ -1922,6 +1923,10 @@ public final class SchematicBuilder {
         // step along the row at x 11). What waited up there goes in on one walk along the row once the trench is done.
         if (settings().walk && digAlong(player, candidates, materials, layerNumber, lift, player.blockInteractionRange() - 0.2,
                 System.nanoTime(), true)) return;
+        // Before a walk off to blocks none of which is carried: where a box goes in right here, they come out of it first.
+        // From where the walk ends there may be no room for one, a channel or the top of the build, and the walk is for
+        // nothing (v4-full9, 21:26: down into the kelp channel for dispenser 3,70,9, none carried, "no room for a box").
+        if (settings().walk && !creative && settings().useShulkers && fetchBeforeWalk(client, player, candidates, materials, lift)) return;
         if (settings().walk && planWalk(client, player, candidates, materials, layerNumber, lift)) return;
         // Twice in a row no place reached had a block in reach, with blocks left that wait for nothing (planWalk only
         // weighs those): shut in, as after a fall under the build. Climbing out through cells the build fills later is
@@ -7120,6 +7125,35 @@ public final class SchematicBuilder {
             LOGGER.info("Walked for {} at {}, passed over on arriving: {}", plan.target(i), plan.pos(i).toShortString(), why);
         }
     }
+
+    /**
+     * Starts a restock here for the first block out of reach that could go in now but whose item is only in boxes, when a
+     * box goes in beside the player: once per item every {@link #FETCH_BEFORE_WALK_TICKS}, so a box that gives none
+     * isn't opened over and over. True when one is begun.
+     */
+    private boolean fetchBeforeWalk(Minecraft client, LocalPlayer player, List<Integer> candidates, Materials materials, boolean lift) {
+        long started = System.nanoTime();
+        int tried = 0;
+        for (int i : candidates) {
+            if (plan.status(i) != BuildPlan.Status.PENDING || plan.kind(i) != BlockRules.Kind.PLACE) continue;
+            if (++tried > 24 || System.nanoTime() - started > 5_000_000L) break;
+            Item item = plan.item(i);
+            if (item == null || materials.loose(item) > 0 || materials.total(item) == 0) continue;
+            if (noBoxHere(item) || waitsForRoom(item, materials)) continue;
+            if (tick - fetchedBeforeWalk.getOrDefault(item, -FETCH_BEFORE_WALK_TICKS) < FETCH_BEFORE_WALK_TICKS) continue;
+            if (support(player, i, started) != 1 || !lift && seals(player, i, started) == 1) continue;
+            if (boxSpots(player, Navigator.standingAt(player.level(), player).floor().above(), player.position()).isEmpty()) return false;
+            fetchedBeforeWalk.put(item, tick);
+            if (debug()) LOGGER.info("Taking {} out of a shulker box before the walk for {} at {}", name(item), plan.target(i),
+                    plan.pos(i).toShortString());
+            startRestock(client, player, item, materials);
+            return restock != Restock.NONE || swapFrom >= 0 || walker.active();
+        }
+        return false;
+    }
+
+    private final Map<Item, Long> fetchedBeforeWalk = new HashMap<>();
+    private static final long FETCH_BEFORE_WALK_TICKS = 600;
 
     /** The layer {@link #restockAhead} fetches for: the one being built, or before one is picked the lowest with a block left. */
     private int aheadY() {
