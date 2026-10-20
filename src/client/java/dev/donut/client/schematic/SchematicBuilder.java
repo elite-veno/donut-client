@@ -443,6 +443,13 @@ public final class SchematicBuilder {
     private final Map<Long, Integer> cleanupMisses = new HashMap<>();
     /** Cleanup climbs that end out of reach of their block, after which it is left for good. */
     private static final int CLEANUP_MISSES = 4;
+    /**
+     * Helper columns, by x and z, the player stood on top of with helper tops as high elsewhere to walk to first, and no
+     * walk to any of them found: from there on each comes down under the player's feet as before.
+     */
+    private final Set<Long> cleanupKeptUp = new HashSet<>();
+    /** How many other helper tops as high as the one underfoot, out of reach, keep the player up there to walk to them first. */
+    private static final int KEEP_UP_TOPS = 2;
     private long cleanupFrom = Long.MIN_VALUE;
     private String helperList = "";
     private Set<Item> helperItems = Set.of();
@@ -829,6 +836,7 @@ public final class SchematicBuilder {
         cleanupColumn = null;
         cleanupFailed.clear();
         cleanupMisses.clear();
+        cleanupKeptUp.clear();
         dug.clear();
         refillWalks.clear();
         plan = null;
@@ -1168,6 +1176,7 @@ public final class SchematicBuilder {
         cleanupColumn = null;
         cleanupFailed.clear();
         cleanupMisses.clear();
+        cleanupKeptUp.clear();
         dug.clear();
         refillWalks.clear();
         dugLeft.clear();
@@ -4456,7 +4465,22 @@ public final class SchematicBuilder {
                         target.toShortString(), here);
             }
         }
+        // Up on a helper column with helper tops as high elsewhere: the one underfoot, taken first as the highest in reach,
+        // took the player down off the height they are reached from, and each was then climbed to from the ground again.
+        // v1 left five tops 75 to 77 up along its back wall so, and put up a pillar of six for most of them. Those go
+        // first, walked to while up here; the one underfoot after, once no walk to them is found.
+        BlockPos underfoot = BlockPos.containing(player.getX(), player.getY() - 0.05, player.getZ());
+        List<BlockPos> keptUpFor = List.of();
+        if (settings().walk && player.onGround() && tops.contains(underfoot)
+                && !cleanupKeptUp.contains(BlockPos.asLong(underfoot.getX(), 0, underfoot.getZ()))) {
+            List<BlockPos> high = new ArrayList<>();
+            for (BlockPos top : tops) {
+                if (!top.equals(underfoot) && top.getY() >= underfoot.getY() && !inView(player, player.getEyePosition(), top, reach)) high.add(top);
+            }
+            if (high.size() >= KEEP_UP_TOPS) keptUpFor = high;
+        }
         for (BlockPos top : tops) {
+            if (!keptUpFor.isEmpty() && top.equals(underfoot)) continue;
             if (missedMining(player, top) || !inView(player, player.getEyePosition(), top, reach) || !safeToBreak(player, top)) continue;
             startBreak(top);
             return true;
@@ -4468,7 +4492,7 @@ public final class SchematicBuilder {
             // Before any of those, the highest of the helper blocks that stand on no ground at all, hung off the side of the
             // build: reached only from up there, they go while the player still is, not after a walk down to the ground.
             // And those as high as the player's feet or higher before those below: down is a step, up a climb.
-            List<BlockPos> walkOrder = new ArrayList<>(tops);
+            List<BlockPos> walkOrder = new ArrayList<>(keptUpFor.isEmpty() ? tops : keptUpFor);
             int feet = player.getBlockY();
             walkOrder.sort(Comparator.comparingDouble((BlockPos pos) -> {
                 if (!fromGround.containsKey(pos.asLong())) return -2_000_000 - pos.getY();
@@ -4540,8 +4564,15 @@ public final class SchematicBuilder {
                         besideColumn ? ", after the walk on foot to beside it" : "");
                 cleanupSkipped.add(top.asLong());
             }
+            if (!keptUpFor.isEmpty()) {
+                // None of those as high reached from up here: the column comes down as before, and those with it.
+                cleanupKeptUp.add(BlockPos.asLong(underfoot.getX(), 0, underfoot.getZ()));
+                if (debug()) LOGGER.info("Cleanup: no walk from {} to the {} helper tops as high as the one underfoot: down it after all",
+                        here, keptUpFor.size());
+                return true;
+            }
             // None reached from up here, on helper blocks climbed: down a block, and from there they are looked for again.
-            BlockPos under = BlockPos.containing(player.getX(), player.getY() - 0.05, player.getZ());
+            BlockPos under = underfoot;
             if (player.onGround() && helpers.containsKey(under.asLong()) && safeToBreak(player, under)) {
                 if (debug()) LOGGER.info("No helper block left in reach of a walk from {}: down a block first", here);
                 startBreak(under);
