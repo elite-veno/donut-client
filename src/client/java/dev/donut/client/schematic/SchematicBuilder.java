@@ -88,6 +88,7 @@ import net.minecraft.world.level.block.TrapDoorBlock;
 import net.minecraft.world.level.block.WallBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.FlowingFluid;
 import net.minecraft.world.level.material.Fluids;
@@ -1590,21 +1591,16 @@ public final class SchematicBuilder {
                     settling = true;
                     continue;
                 }
-                if (edge) {
-                    // Crouched on a narrow top over a drop, as on a row of closed gates: no bucket is emptied from there.
-                    if (noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH) == null && debug()) {
-                        LOGGER.info("Can't pour {} at {} from a narrow top over a drop", target, pos.toShortString());
-                    }
-                    if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
-                    continue;
-                }
                 if (sweptLayer != layerY && settings().walk) {
                     // Before the layer's first water: helper blocks lying in the build would be carried off by it.
                     pickupSweep = true;
                     if (pickUpHelpers(client, player)) return;
                     sweptLayer = layerY;
                 }
-                if (player.isShiftKeyDown()) {
+                // Crouched on a narrow top over a drop, as on a row of closed gates, the player stays so: a bucket emptied
+                // against a face pours into the spot in front of it crouched or not, and the faces it is emptied against
+                // hold no water themselves (PlacementSolver.pourFace).
+                if (player.isShiftKeyDown() && !edge) {
                     stance(client, false);
                     return;
                 }
@@ -1678,8 +1674,9 @@ public final class SchematicBuilder {
                     settling = true;
                     continue;
                 }
-                if (edge) continue;
-                if (player.isShiftKeyDown()) {
+                // A block filled where it stands takes the click standing; water poured into a spot, as for kelp, doesn't.
+                if (edge && plan.soaking(i)) continue;
+                if (player.isShiftKeyDown() && !edge) {
                     stance(client, false);
                     return;
                 }
@@ -4857,13 +4854,19 @@ public final class SchematicBuilder {
             for (int i : inReach.subList(0, Math.min(VERIFY, inReach.size()))) {
                 long key = Navigator.pairKey(node.key(), i);
                 if (missedFrom.contains(key)) continue;
-                // On a narrow top over a drop the player stands crouched, and decide empties no bucket from there: water,
-                // and blocks that take water, aren't counted for such a place.
+                // On a narrow top over a drop the player stands crouched: water is poured from there with the crouched eye,
+                // and a block filled where it stands, which takes the click standing, isn't counted for such a place.
+                boolean crouched = false;
                 if (plan.kind(i) == BlockRules.Kind.FLUID || plan.soaking(i) || plan.needsPour(i)) {
                     if (narrowTop == null) narrowTop = Navigator.narrowOverDrop(level, node);
-                    if (narrowTop) continue;
+                    if (narrowTop && plan.soaking(i)) continue;
+                    crouched = narrowTop;
                 }
                 Integer ok = verified.get(key);
+                if (ok == null && crouched) {
+                    ok = pourCrouched(player, feet, i, reach);
+                    verified.put(key, ok);
+                }
                 if (ok == null) {
                     ok = placeableFrom(player, feet, i, reach);
                     // In a bowl, a hopper's or a composter's, a walk that comes to rest a little off the middle stands up on
@@ -5054,6 +5057,18 @@ public final class SchematicBuilder {
      * the click's spot is still hit from wherever the walk there may come to rest, 1 when only from the very middle of
      * the block, as a steep look up at the side of a block, 0 when not at all.
      */
+    /**
+     * As {@link #placeableFrom} for water or lava poured, crouched with the feet at {@code feet}, as on a narrow top over a
+     * drop: 1 with a look, which counts as no firm find, the crouched eye's looks not weighed off the middle; else 0.
+     */
+    private int pourCrouched(LocalPlayer player, Vec3 feet, int i, double reach) {
+        Level level = player.level();
+        BlockPos pos = plan.pos(i);
+        if (floods(level, pos, feet)) return 0;
+        Fluid fluid = plan.kind(i) == BlockRules.Kind.FLUID ? plan.target(i).getFluidState().getType() : Fluids.WATER;
+        return PlacementSolver.pour(level, player, feet.add(0, PlacementSolver.CROUCH_EYE, 0), pos, fluid, reach) != null ? 1 : 0;
+    }
+
     private int placeableFrom(LocalPlayer player, Vec3 feet, int i, double reach) {
         Level level = player.level();
         BlockPos pos = plan.pos(i);
