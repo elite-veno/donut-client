@@ -4535,9 +4535,13 @@ public final class SchematicBuilder {
             return false;
         }
         InteractionResult result = client.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
-        if (result instanceof InteractionResult.Success success && success.swingSource() == InteractionResult.SwingSource.CLIENT) {
-            player.swing(InteractionHand.MAIN_HAND);
+        if (!(result instanceof InteractionResult.Success success)) {
+            // Nothing went in, the body still in the cell, say: no helper block to count, nor ground filled in; the climb
+            // fails, and the walk goes another way.
+            if (debug()) LOGGER.info("Climb at {}: the click gave {}", cell.toShortString(), result);
+            return false;
         }
+        if (success.swingSource() == InteractionResult.SwingSource.CLIENT) player.swing(InteractionHand.MAIN_HAND);
         climbCrouch = false;
         if (was != null) {
             // The pit is filled in again on the way out, and stays filled.
@@ -4555,6 +4559,9 @@ public final class SchematicBuilder {
      * Puts a helper block against {@code face} of {@code support}, the block underfoot at the edge of a bridging step,
      * where the crosshair is: crouched, so a chest or the like there isn't opened. False while the crosshair isn't on it.
      */
+    /** When the last bridging click was refused, so the next waits as long as one after a click that went in. */
+    private long bridgeRefusedAt = Long.MIN_VALUE / 2;
+
     private boolean bridgePlace(Minecraft client, LocalPlayer player, BlockPos support, Direction face) {
         Item item = helperItem(player);
         BlockHitResult hit = crosshair(player);
@@ -4569,13 +4576,15 @@ public final class SchematicBuilder {
             }
             return false;
         }
-        if (!handReady(player)) return false;
+        if (!handReady(player) || tick - bridgeRefusedAt < 4) return false;
         InteractionResult result = client.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
-        if (result instanceof InteractionResult.Success success && success.swingSource() == InteractionResult.SwingSource.CLIENT) {
-            player.swing(InteractionHand.MAIN_HAND);
-        } else if (debug()) {
-            LOGGER.info("Bridging: the click on the {} side of {} gave {}", face, support.toShortString(), result);
+        if (!(result instanceof InteractionResult.Success success)) {
+            // Nothing went in: no helper block counted where there is none. Clicked again a few ticks on, as before.
+            if (debug()) LOGGER.info("Bridging: the click on the {} side of {} gave {}", face, support.toShortString(), result);
+            bridgeRefusedAt = tick;
+            return false;
         }
+        if (success.swingSource() == InteractionResult.SwingSource.CLIENT) player.swing(InteractionHand.MAIN_HAND);
         helpers.put(support.relative(face).asLong(), new Helper(-1, Block.byItem(item)));
         if (escapeWalk || !brokeOut.isEmpty()) addEscapeHelper(support.relative(face));
         if (debug()) LOGGER.info("Bridging: a helper block against the {} side of {}", face, support.toShortString());
