@@ -1721,6 +1721,12 @@ public final class SchematicBuilder {
                 // other water, as the water runs out of it as from a source.
                 Item bucket = Items.WATER_BUCKET;
                 if (!creative && materials.total(bucket) == 0) {
+                    // Out of water buckets: an empty one is filled where water comes back, as for the build's own water. A
+                    // dry kelp spot takes a bucket of its own (da-45), more than the build's sources hand out.
+                    if (!fetchTried && materials.total(Items.BUCKET) > 0) {
+                        fetchTried = true;
+                        if (fetchWater(client, player, materials, layerNumber)) return;
+                    }
                     if (!missing.contains(bucket)) missing.add(bucket);
                     continue;
                 }
