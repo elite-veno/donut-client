@@ -2654,6 +2654,13 @@ public final class SchematicBuilder {
         Set<Long> reached = new HashSet<>();
         Navigator.Node viewStart = Navigator.standingAt(view, player);
         if ((exitEscapes ? escapeFrom(player, view, viewStart, reached) : exitFrom(player, view, viewStart, reached)) != null) return true;
+        // A climb out over cells the build fills later is a way out too, as up a kelp channel the block walls in: out that
+        // way once it is in (climbOut), the helper blocks coming away after.
+        if (!exitEscapes && escapeFrom(player, view, viewStart, null) != null) {
+            if (debug()) LOGGER.info("{} at {} walls you in, but a climb out stays", plan.target(i).getBlock().getName().getString(),
+                    pos.toShortString());
+            return true;
+        }
         shutIn.put(i, reached);
         if (debug()) LOGGER.info("{} at {} waits: it would shut you in, with {} places to stand", plan.target(i).getBlock().getName().getString(),
                 pos.toShortString(), reached.size());
@@ -2902,7 +2909,9 @@ public final class SchematicBuilder {
         escapeHelpers.add(cell.asLong());
         int i = plan.indexOf(cell);
         BlockState target = i < 0 ? null : plan.target(i);
-        if (target != null && target.getBlock() instanceof LiquidBlock && target.getFluidState().is(FluidTags.WATER)) plan.hold(cell, true);
+        if (target != null && (target.getBlock() instanceof LiquidBlock && target.getFluidState().is(FluidTags.WATER) || plan.plant(i))) {
+            plan.hold(cell, true);
+        }
     }
 
     /** Forgets a helper block of a way out, gone or left for the cleanup, and the hold it had. */
@@ -3935,7 +3944,13 @@ public final class SchematicBuilder {
                 && plan.target(i).getBlock() instanceof LiquidBlock && plan.target(i).getFluidState().is(FluidTags.WATER);
         // Never in a spot that grows kelp or seagrass, not even on the way out of a pocket: that spot holds the water of its
         // column, and a helper there shuts the water out of the kelp under it for good, as dirt in 13,72,16 did in v4-o.
-        if (i >= 0 && plan.plant(i)) return false;
+        if (i >= 0 && plan.plant(i)) {
+            // But climbing out of a kelp channel the player stands in, walled in once its last block went in (v4-full12,
+            // the dispensers 3..17,70,3 over the channel z 4): a pillar up through the channel's own cells, with no water
+            // standing in them yet. It holds the layer and comes away once the player is out, as any climb out.
+            int here = plan.indexOf(Navigator.standingAt(player.level(), player).feetCell());
+            return escaping && here >= 0 && plan.plant(here) && !state.getFluidState().isSource();
+        }
         // Nor in a spot a water source goes into over kelp or seagrass, dry, with water running through or with its source
         // already in: that source fills the column under it (5,72,4 and 6,72,4 over the kelp at 6,70,4 in v4-p), and a
         // helper bridged into it once poured was taken away and bridged in again and again (v4-r, 5,72,4 and 14,72,4).
