@@ -4069,7 +4069,7 @@ public final class SchematicBuilder {
         double reach = player.blockInteractionRange() - 0.2;
         AABB cell = new AABB(pos);
         LongPredicate notThere = a -> unclickable(a, i);
-        // For the log: places reached, those in reach, and those in reach with the eye under the block, the few nearest.
+        // For the log: places reached, those in reach, and those in reach with the eye under the block, the highest few.
         int[] seen = new int[3];
         List<Navigator.Node> under = new ArrayList<>();
         Navigator.Goal goal = node -> {
@@ -4078,15 +4078,48 @@ public final class SchematicBuilder {
             seen[1]++;
             if (node.eye().y < pos.getY()) {
                 seen[2]++;
-                if (under.size() < 6) under.add(node);
+                if (under.size() < 400) under.add(node);
             }
             return PlacementSolver.fromSpot(player, view, node.standing(), pos, target, stack, reach, notThere) != null ? 1 : 0;
         };
         Navigator.Path path = offTheTop(player, view).climbUpTo(layerY + 2.5).find(Navigator.standingAt(view, player), goal);
         if (debug()) {
+            // Every eye under it, as x feet z, the nearest across first: the looks from below come from right beside it.
+            Vec3 middle = Vec3.atCenterOf(pos);
+            under.sort(Comparator.comparingDouble((Navigator.Node n) -> Math.hypot(n.x() + 0.5 - middle.x, n.z() + 0.5 - middle.z))
+                    .thenComparingDouble(n -> -n.feet()));
+            StringBuilder all = new StringBuilder();
+            for (Navigator.Node n : under) all.append(all.isEmpty() ? "" : " ").append(n.x()).append('/').append(n.feet()).append('/').append(n.z());
             LOGGER.info("  look-alone search for {} at {}{}: {} places reached, {} in reach, {} of them with the eye under it{}{}",
                     target.getBlock().getName().getString(), pos.toShortString(), view instanceof Overlay ? " with a block taken out" : "",
-                    seen[0], seen[1], seen[2], under.isEmpty() ? "" : ", such as " + under, path == null ? "" : ", found " + path.end());
+                    seen[0], seen[1], seen[2], under.isEmpty() ? "" : " (x/feet/z: " + all + ")", path == null ? "" : ", found " + path.end());
+            // Why the nearest two within a climb's height have no look, as the world is: the walk's own explanation.
+            List<Navigator.Node> near = under.stream().filter(n -> n.feet() >= pos.getY() - 5).limit(2).toList();
+            if (path == null && !(view instanceof Overlay)) {
+                // Whether a climb could start from the nearest two: each check a pillar step makes, as the world is.
+                Level world = player.level();
+                for (Navigator.Node node : under.subList(0, Math.min(2, under.size()))) {
+                    BlockPos foot = node.feetCell();
+                    StringBuilder cells = new StringBuilder();
+                    for (int dy = 0; dy <= 3; dy++) {
+                        BlockPos at = foot.above(dy);
+                        BlockState state = world.getBlockState(at);
+                        cells.append(dy == 0 ? "" : ", ").append(at.getY()).append(' ').append(state)
+                                .append(state.getCollisionShape(world, at).isEmpty() ? "" : " solid")
+                                .append(state.getShape(world, at).isEmpty() ? "" : " outline");
+                    }
+                    LOGGER.info("    a climb from {}: helper allowed {}, on {}{}, plan cell {}; cells up: {}", node,
+                            helperAllowed(player, foot), world.getBlockState(foot.below()),
+                            BlockRules.interactive(world.getBlockState(foot.below()).getBlock()) ? " (used by hand)" : "",
+                            plan.indexOf(foot), cells);
+                }
+                for (Navigator.Node node : near) {
+                    for (boolean crouch : new boolean[] {false, true}) {
+                        Vec3 eye = node.standing().add(0, crouch ? PlacementSolver.CROUCH_EYE : PlacementSolver.STAND_EYE, 0);
+                        LOGGER.info("    from {}: {}", node, PlacementSolver.explain(player, eye, crouch, pos, target, stack, reach, notThere));
+                    }
+                }
+            }
         }
         return path;
     }
@@ -4785,7 +4818,11 @@ public final class SchematicBuilder {
                 int first = near.getFirst();
                 Item item = BlockRules.item(plan.target(first));
                 Vec3 middle = Vec3.atCenterOf(plan.pos(first));
-                List<Navigator.Node> high = sample.stream().filter(n -> n.feet() >= plan.pos(first).getY() + 1)
+                // Places on top of the layer, nearest the block; for one that takes a look up at it, an up-facing observer
+                // say, places with the eye under it instead, where that look comes from.
+                boolean up = BlockRules.placedLookingUp(plan.target(first));
+                List<Navigator.Node> high = sample.stream()
+                        .filter(n -> up ? n.eye().y < plan.pos(first).getY() : n.feet() >= plan.pos(first).getY() + 1)
                         .sorted(Comparator.comparingDouble(n -> n.eye().distanceToSqr(middle))).limit(5).toList();
                 for (Navigator.Node node : high) {
                     for (boolean crouch : new boolean[] {false, true}) {
