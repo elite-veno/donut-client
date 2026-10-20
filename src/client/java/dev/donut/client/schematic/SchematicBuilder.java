@@ -7068,13 +7068,15 @@ public final class SchematicBuilder {
             } else if (swap) {
                 // Not one just swapped in for another box, before a few of its blocks went in: else box after box swaps
                 // the same few stacks round, as v4-y did five times in 16 s, glass, observers, gates, hoppers, concrete.
+                // Only while another can go: with nothing else, the one swapped in longest ago goes back after all, rather than
+                // the box closing without what it was opened for, which in the end stops the build.
                 Integer in = swappedIn.get(item);
-                if (in != null && plan.count(BuildPlan.Status.DONE) - in < SWAP_BACK_AFTER) continue;
-                rank = 6;
+                rank = in != null && plan.count(BuildPlan.Status.DONE) - in < SWAP_BACK_AFTER ? 7 : 6;
             } else {
                 continue;
             }
-            if (rank < bestRank || rank == 6 && bestRank == 6 && stack.getCount() > menu.getSlot(best).getItem().getCount()) {
+            if (rank < bestRank || rank == 6 && bestRank == 6 && stack.getCount() > menu.getSlot(best).getItem().getCount()
+                    || rank == 7 && bestRank == 7 && swappedIn.get(item) < swappedIn.get(menu.getSlot(best).getItem().getItem())) {
                 best = slot;
                 bestRank = rank;
             }
