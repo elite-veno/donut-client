@@ -1492,7 +1492,8 @@ public final class SchematicBuilder {
         candidates.clear();
         candidates.addAll(backToFront);
         if (settings().walk && wetSoon(player.level(), player.blockPosition(), recentPours(), new HashMap<>())
-                && !wetPourStand(player.level(), Navigator.standingAt(player.level(), player).feetCell(), null)) {
+                && !wetPourStand(player.level(), Navigator.standingAt(player.level(), player).feetCell(), null)
+                && !stillWater(player.level(), Navigator.standingAt(player.level(), player))) {
             // Water running past pushes the player about and spoils every look: out of it first, onto dry ground.
             nextAction = System.nanoTime() + 250_000_000L;
             if (planWalk(client, player, candidates, materials, layerNumber, lift)) return;
@@ -2328,6 +2329,27 @@ public final class SchematicBuilder {
             if (j >= 0 && holdsWaterLater(j)) return true;
         }
         return false;
+    }
+
+    /**
+     * Whether the water at a place to stand stands still: at the feet and the head only sources, as in a kelp channel,
+     * and where one is empty none running beside it to run in, and a full block underfoot. Still water pushes no one; a look from there holds
+     * as on dry ground, as a player placing a dispenser from the kelp channel in front of it (v4-full8, 3,70,9).
+     */
+    private static boolean stillWater(Level level, Navigator.Node node) {
+        BlockPos floor = node.floor();
+        if (!level.getBlockState(floor).isCollisionShapeFullBlock(level, floor)) return false;
+        for (BlockPos cell : new BlockPos[] {node.feetCell(), node.feetCell().above()}) {
+            FluidState fluid = level.getFluidState(cell);
+            if (!fluid.isEmpty() && !fluid.isSource()) return false;
+            // A cell full of water takes none in from beside it; an empty one may.
+            if (fluid.isSource()) continue;
+            for (Direction side : Direction.Plane.HORIZONTAL) {
+                FluidState beside = level.getFluidState(cell.relative(side));
+                if (!beside.isEmpty() && !beside.isSource()) return false;
+            }
+        }
+        return true;
     }
 
     /** Whether block {@code i} is water the build pours, or kelp or seagrass, which stand in water. */
@@ -4970,6 +4992,8 @@ public final class SchematicBuilder {
             // Waded through, never stood in: water would push the player off every look. But for a cell the build fills
             // with water itself, a kelp channel say, with a floor and no drop beside it: water is poured from there.
             boolean wetHere = wetSoon(player.level(), node.feetCell(), poured, wetCells);
+            // Water that stands still, kelp's say, pushes no one: any block may be placed from there.
+            if (wetHere && poured.isEmpty() && stillWater(level, node)) wetHere = false;
             if (wetHere && !wetPourStand(level, node.feetCell(), null)) return 0;
             Vec3 feet = node.standing(), eye = node.eye();
             AABB body = new AABB(node.x() + 0.2, node.feet(), node.z() + 0.2, node.x() + 0.8, node.feet() + 1.8, node.z() + 0.8);
