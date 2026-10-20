@@ -1805,6 +1805,7 @@ public final class SchematicBuilder {
             return;
         }
         if (settings().walk && climbOut(client, player, candidates, materials, layerNumber, lift)) return;
+        if (settings().walk && climbUpOut(client, player)) return;
         if (settings().walk && breakOutOfBuild(player)) return;
         // Last, from the top of a pillar of helper blocks with nothing in reach: down a block.
         if (settings().walk && stepDown(player)) return;
@@ -2256,6 +2257,30 @@ public final class SchematicBuilder {
         if (debug()) LOGGER.info("Climbing out, {} steps, over where a block of the build was broken", path.nodes().size() - 1);
         return true;
     }
+
+    /**
+     * Down in the build below its layer, as after a fall into a channel, with no place to stand for any block from where
+     * the walks reach: out first, up to the layer or off the build, climbing over cells the build fills later, as a player
+     * climbs out of a hole before looking for the next block. The places to stand are searched again from up there.
+     */
+    private boolean climbUpOut(Minecraft client, LocalPlayer player) {
+        if (helperItem(player) == null || tick - climbUpChecked < 100) return false;
+        climbUpChecked = tick;
+        Level level = player.level();
+        Navigator.Node start = Navigator.standingAt(level, player);
+        if (start.feet() >= layerY + 1 - 1e-3 || offBuild(start.standing())) return false;
+        Navigator.Path path = escapeFrom(player, level, start, null);
+        if (path == null || path.nodes().size() < 2) return false;
+        if (!climbReady(client, player, path)) return true;
+        releaseKeys(client);
+        walker.start(path.nodes());
+        escapeWalk = true;
+        show("Climbing out of the build to find a place to stand", false);
+        if (debug()) LOGGER.info("Down in the build with no place to stand from here: climbing out first, {} steps", path.nodes().size() - 1);
+        return true;
+    }
+
+    private long climbUpChecked = Long.MIN_VALUE / 2;
 
     /**
      * Shut in with nothing to place from here and no climb out, not even over cells the build fills later, as after a
