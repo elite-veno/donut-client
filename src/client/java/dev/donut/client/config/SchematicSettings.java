@@ -21,6 +21,11 @@ public final class SchematicSettings {
      * back, and one never built in starts without an origin rather than with another world's.
      */
     public Map<String, Placement> places = new LinkedHashMap<>();
+    /**
+     * The world the placement above is for, saved with it: after a restart it is still known whose it is, and it is kept
+     * as that world's when another is joined. Empty in a config from before placements were kept per world.
+     */
+    public String world = "";
     /** Worlds remembered; the oldest is forgotten first. */
     public static final int MAX_PLACES = 64;
 
@@ -119,6 +124,7 @@ public final class SchematicSettings {
 
     public void sanitize() {
         if (places == null) places = new LinkedHashMap<>();
+        if (world == null) world = "";
         places.values().removeIf(place -> place == null);
         file = file == null ? "" : file.strip();
         helperBlocks = helperBlocks == null ? "" : helperBlocks.strip();

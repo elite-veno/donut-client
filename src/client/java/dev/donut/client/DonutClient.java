@@ -215,20 +215,25 @@ public final class DonutClient implements ClientModInitializer {
 
     private void save() { store.save(config); }
 
-    /** The world the schematic placement was last taken for, see {@link #followWorld}. */
-    private String placeWorld;
-
     /**
      * Each world, server and dimension keeps its own schematic placement: on leaving one, its placement is kept; on
      * coming into one, its own comes back, or the origin is unset where none was ever set.
      */
     private void followWorld(Minecraft client) {
         String world = worldKey(client);
-        if (world == null || world.equals(placeWorld)) return;
         var schematic = config.schematic;
-        if (placeWorld != null) schematic.remember(placeWorld);
+        if (world == null || world.equals(schematic.world)) return;
+        if (schematic.world.isEmpty()) {
+            // A config from before placements were kept per world: the placement in it is taken for the first world
+            // joined, rather than lost.
+            schematic.world = world;
+            save();
+            return;
+        }
+        // The placement is the last world's, also when that was in an earlier game: kept as its own.
+        schematic.remember(schematic.world);
         boolean known = schematic.recall(world);
-        placeWorld = world;
+        schematic.world = world;
         save();
         if (known && schematic.originSet && client.player != null && !schematic.file.isEmpty()) {
             client.player.sendSystemMessage(Component.literal("[Ven] Schematic " + schematic.file + " is placed at " + schematic.originX
