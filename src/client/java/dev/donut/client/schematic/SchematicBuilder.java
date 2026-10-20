@@ -1895,28 +1895,36 @@ public final class SchematicBuilder {
      * after: once in, such a block shuts the other in for good.
      */
     private boolean waitsForUpFacing(Level level, int i) {
-        if (plan.kind(i) != BlockRules.Kind.PLACE || BlockRules.facesUp(plan.target(i))) return false;
+        if (plan.kind(i) != BlockRules.Kind.PLACE) return false;
         BlockPos pos = plan.pos(i);
         if (!level.getBlockState(pos.below()).canBeReplaced() || !level.getBlockState(pos).canBeReplaced()) return false;
-        for (Direction side : Direction.Plane.HORIZONTAL) {
+        boolean upFacing = BlockRules.facesUp(plan.target(i));
+        // One beside it, or one or two layers up beside the cells over it: a column of them stacked, each a layer higher,
+        // takes its look up past this spot from as far below as the eye is.
+        for (int up = 0; up <= 2; up++) {
+            if (up > 0 && !level.getBlockState(pos.above(up)).canBeReplaced()) break;
             // A row of them goes in in any order: each is placed from below, not past the other.
-            BlockPos at = pos.relative(side);
-            int j = plan.indexOf(at);
-            if (j < 0 || plan.status(j) != BuildPlan.Status.PENDING || !BlockRules.facesUp(plan.target(j))) continue;
-            if (!level.getBlockState(at).canBeReplaced()) continue;
-            if (debug() && tick - upWaitLogged.getOrDefault(i, -UP_WAIT_TICKS) > 200) {
-                upWaitLogged.put(i, tick);
-                LOGGER.info("{} at {} waits: it would take the look up at {} at {}", plan.target(i).getBlock().getName().getString(),
-                        pos.toShortString(), plan.target(j).getBlock().getName().getString(), at.toShortString());
+            if (up == 0 && upFacing) continue;
+            for (Direction side : Direction.Plane.HORIZONTAL) {
+                BlockPos at = pos.relative(side).above(up);
+                int j = plan.indexOf(at);
+                if (j < 0 || plan.status(j) != BuildPlan.Status.PENDING || !BlockRules.facesUp(plan.target(j))) continue;
+                if (!level.getBlockState(at).canBeReplaced()) continue;
+                if (debug() && tick - upWaitLogged.getOrDefault(i, -UP_WAIT_TICKS) > 200) {
+                    upWaitLogged.put(i, tick);
+                    LOGGER.info("{} at {} waits: it would take the look up at {} at {}", plan.target(i).getBlock().getName().getString(),
+                            pos.toShortString(), plan.target(j).getBlock().getName().getString(), at.toShortString());
+                }
+                return true;
             }
-            return true;
         }
         return false;
     }
 
+
     /** With the seals lifted, block {@code i} still waits for an up-facing neighbour, for {@link #UP_WAIT_TICKS} after. */
     private boolean upWaitHolds(Level level, int i) {
-        return tick - sealsLiftedAt < UP_WAIT_TICKS && waitsForUpFacing(level, i);
+        return (sealsLiftedAt == UNLIFTED || tick - sealsLiftedAt < UP_WAIT_TICKS) && waitsForUpFacing(level, i);
     }
 
     /** How long, after the seals are lifted, a block still waits for an up-facing neighbour: the walks get a few more tries. */
