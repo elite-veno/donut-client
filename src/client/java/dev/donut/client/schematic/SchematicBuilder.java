@@ -5019,9 +5019,14 @@ public final class SchematicBuilder {
                 // Places on top of the layer, nearest the block; for one that takes a look up at it, an up-facing observer
                 // say, places with the eye under it instead, where that look comes from.
                 boolean up = BlockRules.placedLookingUp(plan.target(first));
-                List<Navigator.Node> high = sample.stream()
+                List<Navigator.Node> high = new ArrayList<>(sample.stream()
                         .filter(n -> up ? n.eye().y < plan.pos(first).getY() : n.feet() >= plan.pos(first).getY() + 1)
-                        .sorted(Comparator.comparingDouble(n -> n.eye().distanceToSqr(middle))).limit(5).toList();
+                        .sorted(Comparator.comparingDouble(n -> n.eye().distanceToSqr(middle))).limit(5).toList());
+                // And places with the eye about level with the block, nearest first: a dispenser or piston facing sideways
+                // takes a level look, from a place down beside it, a channel say, that the places on top never show.
+                sample.stream().filter(n -> !high.contains(n) && n.eye().y >= plan.pos(first).getY() - 0.5
+                                && n.eye().y <= plan.pos(first).getY() + 1.6)
+                        .sorted(Comparator.comparingDouble(n -> n.eye().distanceToSqr(middle))).limit(3).forEach(high::add);
                 for (Navigator.Node node : high) {
                     for (boolean crouch : new boolean[] {false, true}) {
                         Vec3 eye = node.standing().add(0, crouch ? PlacementSolver.CROUCH_EYE : PlacementSolver.STAND_EYE, 0);
