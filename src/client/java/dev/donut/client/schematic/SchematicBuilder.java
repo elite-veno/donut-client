@@ -4098,6 +4098,9 @@ public final class SchematicBuilder {
             if (!lift && seals(player, i, started) == 1) continue;
             Item item = plan.item(i);
             if (item == null || !creative && (materials.total(item) == 0 || waitsForDrop(level, i, materials))) continue;
+            // Only in a box, with no room for one a moment ago: it waits for that on arrival too, and a walk for it is for
+            // nothing.
+            if (!creative && materials.loose(item) == 0 && noBoxHere(item)) continue;
             near.add(i);
             if (near.size() >= 48) break;
         }
@@ -4566,7 +4569,7 @@ public final class SchematicBuilder {
             BlockState target = plan.target(i);
             if (level.getBlockState(pos).getBlock() == target.getBlock()) continue;
             Item item = BlockRules.item(target);
-            if (item == null || !creative && materials.total(item) == 0) continue;
+            if (item == null || !creative && (materials.total(item) == 0 || materials.loose(item) == 0 && noBoxHere(item))) continue;
             if (++tried > 6 || System.nanoTime() - started > 40_000_000L) break;
             for (int depth = 1; depth <= 2; depth++) {
                 for (int[] offset : PIT_OFFSETS) {
