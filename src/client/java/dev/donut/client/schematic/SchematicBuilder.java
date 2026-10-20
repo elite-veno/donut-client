@@ -2289,7 +2289,12 @@ public final class SchematicBuilder {
         if (start.feet() >= layerY + 1 - 1e-3 || offBuild(start.standing())) return false;
         Navigator.Path path = escapeFrom(player, level, start, null);
         if (path == null || path.nodes().size() < 2) return false;
-        if (!climbReady(client, player, path)) return true;
+        if (!climbReady(client, player, path)) {
+            // Helper blocks on their way into the hotbar: the climb out is tried again once they are there, not five
+            // seconds on. With none moving, the usual wait.
+            if (swapFrom >= 0) climbUpChecked = Long.MIN_VALUE / 2;
+            return true;
+        }
         releaseKeys(client);
         walker.start(path.nodes());
         escapeWalk = true;
