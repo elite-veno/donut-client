@@ -2196,16 +2196,15 @@ public final class SchematicBuilder {
         Level level = player.level();
         BlockPos pos = plan.pos(i);
         if (!level.getBlockState(pos).canBeReplaced()) return 2;
+        // Worked out afresh each time, never kept with the stamp: the block waited for is two cells off, or a layer or two
+        // up, outside the cells the stamp reads, and once it went in the wait stayed as kept. A chest waiting on the level
+        // look at an observer two cells off waited for good, and the lone half beside it with it (slab farm west cut).
+        if (waitsForUpFacing(level, i) || waitsForChannel(level, i)) return 1;
         long stamp = BuildPlan.stamp(level, pos);
         if (sealStamp[i] == stamp) return seal[i];
         if (System.nanoTime() - started > PLAN_NANOS) return 0;
         Overlay view = null;
         byte result = 2;
-        if (waitsForUpFacing(level, i) || waitsForChannel(level, i)) {
-            sealStamp[i] = stamp;
-            seal[i] = 1;
-            return 1;
-        }
         for (Direction side : Direction.values()) {
             BlockPos at = pos.relative(side);
             int j = plan.indexOf(at);
