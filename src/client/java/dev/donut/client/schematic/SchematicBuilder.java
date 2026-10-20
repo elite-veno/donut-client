@@ -6908,7 +6908,10 @@ public final class SchematicBuilder {
      * picked here, so a box that gives none can't be opened over and over. Null when there is none.
      */
     private Item restockAhead(LocalPlayer player, Materials carried) {
-        if (player.hasInfiniteMaterials() || !settings().useShulkers || carried.freeSlots() < 1) return null;
+        // Room to spare only: two slots stay free in any restock (nextToTake), and a box ahead that fills the last ones
+        // leaves none for what the next box is opened for, the layer's own blocks. v4-x stopped so, "no room in your
+        // inventory to take Hopper", after boxes ahead for glass (three stacks), water buckets and gates.
+        if (player.hasInfiniteMaterials() || !settings().useShulkers || carried.freeSlots() < AHEAD_FREE) return null;
         // Before the first decision has picked a layer, as at the start of a build: the lowest with a block still to go in.
         int y = aheadY();
         if (y == Integer.MIN_VALUE) return null;
@@ -6946,6 +6949,9 @@ public final class SchematicBuilder {
         }
         return Integer.MIN_VALUE;
     }
+
+    /** The free inventory slots a box opened ahead needs: two kept free, and two to take into. */
+    private static final int AHEAD_FREE = 4;
 
     /** The layer each item was last taken out of a box ahead for, by {@link #restockAhead}. */
     private final Map<Item, Integer> aheadLayer = new HashMap<>();
