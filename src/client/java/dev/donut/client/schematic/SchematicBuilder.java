@@ -1256,8 +1256,12 @@ public final class SchematicBuilder {
             }
         }
         // Standing where a box goes in, blocks of the layer that are only in boxes come out now, before a walk takes the
-        // player up onto the build, where there may be no room for a box at all.
-        if (!creative && settings().walk && tick - aheadChecked >= 20) {
+        // player up onto the build, where there may be no room for a box at all. Only for a layer built from higher up
+        // than a drop gets back down from: one at about the player's height is built from the ground round it, where a
+        // box goes in whenever its blocks come up.
+        int aheadAt = aheadY();
+        if (!creative && settings().walk && tick - aheadChecked >= 20 && aheadAt != Integer.MIN_VALUE
+                && aheadAt + 1 - player.getY() > Navigator.DROP) {
             aheadChecked = tick;
             Item ahead = restockAhead(player, materials);
             if (ahead != null && !boxSpots(player, Navigator.standingAt(level, player).floor().above(), player.position()).isEmpty()) {
@@ -6689,19 +6693,8 @@ public final class SchematicBuilder {
     private Item restockAhead(LocalPlayer player, Materials carried) {
         if (player.hasInfiniteMaterials() || !settings().useShulkers || carried.freeSlots() < 1) return null;
         // Before the first decision has picked a layer, as at the start of a build: the lowest with a block still to go in.
-        int y = layerY;
-        if (y == Integer.MIN_VALUE) {
-            for (Map.Entry<Integer, int[]> layer : plan.layers().entrySet()) {
-                for (int i : layer.getValue()) {
-                    if (plan.status(i) == BuildPlan.Status.PENDING || plan.status(i) == BuildPlan.Status.UNLOADED) {
-                        y = layer.getKey();
-                        break;
-                    }
-                }
-                if (y != Integer.MIN_VALUE) break;
-            }
-            if (y == Integer.MIN_VALUE) return null;
-        }
+        int y = aheadY();
+        if (y == Integer.MIN_VALUE) return null;
         Item best = null;
         int most = 0;
         for (Map.Entry<Item, Integer> need : needsUpTo(player.level(), y).entrySet()) {
@@ -6714,6 +6707,17 @@ public final class SchematicBuilder {
         }
         if (best != null) aheadLayer.put(best, y);
         return best;
+    }
+
+    /** The layer {@link #restockAhead} fetches for: the one being built, or before one is picked the lowest with a block left. */
+    private int aheadY() {
+        if (layerY != Integer.MIN_VALUE) return layerY;
+        for (Map.Entry<Integer, int[]> layer : plan.layers().entrySet()) {
+            for (int i : layer.getValue()) {
+                if (plan.status(i) == BuildPlan.Status.PENDING || plan.status(i) == BuildPlan.Status.UNLOADED) return layer.getKey();
+            }
+        }
+        return Integer.MIN_VALUE;
     }
 
     /** The layer each item was last taken out of a box ahead for, by {@link #restockAhead}. */
