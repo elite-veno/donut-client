@@ -245,7 +245,8 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
 
     /**
      * The places, as {@link BlockPos#asLong}, of the schematic's blocks that DONUT_SCHEMATIC_RESUME's log says were
-     * placed there ("Placed Block{id}... at x, y, z"), up to the time after an @ if one is given. Empty without it.
+     * placed there ("Placed Block{id}... at x, y, z", or "Resumed Block" for those a run resumed itself), up to the time
+     * after an @ if one is given. Empty without it.
      */
     private static Set<Long> resumed(Schematic schematic) {
         String spec = System.getenv("DONUT_SCHEMATIC_RESUME");
@@ -270,7 +271,12 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
             BlockState target = Schematic.place(schematic.state(i), Mirror.NONE, Rotation.NONE);
             long pos = Schematic.place(schematic.pos(i), ORIGIN, Mirror.NONE, Rotation.NONE).asLong();
             String id = logged.get(pos);
-            if (id != null && id.equals(BuiltInRegistries.BLOCK.getKey(target.getBlock()).toString())) placed.add(pos);
+            if (id != null && id.equals(BuiltInRegistries.BLOCK.getKey(target.getBlock()).toString())) {
+                placed.add(pos);
+                // In this run's log too, so a run after it can go on from there with this log alone.
+                BlockPos cell = BlockPos.of(pos);
+                LOGGER.info("Resumed Block{{{}}} at {}, {}, {}:", id, cell.getX(), cell.getY(), cell.getZ());
+            }
         }
         return placed;
     }
