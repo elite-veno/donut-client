@@ -315,6 +315,16 @@ final class Walker {
         if (distance < closest - 0.03) {
             closest = distance;
             stuck = 0;
+        } else if (player.onGround() && there && distance < 0.3 && player.getDeltaMovement().horizontalDistanceSqr() < 1e-6
+                && stuck >= 4) {
+            // Held still a few tenths short of the middle, and no key gets the player further: along a channel beside water
+            // over an open gate every step stopped at 0.20 off, motionless, and failed as stuck after twelve ticks (v4-full5,
+            // 20:11:17 and :23), the walk and the look it was for lost. That close, it counts as there; decide works the
+            // looks out from where the player stands.
+            index++;
+            stuck = 0;
+            closest = Double.MAX_VALUE;
+            return State.WALKING;
         } else if (++stuck > (wading ? STUCK_TICKS * 2 : STUCK_TICKS)) {
             return fail(client, "stuck on the way to " + to + (player.onGround() ? ", on the ground" : ", in the air") + ", moving "
                     + player.getDeltaMovement() + (client.options.keyJump.isDown() ? ", jumping" : ""));
