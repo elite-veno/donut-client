@@ -89,6 +89,7 @@ import net.minecraft.world.level.block.WallBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.material.FlowingFluid;
 import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
@@ -3400,7 +3401,7 @@ public final class SchematicBuilder {
      * off after; true when nothing more can be moved in, and the walk goes as far as they last.
      */
     private boolean climbReady(Minecraft client, LocalPlayer player, Navigator.Path path) {
-        long climbs = path.nodes().stream().filter(node -> node.move() == Navigator.Move.PILLAR || node.move() == Navigator.Move.BRIDGE).count();
+        long climbs = path.nodes().stream().filter(node -> node.move().placesBlock()).count();
         if (climbs == 0 || player.hasInfiniteMaterials()) return true;
         Inventory inventory = player.getInventory();
         // A climb out of ground dug out fills it with what was there, from the hotbar (see walk's Climb.ready): moved in
@@ -3569,6 +3570,11 @@ public final class SchematicBuilder {
         boolean water = i >= 0 && (plan.kind(i) == BlockRules.Kind.FLUID || plan.kind(i) == BlockRules.Kind.AUTO)
                 && plan.target(i).getBlock() instanceof LiquidBlock && plan.target(i).getFluidState().is(FluidTags.WATER);
         if (!state.getFluidState().isEmpty()) {
+            // Water run out of the build onto the ground round it, not a source and not falling: a helper block goes in as
+            // into air, and the water runs back once it is gone. The cell is the schematic's to leave empty.
+            FluidState fluid = state.getFluidState();
+            if (i < 0 && fluid.is(FluidTags.WATER) && !fluid.isSource()
+                    && !(fluid.hasProperty(FlowingFluid.FALLING) && fluid.getValue(FlowingFluid.FALLING))) return true;
             // Water in the way only for a way on found no other way: then a helper block may go into water the build has
             // there anyway, as a player builds up through a flooded shaft to reach its bottom, and the water is poured
             // again once the block is gone. Water poured too early, over blocks still to place below it, otherwise

@@ -269,4 +269,31 @@ class NavigatorTest {
                     "not straight down from the lower pillar, through the bridge block: " + path.nodes());
         }
     }
+
+    @Test
+    void outOfDeepWaterAClimbStepsUpOntoABlockBesideRatherThanPillaring() {
+        // Water run out over the ground, two thirds of a block deep: a jump there swims, and a pillar never gets its block.
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        BlockState flowing = Blocks.WATER.defaultBlockState().setValue(net.minecraft.world.level.block.LiquidBlock.LEVEL, 2);
+        for (int x = -3; x <= 3; x++) for (int z = -3; z <= 3; z++) blocks.put(new BlockPos(x, 65, z), flowing);
+        BlockGetter level = world(blocks);
+        Navigator.Node start = new Navigator.Node(0, 64, 0, 65, Navigator.Move.START);
+        Navigator.Goal up = node -> node.feet() >= 67 ? 1 : 0;
+        Navigator.Path path = new Navigator(level, AREA, cell -> true, key -> false).find(start, up);
+        assertNotNull(path, "a way up out of the water");
+        assertEquals(Navigator.Move.STEP, path.nodes().get(1).move(), "the first climbing step goes onto a block beside");
+        assertEquals(65, path.nodes().get(1).y());
+        assertEquals(66, path.nodes().get(1).feet(), 1e-6);
+        assertFalse(path.nodes().stream().anyMatch(node -> node.move() == Navigator.Move.PILLAR && node.feet() == 66),
+                "no pillar out of the water itself");
+        assertEquals(Navigator.Move.PILLAR, path.nodes().get(2).move(), "from on top, dry, the climb goes on as a pillar");
+
+        // Shallow water, a sixth of a block: a jump still jumps, and the pillar goes up where the player stands.
+        BlockState shallow = Blocks.WATER.defaultBlockState().setValue(net.minecraft.world.level.block.LiquidBlock.LEVEL, 7);
+        blocks.replaceAll((pos, state) -> shallow);
+        Navigator.Path pillar = new Navigator(world(blocks), AREA, cell -> true, key -> false).find(start, up);
+        assertNotNull(pillar);
+        assertEquals(Navigator.Move.PILLAR, pillar.nodes().get(1).move());
+        assertNull(new Navigator(level, AREA, cell -> true, key -> false).pillars(0).find(start, up), "no blocks to climb with");
+    }
 }

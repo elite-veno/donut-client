@@ -243,6 +243,9 @@ final class Walker {
         if (to.move() == Navigator.Move.BRIDGE && player.level().getBlockState(to.floor()).canBeReplaced()) {
             return bridge(client, player, from, to, climb);
         }
+        if (to.move() == Navigator.Move.STEP && player.level().getBlockState(to.floor()).canBeReplaced()) {
+            return stepUp(client, player, to, climb);
+        }
         if (sidestep == null) sidestep = sidesteps(player);
         boolean last = index == path.size() - 1;
         // On open ground a walk passes a little off the middle of each block, a line of its own, and ends a little off
@@ -468,6 +471,30 @@ final class Walker {
         if (!climb.ready(to.floor())) return fail(client, "no block to step across on in the hotbar, holding " + player.getMainHandItem());
         // A click every few ticks, once the crosshair is on the side: the server may take a moment to show the block.
         if (bridgeTicks - bridgeClicked >= 4 && climb.placeBeside(support, face)) bridgeClicked = bridgeTicks;
+        return State.WALKING;
+    }
+
+    /** The step {@link #stepUp} works on, and its ticks and last click. */
+    private int stepFor = -1, stepTicks, stepClicked;
+
+    /**
+     * A step up out of water too deep to jump from: standing where they are, looking down at the ground beside, the
+     * helper block goes onto it, into the water there. The step itself is then walked, the swim up over the edge.
+     */
+    private State stepUp(Minecraft client, LocalPlayer player, Navigator.Node to, Climb climb) {
+        if (stepFor != index) {
+            stepFor = index;
+            stepTicks = 0;
+            stepClicked = -10;
+        }
+        if (++stepTicks > 200) return fail(client, "couldn't put a block down to step up onto at " + to.floor().toShortString());
+        release(client);
+        BlockPos ground = to.floor().below();
+        float[] look = PlacementSolver.look(player.getEyePosition(), Vec3.atCenterOf(ground).add(0, 0.5, 0));
+        head.turn(player, look[0], look[1]);
+        if (!climb.ready(to.floor())) return fail(client, "no block to step up onto in the hotbar, holding " + player.getMainHandItem());
+        // A click every few ticks, once the crosshair is on the ground's top: the server may take a moment to show it.
+        if (stepTicks - stepClicked >= 4 && climb.placeBeside(ground, Direction.UP)) stepClicked = stepTicks;
         return State.WALKING;
     }
 

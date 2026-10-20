@@ -19,6 +19,8 @@ import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
@@ -38,7 +40,17 @@ public final class Navigator {
     private static final double BODY = 1.8;
     private static final int[][] DIRECTIONS = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
 
-    public enum Move { START, WALK, JUMP, DROP, PILLAR, BRIDGE }
+    public enum Move {
+        START, WALK, JUMP, DROP, PILLAR, BRIDGE,
+        /**
+         * Out of water too deep to jump from: a helper block set on the ground beside, into the water there, and a step
+         * up onto it, as a player climbs out of a pool onto a block put at its edge.
+         */
+        STEP;
+
+        /** Whether the move puts down a helper block, where the node stands: a climbing step. */
+        public boolean placesBlock() { return this == PILLAR || this == BRIDGE || this == STEP; }
+    }
 
     /** A place to stand: on the block at x, y, z, with the feet at {@code feet}. */
     public record Node(int x, int y, int z, double feet, Move move) {
@@ -270,7 +282,7 @@ public final class Navigator {
             int climbs = climbed.get(key);
             // The helper blocks the way here puts down stand in the way of the steps after it.
             for (Node next : neighbors(node, climbs == 0 ? null : placedAlong(node, parent))) {
-                int used = climbs + (next.move() == Move.PILLAR || next.move() == Move.BRIDGE ? 1 : 0);
+                int used = climbs + (next.move().placesBlock() ? 1 : 0);
                 if (used > pillars) continue;
                 double step = entry[0] + stepCost(node, next);
                 Double previous = cost.get(next.key());
@@ -298,6 +310,7 @@ public final class Navigator {
             case DROP -> 1.5 + (from.feet() - to.feet()) * 0.5 + Math.max(0, from.feet() - to.feet() - DROP) * 6;
             case PILLAR -> 6;
             case BRIDGE -> 8;
+            case STEP -> 7;
             case START -> 0;
         };
         // Standing where a block still has to go blocks it: allowed on the way, avoided as a place to stop.
@@ -316,7 +329,7 @@ public final class Navigator {
     private static Set<Long> placedAlong(Node node, Map<Long, Node> parent) {
         Set<Long> placed = new HashSet<>();
         for (Node at = node; at != null; at = parent.get(at.key())) {
-            if (at.move() == Move.PILLAR || at.move() == Move.BRIDGE) placed.add(at.floor().asLong());
+            if (at.move().placesBlock()) placed.add(at.floor().asLong());
         }
         return placed;
     }
@@ -389,13 +402,33 @@ public final class Navigator {
         // Climbing: jump and place a block where the feet were, then stand on it.
         BlockPos cell = from.feetCell();
         if (Math.abs(from.feet() - cell.getY()) < 0.01 && cell.getY() + 1 < area.maxY && from.feet() + 1 <= climbCeiling
-                && pillarAllowed.test(cell)
+                && pillarAllowed.test(cell) && !deepWater(cell)
                 && clear(from.x(), from.z(), from.feet() + 1, from.feet() + 1 + BODY, Integer.MIN_VALUE)
                 && !crosses(placed, from.x(), from.z(), from.feet() + 1, from.feet() + 1 + BODY)
                 && seeThrough(from.x(), from.z(), cell.getY(), cell.getY() + 2)
                 && !unsteady(from.floor(), Blocks.HONEY_BLOCK)) {
             Node next = new Node(cell.getX(), cell.getY(), cell.getZ(), from.feet() + 1, Move.PILLAR);
             if (badSteps.isEmpty() || !badSteps.contains(stepKey(from, next))) out.add(next);
+        }
+        // In water too deep to jump from, as run out of a build onto the ground under it, a jump only swims up and the
+        // pillar never gets its block: a block set on the ground beside instead, into the water there, and a step up onto
+        // it, the swim up carrying the player over its edge. From on top the climb goes on as on dry ground.
+        if (deepWater(cell) && Math.abs(from.feet() - cell.getY()) < 0.01 && from.feet() + 1 <= climbCeiling
+                && clear(from.x(), from.z(), from.feet(), from.feet() + 1 + BODY, from.y())) {
+            for (int[] d : DIRECTIONS) {
+                if (d[0] != 0 && d[1] != 0) continue;
+                int nx = from.x() + d[0], nz = from.z() + d[1];
+                if (nx < area.minX || nx >= area.maxX || nz < area.minZ || nz >= area.maxZ) continue;
+                BlockPos step = new BlockPos(nx, cell.getY(), nz), ground = step.below();
+                if (!level.getBlockState(step).canBeReplaced() || !pillarAllowed.test(step) || placed != null && placed.contains(step.asLong())) continue;
+                if (!level.getBlockState(ground).isCollisionShapeFullBlock(level, ground)) continue;
+                if (!clear(nx, nz, from.feet() + 1, from.feet() + 1 + BODY, Integer.MIN_VALUE)
+                        || crosses(placed, nx, nz, from.feet() + 1, from.feet() + 1 + BODY)) continue;
+                // The look down at the ground passes through the spot: nothing there with an outline in the way.
+                if (!seeThrough(nx, nz, step.getY(), step.getY())) continue;
+                Node next = new Node(nx, step.getY(), nz, from.feet() + 1, Move.STEP);
+                if (badSteps.isEmpty() || !badSteps.contains(stepKey(from, next))) out.add(next);
+            }
         }
         // Bridging: crouched at the edge, a block put against the side of the one underfoot, and a step onto it, as a
         // player crosses a gap a block wide, or gets from a pillar onto a build beside it. Only straight out from a full
@@ -444,6 +477,15 @@ public final class Navigator {
      * nothing on the way: an open fence gate or a pane has no collision, so the body passes into it, but the crosshair
      * stops on its outline and the block to climb on never goes in.
      */
+    /** How deep water may be, from the bottom of the feet's cell, for a jump from it: deeper, the player swims instead. */
+    static final double SWIM_DEPTH = 0.4;
+
+    /** Whether the feet's cell holds water deeper than {@link #SWIM_DEPTH}, where a jump only swims up. */
+    private boolean deepWater(BlockPos cell) {
+        FluidState fluid = level.getFluidState(cell);
+        return fluid.getType().isSame(Fluids.WATER) && fluid.getHeight(level, cell) > SWIM_DEPTH;
+    }
+
     private boolean seeThrough(int x, int z, int fromY, int toY) {
         for (int y = fromY; y <= toY; y++) {
             BlockPos pos = new BlockPos(x, y, z);
