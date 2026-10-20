@@ -3045,7 +3045,10 @@ public final class SchematicBuilder {
      * swims up a kelp channel to place an up-facing observer over it: a source with no flow, the body clear of every
      * block. Null when there is none. Only for the blocks with a look up, which no place to stand on the build may have.
      */
-    SwimSpot swimSpot(LocalPlayer player, int i, double reach) {
+    SwimSpot swimSpot(LocalPlayer player, int i, double reach) { return swimSpot(player, player.level(), i, reach); }
+
+    /** As {@link #swimSpot(LocalPlayer, int, double)}, with the looks traced through {@code view}: with blocks put in first. */
+    SwimSpot swimSpot(LocalPlayer player, BlockGetter view, int i, double reach) {
         BlockState target = plan.target(i);
         if (!BlockRules.placedLookingUp(target)) return null;
         Item item = BlockRules.item(target);
@@ -3064,7 +3067,7 @@ public final class SchematicBuilder {
                 Vec3 feet = new Vec3(cell.getX() + 0.5, cell.getY() + up, cell.getZ() + 0.5);
                 double away = feet.add(0, 1.62, 0).distanceToSqr(middle);
                 if (away > (reach + 0.5) * (reach + 0.5) || away >= bestAway) continue;
-                PlacementSolver.Click click = PlacementSolver.fromSwim(player, feet, pos, target, stack, reach, at -> unclickable(at, i));
+                PlacementSolver.Click click = PlacementSolver.fromSwim(player, view, feet, pos, target, stack, reach, at -> unclickable(at, i));
                 if (click == null) continue;
                 best = new SwimSpot(i, feet, click);
                 bestAway = away;
@@ -3081,15 +3084,28 @@ public final class SchematicBuilder {
         if (layerY == swimLoggedLayer && tick - swimLogged < 600) return;
         swimLogged = tick;
         swimLoggedLayer = layerY;
-        int up = 0;
-        List<SwimSpot> found = new ArrayList<>();
-        for (int i : near) {
-            if (!BlockRules.placedLookingUp(plan.target(i))) continue;
-            up++;
-            SwimSpot spot = swimSpot(player, i, reach);
-            if (spot != null) found.add(spot);
-        }
+        List<Integer> left = new ArrayList<>();
+        for (int i : near) if (BlockRules.placedLookingUp(plan.target(i))) left.add(i);
+        int up = left.size();
         if (up == 0) return;
+        // In turn: each one placed is the face the next along its row goes in against, as along a row of observers.
+        List<SwimSpot> found = new ArrayList<>();
+        Map<Long, BlockState> placed = new HashMap<>();
+        long started = System.nanoTime();
+        boolean more = true;
+        while (more && !left.isEmpty() && System.nanoTime() - started < 200_000_000L) {
+            more = false;
+            BlockGetter view = placed.isEmpty() ? player.level() : new Overlay(player.level(), Map.copyOf(placed));
+            for (Iterator<Integer> it = left.iterator(); it.hasNext(); ) {
+                int i = it.next();
+                SwimSpot spot = swimSpot(player, view, i, reach);
+                if (spot == null) continue;
+                found.add(spot);
+                placed.put(plan.pos(i).asLong(), plan.target(i));
+                it.remove();
+                more = true;
+            }
+        }
         StringBuilder text = new StringBuilder();
         for (SwimSpot spot : found.subList(0, Math.min(3, found.size()))) {
             BlockHitResult hit = spot.click().hit();
@@ -3098,8 +3114,9 @@ public final class SchematicBuilder {
                     .append(", ").append(hit.getDirection()).append(" face of ").append(hit.getBlockPos().toShortString())
                     .append(String.format(Locale.ROOT, ", look %.1f %.1f", spot.click().yaw(), spot.click().pitch()));
         }
-        LOGGER.info("Swimming in still water would place {} of the {} blocks with a look up left here (layer y {}){}", found.size(), up,
-                layerY, text);
+        LOGGER.info("Swimming in still water would place {} of the {} blocks with a look up left here, each in turn against the last (layer y {}){}{}",
+                found.size(), up, layerY, text, left.isEmpty() ? "" : "; none for " + left.stream().limit(8)
+                        .map(i -> plan.pos(i).toShortString()).collect(java.util.stream.Collectors.joining("; ")));
     }
 
     /** How long nothing may go in, with no place to stand for the next block, before it is given up on: five minutes. */
