@@ -147,7 +147,13 @@ public final class Navigator {
     }
 
     /** A step from one place to stand to the next, as one number. */
-    public static long stepKey(Node from, Node to) { return from.key() * 31 + to.key(); }
+    public static long stepKey(Node from, Node to) { return pairKey(from.key(), to.key()); }
+
+    /**
+     * One key for a pair: two places, or a place and a block's index. Not {@code a * 31 + b}: a place's key goes up by one a
+     * block higher, so a step, or a place and a block's index, came out the same as one a block over and 31 along.
+     */
+    public static long pairKey(long a, long b) { return a * 0x9E3779B97F4A7C15L + b; }
 
     /** Looks at no more than {@code nodes} places to stand, for a quick search. */
     public Navigator limit(int nodes) {

@@ -1542,7 +1542,7 @@ public final class SchematicBuilder {
             if (result.click() == null && result.problem() == PlacementSolver.Problem.IN_THE_WAY && walkEnd != null && walkExpects.contains(i)) {
                 // The walk came to rest a little off the middle, into the spot of a block it was made for, as in a row of
                 // blocks still to go in: never planned from there for that block again, or the same walk is made over and over.
-                missedFrom.add(walkEnd.key() * 31 + i);
+                missedFrom.add(Navigator.pairKey(walkEnd.key(), i));
             }
             if (result.click() == null && debug()) {
                 LOGGER.info("Can't place {} at {} yet: {}", target, pos.toShortString(), result.problem());
@@ -2689,7 +2689,7 @@ public final class SchematicBuilder {
             missedAt = player.blockPosition();
             if (filling) return;
             missedHere.add(planned.index());
-            missedFrom.add(aimFrom * 31 + planned.index());
+            missedFrom.add(Navigator.pairKey(aimFrom, planned.index()));
             return;
         }
         if (planned.act() != Act.ADJUST && !player.getMainHandItem().is(planned.item()) && !player.hasInfiniteMaterials()) return;
@@ -2700,7 +2700,7 @@ public final class SchematicBuilder {
             if (!player.blockPosition().equals(missedAt)) missedHere.clear();
             missedAt = player.blockPosition();
             missedHere.add(planned.index());
-            missedFrom.add(aimFrom * 31 + planned.index());
+            missedFrom.add(Navigator.pairKey(aimFrom, planned.index()));
             return;
         }
         InteractionResult result = planned.act() == Act.POUR || filling ? client.gameMode.useItem(player, InteractionHand.MAIN_HAND)
@@ -3475,7 +3475,7 @@ public final class SchematicBuilder {
             cleanupTarget = null;
             if (!tops.contains(target) && helpers.containsKey(target.asLong())) {
                 // Covered on the way by a helper block of the climb itself: a miss, as the climb didn't bring it in reach.
-                cleanupFailed.add(target.asLong() * 31 + here.key());
+                cleanupFailed.add(Navigator.pairKey(target.asLong(), here.key()));
                 cleanupMisses.merge(target.asLong(), 1, Integer::sum);
             }
             if (tops.contains(target)) {
@@ -3483,7 +3483,7 @@ public final class SchematicBuilder {
                     startBreak(target);
                     return true;
                 }
-                cleanupFailed.add(target.asLong() * 31 + here.key());
+                cleanupFailed.add(Navigator.pairKey(target.asLong(), here.key()));
                 cleanupMisses.merge(target.asLong(), 1, Integer::sum);
                 if (debug()) LOGGER.info("Cleanup: the helper block at {} is still out of reach after the climb for it, from {}",
                         target.toShortString(), here);
@@ -3550,7 +3550,7 @@ public final class SchematicBuilder {
                     // top, and comes away under the player's feet, again and again.
                     path = navigator.find(here, node -> node.floor().equals(top) && !groundUnder(player.level(), top)
                             || node.x() == top.getX() && node.z() == top.getZ() && node.feet() > top.getY() + 1
-                            || missedHere && node.key() == here.key() || cleanupFailed.contains(topKey * 31 + node.key()) ? 0
+                            || missedHere && node.key() == here.key() || cleanupFailed.contains(Navigator.pairKey(topKey, node.key())) ? 0
                             : viewScore(player, node.eye(), top, reach));
                 }
                 if (path != null && path.nodes().size() > 1) {
@@ -4076,7 +4076,7 @@ public final class SchematicBuilder {
             double good = 0;
             List<Integer> placeable = new ArrayList<>();
             for (int i : inReach.subList(0, Math.min(VERIFY, inReach.size()))) {
-                long key = node.key() * 31 + i;
+                long key = Navigator.pairKey(node.key(), i);
                 if (missedFrom.contains(key)) continue;
                 Integer ok = verified.get(key);
                 if (ok == null) {
