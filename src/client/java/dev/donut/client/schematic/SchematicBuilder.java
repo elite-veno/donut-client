@@ -1814,10 +1814,12 @@ public final class SchematicBuilder {
         Overlay view = null;
         byte result = 2;
         // A block facing up beside it, still to go in, takes a look up from below past this spot: this one waits for it,
-        // as the ice ring round a column of up-facing observers took every such look.
+        // as the ice ring round a column of up-facing observers took every such look. Only over open space, where that look
+        // comes up from: one over a block can't be looked past from below, and is wanted in as the face the click goes on.
+        boolean overOpen = level.getBlockState(pos.below()).canBeReplaced();
         for (Direction side : Direction.Plane.HORIZONTAL) {
             // A row of them goes in in any order: each is placed from below, not past the other.
-            if (BlockRules.facesUp(plan.target(i))) break;
+            if (!overOpen || BlockRules.facesUp(plan.target(i))) break;
             BlockPos at = pos.relative(side);
             int j = plan.indexOf(at);
             if (j < 0 || plan.status(j) != BuildPlan.Status.PENDING || !BlockRules.facesUp(plan.target(j))) continue;
