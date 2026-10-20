@@ -4873,14 +4873,21 @@ public final class SchematicBuilder {
                 // On a narrow top over a drop the player stands crouched: water is poured from there with the crouched eye,
                 // and a block filled where it stands, which takes the click standing, isn't counted for such a place.
                 boolean crouched = false;
-                if (plan.kind(i) == BlockRules.Kind.FLUID || plan.soaking(i) || plan.needsPour(i)) {
-                    if (narrowTop == null) narrowTop = Navigator.narrowOverDrop(level, node);
+                if (narrowTop == null) narrowTop = Navigator.narrowOverDrop(level, node);
+                boolean pours = plan.kind(i) == BlockRules.Kind.FLUID || plan.soaking(i) || plan.needsPour(i);
+                if (pours) {
                     if (narrowTop && plan.soaking(i)) continue;
                     crouched = narrowTop;
                 }
                 Integer ok = verified.get(key);
                 if (ok == null && crouched) {
                     ok = pourCrouched(player, feet, i, reach);
+                    verified.put(key, ok);
+                }
+                // A block too: decide takes only a crouched click there (onNarrowEdge), a standing one stands the player
+                // up over the drop. Counted with the crouched eye, or the walk there places nothing.
+                if (ok == null && narrowTop && !pours) {
+                    ok = placeCrouched(player, feet, i, reach);
                     verified.put(key, ok);
                 }
                 if (ok == null) {
@@ -5083,6 +5090,21 @@ public final class SchematicBuilder {
         if (floods(level, pos, feet)) return 0;
         Fluid fluid = plan.kind(i) == BlockRules.Kind.FLUID ? plan.target(i).getFluidState().getType() : Fluids.WATER;
         return PlacementSolver.pour(level, player, feet.add(0, PlacementSolver.CROUCH_EYE, 0), pos, fluid, reach) != null ? 1 : 0;
+    }
+
+    /**
+     * As {@link #placeableFrom} for a block placed from a narrow top over a drop, crouched: 2 for a steady click, 1 for one
+     * only from the very middle, 0 for none. Not for a block in place that only takes a click to set it, which decide
+     * doesn't do from there either.
+     */
+    private int placeCrouched(LocalPlayer player, Vec3 feet, int i, double reach) {
+        BlockPos pos = plan.pos(i);
+        BlockState target = plan.target(i), current = player.level().getBlockState(pos);
+        if (current.getBlock() == target.getBlock() || BlockRules.needsTool(current, target)) return 0;
+        Item item = BlockRules.item(target);
+        if (item == null) return 0;
+        PlacementSolver.Click click = PlacementSolver.fromSpotCrouched(player, feet, pos, target, new ItemStack(item), reach, at -> unclickable(at, i));
+        return click == null ? 0 : steadyFrom(player, feet, click, reach) ? 2 : 1;
     }
 
     private int placeableFrom(LocalPlayer player, Vec3 feet, int i, double reach) {

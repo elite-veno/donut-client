@@ -145,6 +145,14 @@ public final class PlacementSolver {
         return click != null ? click : look(player, view, feet.add(0, CROUCH_EYE, 0), true, pos, target, stack, reach, unclickable, null);
     }
 
+    /** As {@link #fromSpot}, crouched only: on a narrow top over a drop, where the player stays crouched to place. */
+    public static Click fromSpotCrouched(LocalPlayer player, Vec3 feet, BlockPos pos, BlockState target, ItemStack stack, double reach,
+                                         LongPredicate unclickable) {
+        AABB body = new AABB(feet.x - 0.3, feet.y, feet.z - 0.3, feet.x + 0.3, feet.y + 1.5, feet.z + 0.3);
+        if (inTheWay(body, player.level(), pos, target)) return null;
+        return look(player, player.level(), feet.add(0, CROUCH_EYE, 0), true, pos, target, stack, reach, unclickable, null);
+    }
+
     /**
      * Whether the block can go in at all yet, wherever the player might stand: some face beside it, clicked with some
      * look, makes it. Where that look can come from is the walk's business.
