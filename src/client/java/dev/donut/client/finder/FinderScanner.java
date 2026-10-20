@@ -587,7 +587,7 @@ public final class FinderScanner implements ChunkEvents.Listener {
                 && Math.hypot(zone.x() - x, zone.z() - z) < 64);
         if (!known) {
             config.rtpZones.add(new RtpZones.Zone(server, dimension, x, z));
-            if (config.rtpZones.size() > ClientConfig.MAX_RTP_ZONES) config.rtpZones.removeFirst();
+            RtpZones.trim(config.rtpZones, ClientConfig.MAX_RTP_ZONES);
         }
         if (!config.chunks.enabled || config.chunks.rtpDistance <= 0) return;
         var border = client.level.getWorldBorder();

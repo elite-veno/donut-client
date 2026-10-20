@@ -7,7 +7,8 @@ import java.util.List;
 public final class ClientConfig {
     public static final int SCHEMA_VERSION = 3;
     /** Landings kept; older ones are forgotten first. */
-    public static final int MAX_RTP_ZONES = 64;
+    /** Random teleport landings kept for each server and dimension. */
+    public static final int MAX_RTP_ZONES = 256;
     public int schemaVersion = SCHEMA_VERSION;
     public FinderSettings storage = new FinderSettings();
     public FinderSettings spawner = spawnerDefaults();
@@ -130,7 +131,7 @@ public final class ClientConfig {
         if (chunks == null) chunks = chunkDefaults();
         if (rtpZones == null) rtpZones = new ArrayList<>();
         rtpZones.removeIf(zone -> zone == null || zone.server() == null || zone.dimension() == null);
-        if (rtpZones.size() > MAX_RTP_ZONES) rtpZones = new ArrayList<>(rtpZones.subList(rtpZones.size() - MAX_RTP_ZONES, rtpZones.size()));
+        RtpZones.trim(rtpZones, MAX_RTP_ZONES);
         if (xray == null) xray = new XraySettings();
         if (fullbright == null) fullbright = new FullbrightSettings();
         if (freecam == null) freecam = new FreecamSettings();

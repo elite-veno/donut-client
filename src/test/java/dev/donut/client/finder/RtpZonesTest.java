@@ -11,6 +11,20 @@ class RtpZonesTest {
     private static RtpZones.Zone zone(int x, int z) { return new RtpZones.Zone("donutsmp.net", "minecraft:overworld", x, z); }
 
     @Test
+    void landingsAreKeptPerServerAndDimension() {
+        List<RtpZones.Zone> zones = new java.util.ArrayList<>();
+        zones.add(new RtpZones.Zone("other.net", "minecraft:overworld", 1, 1));
+        for (int i = 0; i < 5; i++) zones.add(zone(i * 1000, 0));
+        zones.add(new RtpZones.Zone("donutsmp.net", "minecraft:the_nether", 7, 7));
+        RtpZones.trim(zones, 3);
+        assertEquals(5, zones.size(), "the other server's and the nether's landing stay");
+        assertTrue(zones.contains(new RtpZones.Zone("other.net", "minecraft:overworld", 1, 1)));
+        assertFalse(zones.contains(zone(0, 0)), "the oldest of this server's go");
+        assertFalse(zones.contains(zone(1000, 0)));
+        assertTrue(zones.contains(zone(4000, 0)));
+    }
+
+    @Test
     void theConfiguredCommandIsTheRandomTeleport() {
         assertTrue(RtpZones.isRtp("rtp", "rtp"));
         assertTrue(RtpZones.isRtp("/RTP overworld", "rtp"));

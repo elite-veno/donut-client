@@ -53,6 +53,26 @@ public final class RtpZones {
     /** Forgets the last position, as when leaving a server; a pending command stays pending. */
     public void lost() { placed = false; }
 
+    /**
+     * Keeps at most {@code max} landings for each server and dimension, the oldest of one going first when it has more: a
+     * server's landings never make way for another's, and a long run of random teleports on one forgets only its own
+     * oldest. The list is in the order the landings were seen.
+     */
+    public static void trim(List<Zone> zones, int max) {
+        java.util.Map<String, Integer> left = new java.util.HashMap<>();
+        for (Zone zone : zones) left.merge(zone.server() + "\n" + zone.dimension(), 1, Integer::sum);
+        java.util.Iterator<Zone> it = zones.iterator();
+        while (it.hasNext()) {
+            Zone zone = it.next();
+            String key = zone.server() + "\n" + zone.dimension();
+            int count = left.get(key);
+            if (count > max) {
+                it.remove();
+                left.put(key, count - 1);
+            }
+        }
+    }
+
     /** The horizontal distance from a point to the nearest of these zones; infinite without any. */
     public static double distance(List<Zone> zones, double x, double z) {
         double nearest = Double.POSITIVE_INFINITY;
