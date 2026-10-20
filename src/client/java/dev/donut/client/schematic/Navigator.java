@@ -390,6 +390,9 @@ public final class Navigator {
                 // Landing a jump or a drop on a narrow top takes more aim than a walk has: a few centimetres off and the
                 // body comes down beside it. Narrow tops are walked onto at their own height only.
                 if (move != Move.WALK && narrow(nx, ny, nz)) continue;
+                // Nor stepped down onto, half a block from a bridge or a full block say: the step down carries the body on
+                // past a top a few centimetres wide, as it did off a gate top at 12 73.5 30 into a channel (v4-y).
+                if (narrow(nx, ny, nz) && rise < -0.05) continue;
                 // Honey holds a jump down to half its height, and slime throws back up what drops on it.
                 if (move == Move.JUMP && unsteady(from.floor(), Blocks.HONEY_BLOCK)) continue;
                 // Coming down onto it at all, by a drop or a jump that lands lower, out of a bowl say.
