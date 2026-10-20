@@ -13,6 +13,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.BubbleColumnBlock;
 import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
@@ -438,7 +439,10 @@ public final class BuildPlan {
         }
         if (BlockRules.satisfied(current, target)) return done(i);
         dryDone[i] = soak[i] && BlockRules.needsWater(current, target) && BlockRules.placedFully(current, target);
-        waterIn[i] = drained[i] && current.getBlock() instanceof LiquidBlock && current.getFluidState().isSourceOfType(Fluids.WATER)
+        // Water poured over a bubble column turns into one itself, a source still: that is the water in as well, else each
+        // bucket after it is poured for nothing and the block never goes in (the slab farm's trapdoor over its shaft).
+        waterIn[i] = drained[i] && (current.getBlock() instanceof LiquidBlock || current.getBlock() instanceof BubbleColumnBlock)
+                && current.getFluidState().isSourceOfType(Fluids.WATER)
                 // Kelp goes in where the water is a block deep: a source, or water falling down a column from one above it.
                 || plant[i] && current.getBlock() instanceof LiquidBlock && current.getFluidState().getType().isSame(Fluids.WATER)
                         && current.getFluidState().getAmount() == 8;

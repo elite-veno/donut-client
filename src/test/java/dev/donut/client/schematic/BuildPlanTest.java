@@ -102,6 +102,21 @@ class BuildPlanTest {
     }
 
     @Test
+    void aBubbleColumnInTheSpotOfABlockTakenAwayForItsWaterIsThatWater() {
+        BlockState trapdoor = Blocks.MANGROVE_TRAPDOOR.defaultBlockState().setValue(BlockStateProperties.WATERLOGGED, true);
+        Map<BlockPos, BlockState> blocks = new LinkedHashMap<>();
+        BlockPos at = new BlockPos(0, 0, 0);
+        blocks.put(at, trapdoor);
+        BuildPlan plan = BuildPlan.of(blocks, true);
+        int i = plan.indexOf(at);
+        plan.drain(i);
+        plan.update(i, Blocks.AIR.defaultBlockState());
+        assertTrue(plan.needsPour(i), "the spot gets its water first");
+        plan.update(i, Blocks.BUBBLE_COLUMN.defaultBlockState());
+        assertFalse(plan.needsPour(i), "water poured over a bubble column turned into one: no more buckets");
+    }
+
+    @Test
     void aHalfOfADoubleChestStandingAloneIsNotDone() {
         BlockState left = Blocks.CHEST.defaultBlockState().setValue(net.minecraft.world.level.block.ChestBlock.TYPE,
                 net.minecraft.world.level.block.state.properties.ChestType.LEFT);
