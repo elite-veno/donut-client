@@ -7786,14 +7786,15 @@ public final class SchematicBuilder {
     /**
      * The slot of the player's inventory, in the box's menu, best put back into the box; -1 when nothing can go back.
      * With {@code swap}, for a swap with what the box was opened for, a stack the layer still takes all of comes last: the
-     * one with the most carried. With the inventory full of boxes and every stack one the layer takes, as on ikea_v4's
-     * layer 8 (26 boxes, crafters, iron doors and observers all at y 72), nothing else could go back, the box was closed
+     * one needed last, its nearest block farthest off. With the inventory full of boxes and every stack one the layer
+     * takes, as on ikea_v4's layer 8 (26 boxes, crafters, iron doors and observers all at y 72), nothing else could go back, the box was closed
      * without what it was opened for, and the walks for its blocks came to nothing. Swapped, those blocks go in, and the
      * stack put back comes out again when its blocks come up.
      */
     private int toPutBack(ShulkerBoxMenu menu, LocalPlayer player, Materials carried, boolean swap) {
         Map<Item, Integer> needs = plan.needs(), now = needsUpTo(player.level(), layerY);
         Map<Item, Integer> helperKept = new HashMap<>();
+        Map<Item, Double> nearest = null;
         int best = -1, bestRank = Integer.MAX_VALUE;
         for (int slot = 27; slot < menu.slots.size(); slot++) {
             ItemStack stack = menu.getSlot(slot).getItem();
@@ -7833,13 +7834,39 @@ public final class SchematicBuilder {
             } else {
                 continue;
             }
-            if (rank < bestRank || rank == 6 && bestRank == 6 && stack.getCount() > menu.getSlot(best).getItem().getCount()
+            if (rank == 6 && nearest == null) nearest = nearestPending(player);
+            if (rank < bestRank || rank == 6 && bestRank == 6 && laterThan(nearest, stack, menu.getSlot(best).getItem())
                     || rank == 7 && bestRank == 7 && swappedIn.get(item) < swappedIn.get(menu.getSlot(best).getItem().getItem())) {
                 best = slot;
                 bestRank = rank;
             }
         }
         return best;
+    }
+
+    /**
+     * For a swap among stacks the layer still takes: whether {@code stack} is needed later than {@code other}, its nearest
+     * block still to go in farther from the player; of one item, the larger stack. Largest first alone swapped out the
+     * blue ice and iron bars round v4's up-facing observers, needed right after each observer the box was opened for, and
+     * the next box swapped them back in, three boxes for three blocks (v4-clean3, 01:10).
+     */
+    private static boolean laterThan(Map<Item, Double> nearest, ItemStack stack, ItemStack other) {
+        double a = nearest.getOrDefault(stack.getItem(), Double.MAX_VALUE), b = nearest.getOrDefault(other.getItem(), Double.MAX_VALUE);
+        return a != b ? a > b : stack.getCount() > other.getCount();
+    }
+
+    /** How far from the player, squared, the nearest block of each item still to go in up to the layer being built is. */
+    private Map<Item, Double> nearestPending(LocalPlayer player) {
+        Map<Item, Double> nearest = new HashMap<>();
+        for (int[] layer : plan.layers().headMap(layerY, true).values()) {
+            for (int i : layer) {
+                BuildPlan.Status st = plan.status(i);
+                if (st != BuildPlan.Status.PENDING && st != BuildPlan.Status.UNLOADED) continue;
+                Item item = plan.item(i);
+                if (item != null) nearest.merge(item, player.distanceToSqr(Vec3.atCenterOf(plan.pos(i))), Math::min);
+            }
+        }
+        return nearest;
     }
 
     /** The next slot of the open box to take: the item it was opened for first, then what the next layers need. */
