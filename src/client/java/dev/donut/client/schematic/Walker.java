@@ -277,9 +277,12 @@ final class Walker {
         boolean easing = last && precise && onTop && to.move() == Navigator.Move.WALK && distance < 1.0;
         // A step that comes down onto a place with a fall beside it, a drop into a channel beside open gates or water over
         // a gap, is landed crouched: the run-on of the drop carries an upright player on into that cell and down through it,
-        // where crouched the edge holds them. From just before the landing until the place is reached.
+        // where crouched the edge holds them. From the fall itself, once below where the step set off, until the place is
+        // reached: crouched any sooner, still up on the step's edge, the same edge holds the player up there and the step
+        // never goes down (v4-full4: stuck at 3.29 70 4.50 over the drop to 3 69 4).
         boolean fallLanding = (to.move() == Navigator.Move.DROP || to.move() == Navigator.Move.WALK && to.feet() < from.feet() - 0.05)
-                && (within(at, to) || !player.onGround() && distance < 1.2) && Navigator.besideFall(player.level(), to);
+                && (onTop && within(at, to) || !player.onGround() && at.y < from.feet() - 0.05 && distance < 1.2)
+                && Navigator.besideFall(player.level(), to);
         boolean crouchHere = rail || wary || last && onTop && narrow && within(at, to) || easing || fallLanding;
         if (!bridgeCrouch && crouchHere != edgeCrouch && (crouchHere || player.onGround())) {
             climb.crouch(crouchHere);
