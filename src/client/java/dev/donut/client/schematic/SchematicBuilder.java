@@ -1266,7 +1266,6 @@ public final class SchematicBuilder {
                 layer = plan.layers().get(heldY);
                 if (heldY != layerY) {
                     sealsLifted = false;
-                    sealsLiftedAt = UNLIFTED;
                     orderLifted = false;
                     // Walks, misses and useless places counted in the layer left: none of them is about this one.
                     walksSinceClick = 0;
@@ -1304,7 +1303,6 @@ public final class SchematicBuilder {
             if (entry.getKey() != layerY) {
                 pickupSweep = layerY != Integer.MIN_VALUE;
                 sealsLifted = false;
-                sealsLiftedAt = UNLIFTED;
                 orderLifted = false;
                 walksSinceClick = 0;
                 arrivalMisses.clear();
@@ -1930,7 +1928,11 @@ public final class SchematicBuilder {
     /** How long, after the seals are lifted, a block still waits for an up-facing neighbour: the walks get a few more tries. */
     private static final long UP_WAIT_TICKS = 6000;
     private static final long UNLIFTED = Long.MIN_VALUE / 2;
-    /** When the seals of the layer were first lifted, by either way; UNLIFTED until then. */
+    /**
+     * When the seals were first lifted, by either way, since the build began or an up-facing block last went in; UNLIFTED
+     * until then. Not cleared when the layer changes: a layer below that waits sends the build up and back, and the
+     * minutes would start again each time.
+     */
     private long sealsLiftedAt = UNLIFTED;
     private final Map<Integer, Long> upWaitLogged = new HashMap<>();
 
@@ -3046,6 +3048,8 @@ public final class SchematicBuilder {
                 placedSincePit = true;
                 restockSwaps = 0;
                 if (planned.act() == Act.PLACE) placedAt.put(i, tick);
+                // An up-facing block in: what waited for one gets its minutes again, should another stall the build.
+                if (planned.act() == Act.PLACE && BlockRules.facesUp(plan.target(i))) sealsLiftedAt = UNLIFTED;
                 sealsLifted = false;
                 orderLifted = false;
                 shutIn.remove(i);
