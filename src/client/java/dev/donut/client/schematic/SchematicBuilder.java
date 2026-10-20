@@ -1121,6 +1121,7 @@ public final class SchematicBuilder {
         unblockWalks.clear();
         unblockSearched.clear();
         noStand = List.of();
+        noneInReach = 0;
         standSearched.clear();
         escapeHelpers.clear();
         escapeWalk = false;
@@ -1905,6 +1906,14 @@ public final class SchematicBuilder {
         if (settings().walk && digAlong(player, candidates, materials, layerNumber, lift, player.blockInteractionRange() - 0.2,
                 System.nanoTime(), true)) return;
         if (settings().walk && planWalk(client, player, candidates, materials, layerNumber, lift)) return;
+        // Twice in a row no place reached had a block in reach, with blocks left that wait for nothing (planWalk only
+        // weighs those): shut in, as after a fall under the build. Climbing out through cells the build fills later is
+        // tried at once, not after walks there are none to make.
+        if (settings().walk && noneInReach >= 2) {
+            if (debug()) LOGGER.info("No place reached has a block in reach, {} searches in a row: climbing out", noneInReach);
+            noneInReach = 0;
+            if (climbOut(client, player, candidates, materials, layerNumber, lift)) return;
+        }
         if (settings().walk && planPit(client, player, candidates, materials, layerNumber, lift)) return;
         if (settings().walk && walkToSpareHelper(client, player)) return;
         if (settings().walk && breakOut(player)) return;
@@ -2786,6 +2795,9 @@ public final class SchematicBuilder {
         }
         return false;
     }
+
+    /** Walk searches in a row that found no place with a block in reach (see {@link #planWalk}). */
+    private int noneInReach;
 
     /**
      * With no place to stand found any other way: one more look, where a walk may climb through cells the build fills
@@ -5050,6 +5062,9 @@ public final class SchematicBuilder {
             }
         }
         noStand = path == null ? List.copyOf(near) : List.of();
+        // Searches in a row that found no place at all with a block in reach: shut in somewhere, as after a fall into a
+        // space under the build.
+        noneInReach = path == null && seen[1] == 0 ? noneInReach + 1 : 0;
         if (path == null) {
             long now = System.nanoTime();
             failedWalkKey[kind] = searchKey;
