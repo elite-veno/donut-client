@@ -1611,12 +1611,15 @@ public final class SchematicBuilder {
                 PlacementSolver.Click pour = PlacementSolver.pour(level, player, eye, pos, target.getFluidState().getType(), reach);
                 if (pour == null) {
                     if (seen == null) seen = PlacementSolver.Problem.NO_VIEW;
+                    if (walkEnd != null && walkExpects.contains(i)) arrivalMisses.merge(i, 1, Integer::sum);
+                    if (debug() && walkExpects.remove(i)) LOGGER.info("Can't pour {} at {} from where the walk for it ended: no look", target, pos.toShortString());
                     continue;
                 }
                 if (floods(level, pos, player.position())) {
                     // It would run where the player stands and push them off: poured from somewhere else.
                     if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
                     noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH);
+                    if (debug() && walkExpects.remove(i)) LOGGER.info("Can't pour {} at {} from where the walk for it ended: it would run where you stand", target, pos.toShortString());
                     continue;
                 }
                 if (!creative && materials.loose(bucket) == 0) {
@@ -5057,7 +5060,11 @@ public final class SchematicBuilder {
         BlockState target = plan.target(i), current = level.getBlockState(pos);
         Vec3 eye = feet.add(0, PlacementSolver.STAND_EYE, 0);
         if (plan.kind(i) == BlockRules.Kind.FLUID) {
-            return !floods(level, pos, feet) && PlacementSolver.pour(level, player, eye, pos, target.getFluidState().getType(), reach) != null ? 2 : 0;
+            if (floods(level, pos, feet)) return 0;
+            PlacementSolver.Click pour = PlacementSolver.pour(level, player, eye, pos, target.getFluidState().getType(), reach);
+            // As for a block: a pour that only works from the very middle, at the edge of reach say, counts for little, and
+            // the walk for it ends there exactly.
+            return pour == null ? 0 : steadyFrom(player, feet, pour, reach) ? 2 : 1;
         }
         if (plan.soaking(i) && !BlockRules.fillsInPlace(current)) return inView(player, eye, pos, reach - 0.25) ? 2 : 0;
         if (plan.soaking(i)) return !floods(level, pos, feet) && PlacementSolver.fill(player, eye, pos, reach) != null ? 2 : 0;
