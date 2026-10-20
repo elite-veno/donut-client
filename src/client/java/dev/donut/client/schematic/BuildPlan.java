@@ -474,6 +474,12 @@ public final class BuildPlan {
         holds.clear();
     }
 
+    /** Takes back giving up on block {@code i}: it gets its tries again, as one never tried. */
+    public void retry(int i) {
+        failed[i] = false;
+        tries[i] = 0;
+    }
+
     /** Gives up on block {@code i}: it counts as failed until it stands as the schematic has it. */
     public void giveUp(int i) { failed[i] = true; }
 

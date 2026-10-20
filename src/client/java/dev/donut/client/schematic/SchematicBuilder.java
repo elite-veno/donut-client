@@ -433,6 +433,10 @@ public final class SchematicBuilder {
     private final Map<Integer, Long> placedAt = new HashMap<>();
     /** How often each block was broken to be placed again; and the one being broken for that now, or -1. */
     private final Map<Integer, Integer> repairs = new HashMap<>();
+    /** Last rounds over the blocks given up on, once nothing else is left; see {@link #lastRound}. */
+    private int lastRounds;
+    /** The most last rounds a build makes before it counts what is still wrong. */
+    private static final int LAST_ROUNDS = 2;
     private int repairing = -1;
     /** Items of blocks broken to be placed again, whose drops are picked up. */
     private final Set<Item> repairDrops = new HashSet<>();
@@ -1056,6 +1060,7 @@ public final class SchematicBuilder {
         sweptLayer = Integer.MIN_VALUE;
         placedAt.clear();
         repairs.clear();
+        lastRounds = 0;
         repairDrops.clear();
         repairWalks.clear();
         drains.clear();
@@ -1314,6 +1319,10 @@ public final class SchematicBuilder {
                 return;
             }
             if (settings().walk && walkToRepair(client, player)) return;
+            if (lastRound(player)) {
+                nextAction = System.nanoTime();
+                return;
+            }
             if (cleanUp(client, player)) return;
             finishBuild(client);
             return;
@@ -3808,6 +3817,41 @@ public final class SchematicBuilder {
     private static boolean groundUnder(Level level, BlockPos pos) {
         BlockPos below = pos.below();
         return !level.getBlockState(below).getCollisionShape(level, below).isEmpty();
+    }
+
+    /**
+     * Once nothing else is left, one more round for the blocks given up on: those the server didn't keep, after three
+     * clicks in a row, and those that came back set another way twice. What made them fail, a moment's lag, the
+     * player in the way, a neighbour not yet in, may be gone by now, as a player looks over the build before calling it
+     * done. Only blocks there is something to place with, and before the helper blocks come away, which the round may
+     * still need. True when a round begins.
+     */
+    private boolean lastRound(LocalPlayer player) {
+        if (lastRounds >= LAST_ROUNDS) return false;
+        Materials materials = Materials.of(player.getInventory());
+        boolean creative = player.hasInfiniteMaterials();
+        int again = 0;
+        for (int i = 0; i < plan.size(); i++) {
+            BuildPlan.Status status = plan.status(i);
+            boolean failed = status == BuildPlan.Status.FAILED;
+            boolean misplaced = status == BuildPlan.Status.MISPLACED && repairs.getOrDefault(i, 0) >= REPAIRS;
+            if (!failed && !misplaced) continue;
+            Item item = plan.item(i);
+            if (failed && !creative && (item == null || materials.total(item) == 0)) continue;
+            plan.retry(i);
+            repairs.remove(i);
+            repairWalks.remove(i);
+            arrivalMisses.remove(i);
+            noClickHere.remove(i);
+            plan.update(player.level(), i);
+            again++;
+        }
+        if (again == 0) return false;
+        lastRounds++;
+        missedHere.clear();
+        missedFrom.clear();
+        LOGGER.info("Last round {} of {}: {} blocks given up on get another try", lastRounds, LAST_ROUNDS, again);
+        return true;
     }
 
     /** How often a block that came back set another way is broken and placed again before it is left so. */
