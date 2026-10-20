@@ -228,4 +228,28 @@ class BuildPlanTest {
         assertFalse(plan.holding());
         assertFalse(plan.wetWaits(plan.indexOf(above)), "released, nothing waits");
     }
+
+    @Test
+    void kelpWithNoWaterInItsSpotGetsWaterPouredFirst() {
+        Map<BlockPos, BlockState> blocks = new LinkedHashMap<>();
+        BlockPos floorAt = new BlockPos(0, 68, 0), kelpAt = floorAt.above();
+        blocks.put(floorAt, Blocks.STONE.defaultBlockState());
+        blocks.put(kelpAt, Blocks.KELP_PLANT.defaultBlockState());
+        BuildPlan plan = BuildPlan.of(blocks, true);
+        int kelp = plan.indexOf(kelpAt);
+        assertTrue(plan.plant(kelp));
+        assertFalse(plan.plant(plan.indexOf(floorAt)));
+        assertEquals(BuildPlan.Status.PENDING, plan.update(kelp, Blocks.AIR.defaultBlockState()));
+        assertTrue(plan.needsPour(kelp), "a dry spot: water first");
+        assertEquals(Items.WATER_BUCKET, plan.item(kelp));
+        BlockState flowing = Blocks.WATER.defaultBlockState().setValue(net.minecraft.world.level.block.LiquidBlock.LEVEL, 3);
+        plan.update(kelp, flowing);
+        assertTrue(plan.needsPour(kelp), "water running past is no water to grow in");
+        BlockState falling = Blocks.WATER.defaultBlockState().setValue(net.minecraft.world.level.block.LiquidBlock.LEVEL, 8);
+        plan.update(kelp, falling);
+        assertFalse(plan.needsPour(kelp), "water falling down the column will do");
+        plan.update(kelp, Blocks.WATER.defaultBlockState());
+        assertFalse(plan.needsPour(kelp));
+        assertEquals(Items.KELP, plan.item(kelp), "then the kelp itself");
+    }
 }

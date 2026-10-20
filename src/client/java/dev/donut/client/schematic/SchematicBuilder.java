@@ -1683,9 +1683,17 @@ public final class SchematicBuilder {
                 PlacementSolver.Click pour = plan.soaking(i) ? PlacementSolver.fill(player, eye, pos, reach)
                         : PlacementSolver.pour(level, player, eye, pos, Fluids.WATER, reach);
                 if (pour == null) {
+                    if (debug() && tick - pourLogged.getOrDefault(i, -1000L) > 200) {
+                        pourLogged.put(i, tick);
+                        LOGGER.info("No pour into {} at {} from here: {}", target.getBlock().getName().getString(), pos.toShortString(),
+                                PlacementSolver.pourable(player, pos, Fluids.WATER) ? "no face beside it to pour against is in view"
+                                        : "no face beside it to pour against at all");
+                    }
                     if (seen == null) seen = PlacementSolver.Problem.NO_VIEW;
                     continue;
                 }
+                if (debug() && plan.plant(i)) LOGGER.info("{} at {} is dry: water poured in first", target.getBlock().getName().getString(),
+                        pos.toShortString());
                 if (floods(level, pos, player.position())) {
                     if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
                     noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH);
@@ -3612,6 +3620,8 @@ public final class SchematicBuilder {
         return materials.total(own) == 0 || tick - drainedAt.getOrDefault(i, 0L) < 200;
     }
 
+    private final Map<Integer, Long> pourLogged = new HashMap<>();
+
     /** Whether a helper block may go here: an empty, dry spot the schematic leaves empty, or only has water run through. */
     private boolean helperAllowed(LocalPlayer player, BlockPos cell) { return helperAllowed(player, player.level(), cell); }
 
@@ -3637,6 +3647,9 @@ public final class SchematicBuilder {
             return escaping && water && state.getFluidState().is(FluidTags.WATER);
         }
         if (i < 0 || plan.kind(i) == BlockRules.Kind.AUTO && plan.target(i).getBlock() instanceof LiquidBlock) return true;
+        // Never in a spot that grows kelp or seagrass, not even on the way out of a pocket: that spot holds the water of its
+        // column, and a helper there shuts the water out of the kelp under it for good, as dirt in 13,72,16 did in v4-o.
+        if (plan.plant(i)) return false;
         // With no other place to stand, a walk may climb through cells the build fills later: those blocks wait until the
         // player is out.
         return escaping && (plan.status(i) == BuildPlan.Status.PENDING || view instanceof Overlay overlay && overlay.changes(cell));

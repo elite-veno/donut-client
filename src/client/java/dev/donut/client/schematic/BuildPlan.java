@@ -76,6 +76,11 @@ public final class BuildPlan {
      * taken away to go in again into water, and whether its spot holds that water now.
      */
     private final boolean[] soak;
+    /**
+     * Whether each block grows in water, kelp or seagrass: it only goes in where its spot holds water a block deep, a
+     * source or water falling, and gets that water poured in first when there is none.
+     */
+    private final boolean[] plant;
     private final boolean[] dryDone;
     private final boolean[] drained;
     private final boolean[] waterIn;
@@ -101,6 +106,7 @@ public final class BuildPlan {
         wet = new boolean[n];
         inDryLeft = new boolean[n];
         soak = new boolean[n];
+        plant = new boolean[n];
         dryDone = new boolean[n];
         drained = new boolean[n];
         waterIn = new boolean[n];
@@ -117,6 +123,7 @@ public final class BuildPlan {
             counts[status[i].ordinal()]++;
             wet[i] = BlockRules.wet(targets[i]);
             soak[i] = kinds[i] == BlockRules.Kind.PLACE && BlockRules.soaked(targets[i]);
+            plant[i] = kinds[i] == BlockRules.Kind.PLACE && wet[i] && !soak[i];
             minX = Math.min(minX, pos.getX());
             minY = Math.min(minY, pos.getY());
             minZ = Math.min(minZ, pos.getZ());
@@ -301,8 +308,14 @@ public final class BuildPlan {
     /** Whether block {@code i} was taken away to go in again into water, and its spot is still without it. */
     public boolean refilling(int i) { return drained[i] && status[i] == Status.PENDING && !dryDone[i]; }
 
-    /** Whether block {@code i} is {@link #refilling} and its spot wants the water poured first. */
-    public boolean needsPour(int i) { return refilling(i) && !waterIn[i]; }
+    /**
+     * Whether block {@code i} wants water poured into its spot first: one {@link #refilling}, or one that grows in water,
+     * kelp say, whose spot is still dry, as the source over its column may have no face to pour against yet.
+     */
+    public boolean needsPour(int i) { return (refilling(i) || plant[i] && status[i] == Status.PENDING) && !waterIn[i]; }
+
+    /** Whether block {@code i} grows in water, as kelp and seagrass do (see {@link #needsPour}). */
+    public boolean plant(int i) { return plant[i]; }
 
     /** The item block {@code i} takes next: a water bucket for one {@link #soaking} or {@link #needsPour}, else its own. */
     public Item item(int i) { return soaking(i) || needsPour(i) ? Items.WATER_BUCKET : BlockRules.item(targets[i]); }
@@ -422,7 +435,10 @@ public final class BuildPlan {
         }
         if (BlockRules.satisfied(current, target)) return done(i);
         dryDone[i] = soak[i] && BlockRules.needsWater(current, target) && BlockRules.placedFully(current, target);
-        waterIn[i] = drained[i] && current.getBlock() instanceof LiquidBlock && current.getFluidState().isSourceOfType(Fluids.WATER);
+        waterIn[i] = drained[i] && current.getBlock() instanceof LiquidBlock && current.getFluidState().isSourceOfType(Fluids.WATER)
+                // Kelp goes in where the water is a block deep: a source, or water falling down a column from one above it.
+                || plant[i] && current.getBlock() instanceof LiquidBlock && current.getFluidState().getType().isSame(Fluids.WATER)
+                        && current.getFluidState().getAmount() == 8;
         if (failed[i]) return Status.FAILED;
         if (BlockRules.sameBlock(current.getBlock(), target.getBlock())) {
             return BlockRules.placementMatches(current, target) ? Status.PENDING : Status.MISPLACED;
