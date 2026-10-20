@@ -1538,15 +1538,17 @@ public final class SchematicBuilder {
             }
             int index = i;
             PlacementSolver.Result result = PlacementSolver.find(player, pos, target, new ItemStack(item), reach, at -> unclickable(at, index));
-            if (result.click() == null && walkEnd != null && walkExpects.contains(i)) arrivalMisses.merge(i, 1, Integer::sum);
-            if (result.click() == null && result.problem() == PlacementSolver.Problem.IN_THE_WAY && walkEnd != null && walkExpects.contains(i)) {
+            // A block the last walk was made for that doesn't go in on arriving: counted once a walk, with or without the log.
+            boolean expectedHere = result.click() == null && walkEnd != null && walkExpects.remove(i);
+            if (expectedHere) arrivalMisses.merge(i, 1, Integer::sum);
+            if (expectedHere && result.problem() == PlacementSolver.Problem.IN_THE_WAY) {
                 // The walk came to rest a little off the middle, into the spot of a block it was made for, as in a row of
                 // blocks still to go in: never planned from there for that block again, or the same walk is made over and over.
                 missedFrom.add(Navigator.pairKey(walkEnd.key(), i));
             }
             if (result.click() == null && debug()) {
                 LOGGER.info("Can't place {} at {} yet: {}", target, pos.toShortString(), result.problem());
-                if (walkExpects.remove(i) && walkEnd != null) {
+                if (expectedHere) {
                     // The walk here was planned on a look at it: from the middle of where it was to end, and from where it did.
                     LongPredicate notThere = at -> unclickable(at, index);
                     double planned = player.blockInteractionRange() - 0.2;
@@ -4047,9 +4049,10 @@ public final class SchematicBuilder {
         // Dropped helper blocks: a walk that ends where they are picked up saves a walk for them later.
         List<AABB> dropped = player.hasInfiniteMaterials() ? List.of() : player.level().getEntitiesOfClass(ItemEntity.class,
                 player.getBoundingBox().inflate(16, 6, 16), item -> isHelper(item.getItem())).stream().map(ItemEntity::getBoundingBox).toList();
-        // For the log: what each place to stand is expected to place, the looks checked and the blocks in a row after them.
+        // What each place to stand is expected to place, to tell on arriving which didn't go in; and for the log, the looks
+        // checked and the blocks in a row after them.
+        Map<Long, List<Integer>> expectedBlocks = new HashMap<>();
         Map<Long, String> expected = debug() ? new HashMap<>() : null;
-        Map<Long, List<Integer>> expectedBlocks = debug() ? new HashMap<>() : null;
         Navigator.Goal goal = node -> {
             seen[0]++;
             if (uselessSpots.contains(node.key()) || traps.contains(node.key()) || carriedFrom.contains(node.key())) return 0;
@@ -4101,11 +4104,11 @@ public final class SchematicBuilder {
                 firstFrom.put(node.key(), placeable.getFirst());
                 int more = chained(player, node, reach, placeable, pool, budget);
                 good += more;
+                expectedBlocks.put(node.key(), List.copyOf(placeable));
                 if (expected != null) {
                     StringBuilder text = new StringBuilder();
                     for (int i : placeable) text.append(text.isEmpty() ? "" : "; ").append(plan.pos(i).toShortString());
                     expected.put(node.key(), placeable.size() + " (" + text + ") +" + more + " in a row, " + inReach.size() + " in reach");
-                    expectedBlocks.put(node.key(), List.copyOf(placeable));
                 }
             }
             if (good == 0) return 0;
@@ -4182,10 +4185,10 @@ public final class SchematicBuilder {
                         Helper helper = helpers.get(node.floor().asLong());
                         return helper != null && helper.serves() < 0;
                     }).count());
-            walkExpects.clear();
-            walkExpects.addAll(expectedBlocks.getOrDefault(end.key(), List.of()));
-            walkEnd = end;
         }
+        walkExpects.clear();
+        walkExpects.addAll(expectedBlocks.getOrDefault(end.key(), List.of()));
+        walkEnd = end;
         return true;
     }
 
