@@ -189,16 +189,18 @@ public final class PlacementSolver {
     /**
      * Where a helper block would let the block go in when nothing around it does: a hopper facing into open air needs
      * a block there to click, which comes out again once the hopper stands. Null when no spot {@code allowed} lets it,
-     * or when the block would need the helper to keep standing.
+     * or when the block would need the helper to keep standing. The helper itself goes in against a block beside it that
+     * isn't {@code unclickable}, as the clicks that put helpers down never take another helper block.
      */
-    public static BlockPos helperFor(LocalPlayer player, BlockPos pos, BlockState target, ItemStack stack, Predicate<BlockPos> allowed) {
+    public static BlockPos helperFor(LocalPlayer player, BlockPos pos, BlockState target, ItemStack stack, Predicate<BlockPos> allowed,
+                                     LongPredicate unclickable) {
         if (!(stack.getItem() instanceof BlockItem item)) return null;
         Level level = player.level();
         if (!level.getBlockState(pos).canBeReplaced()) return null;
         AABB full = new AABB(0, 0, 0, 1, 1, 1);
         for (Direction side : Direction.values()) {
             BlockPos helper = pos.relative(side);
-            if (!allowed.test(helper) || !standsAgainst(level, helper, pos)) continue;
+            if (!allowed.test(helper) || !standsAgainst(level, helper, pos, unclickable)) continue;
             Direction face = side.getOpposite();
             for (float[] look : looks(target)) {
                 Vec3 point = facePoint(helper, full, face, 0.5, 0.5);
@@ -229,10 +231,10 @@ public final class PlacementSolver {
      * Whether a helper block at {@code helper} can go in itself: something beside it, other than the spot {@code pos} it
      * is for, to click. One in the air helps nothing, as nothing places it.
      */
-    private static boolean standsAgainst(Level level, BlockPos helper, BlockPos pos) {
+    private static boolean standsAgainst(Level level, BlockPos helper, BlockPos pos, LongPredicate unclickable) {
         for (Direction side : Direction.values()) {
             BlockPos beside = helper.relative(side);
-            if (!beside.equals(pos) && !level.getBlockState(beside).canBeReplaced()) return true;
+            if (!beside.equals(pos) && !level.getBlockState(beside).canBeReplaced() && !unclickable.test(beside.asLong())) return true;
         }
         return false;
     }

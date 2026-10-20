@@ -2649,7 +2649,10 @@ public final class SchematicBuilder {
             helperSpot.remove(i);
             if (!supported && item != null && helperItem(player) != null) {
                 // Nothing to click that gives it the right facing: a helper block put down and taken away again can.
-                BlockPos helper = PlacementSolver.helperFor(player, pos, target, new ItemStack(item), cell -> helperAllowed(player, cell));
+                // Against a block that isn't a helper itself: a helper spot held up by another helper, a walk's say, never
+                // goes in, as helpers aren't clicked to put one down (see placeHelper), and the block waits for it for good.
+                BlockPos helper = PlacementSolver.helperFor(player, pos, target, new ItemStack(item), cell -> helperAllowed(player, cell),
+                        helpers::containsKey);
                 if (helper != null) {
                     helperSpot.put(i, helper);
                     supported = true;
