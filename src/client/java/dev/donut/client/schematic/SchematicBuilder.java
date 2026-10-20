@@ -1198,7 +1198,6 @@ public final class SchematicBuilder {
             aheadChecked = tick;
             Item ahead = restockAhead(player, materials);
             if (ahead != null && !boxSpots(player, Navigator.standingAt(level, player).floor().above(), player.position()).isEmpty()) {
-                aheadLayer.put(ahead, layerY);
                 if (debug()) LOGGER.info("Taking {} out of a shulker box while there is room for one here", name(ahead));
                 startRestock(client, player, ahead, materials);
                 if (restock != Restock.NONE || swapFrom >= 0 || walker.active()) return;
@@ -5941,7 +5940,6 @@ public final class SchematicBuilder {
                     // there for them comes to nothing.
                     Item ahead = restockAhead(player, Materials.of(player.getInventory()));
                     if (ahead != null) {
-                        aheadLayer.put(ahead, layerY);
                         restockAfterWalk = ahead;
                         if (debug()) LOGGER.info("Taking {} out of a shulker box too, while there is room for one here", name(ahead));
                     }
@@ -6089,21 +6087,36 @@ public final class SchematicBuilder {
 
     /**
      * The item to take out of another shulker box straight after one: the layer still takes it, none is carried, a box
-     * holds some and there is a slot for it. The one the layer takes most of; each once a layer, so a box that gives
-     * none can't be opened over and over. Null when there is none.
+     * holds some and there is a slot for it. The one the layer takes most of; each once a layer, counted from being
+     * picked here, so a box that gives none can't be opened over and over. Null when there is none.
      */
     private Item restockAhead(LocalPlayer player, Materials carried) {
         if (player.hasInfiniteMaterials() || !settings().useShulkers || carried.freeSlots() < 1) return null;
+        // Before the first decision has picked a layer, as at the start of a build: the lowest with a block still to go in.
+        int y = layerY;
+        if (y == Integer.MIN_VALUE) {
+            for (Map.Entry<Integer, int[]> layer : plan.layers().entrySet()) {
+                for (int i : layer.getValue()) {
+                    if (plan.status(i) == BuildPlan.Status.PENDING || plan.status(i) == BuildPlan.Status.UNLOADED) {
+                        y = layer.getKey();
+                        break;
+                    }
+                }
+                if (y != Integer.MIN_VALUE) break;
+            }
+            if (y == Integer.MIN_VALUE) return null;
+        }
         Item best = null;
         int most = 0;
-        for (Map.Entry<Item, Integer> need : needsUpTo(player.level(), layerY).entrySet()) {
+        for (Map.Entry<Item, Integer> need : needsUpTo(player.level(), y).entrySet()) {
             Item item = need.getKey();
             if (need.getValue() <= most || helperItems.contains(item) || carried.loose(item) > 0 || carried.total(item) == 0) continue;
-            if (Integer.valueOf(layerY).equals(aheadLayer.get(item)) || noRoomFor.containsKey(item)) continue;
+            if (Integer.valueOf(y).equals(aheadLayer.get(item)) || noRoomFor.containsKey(item)) continue;
             if (Materials.shulkerWith(player.getInventory(), item) < 0) continue;
             best = item;
             most = need.getValue();
         }
+        if (best != null) aheadLayer.put(best, y);
         return best;
     }
 
