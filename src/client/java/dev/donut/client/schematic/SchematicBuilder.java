@@ -806,7 +806,7 @@ public final class SchematicBuilder {
         if (client.level != planLevel) { finish(client, "stopped: you left the world it was started in.", true); return; }
         load(false);
         if (schematic == null) { finish(client, "stopped: " + loadProblem + ".", true); return; }
-        if (!planKey.equals(key())) preparePlan(client);
+        if (!planKey.equals(key()) && !replan(client)) return;
         plan.refresh(client.level, REFRESH_BUDGET);
         head.pace((float) settings().turnSpeed);
         PlacementSolver.spread(settings().clickSpread);
@@ -1112,6 +1112,26 @@ public final class SchematicBuilder {
         SchematicSettings s = settings();
         return s.file + "|" + schematicStamp + "|" + s.originX + "," + s.originY + "," + s.originZ + "|" + s.rotation + "|" + s.mirror
                 + "|" + s.redstoneLast;
+    }
+
+    /**
+     * The schematic file, its place, turn or order changed while building. The same blocks at the same places, as when
+     * the file is saved again unchanged, keep the plan, and all that is known by block number with it. Anything else
+     * stops the build: what was worked out by block number, the aim under way, helpers and repairs, belongs to the old
+     * plan, and a block number of it may be another block, or none, in the new one. False when stopped.
+     */
+    private boolean replan(Minecraft client) {
+        SchematicSettings s = settings();
+        BuildPlan next = BuildPlan.of(schematic, new BlockPos(s.originX, s.originY, s.originZ), mirror(s.mirror), rotation(s.rotation),
+                s.redstoneLast);
+        boolean same = next.size() == plan.size();
+        for (int i = 0; same && i < next.size(); i++) same = next.pos(i).equals(plan.pos(i)) && next.target(i) == plan.target(i);
+        if (same) {
+            planKey = key();
+            return true;
+        }
+        finish(client, "stopped: the schematic, its place or its turn changed while building; start it again.", true);
+        return false;
     }
 
     private void preparePlan(Minecraft client) {
