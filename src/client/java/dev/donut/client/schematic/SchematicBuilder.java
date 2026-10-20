@@ -2357,6 +2357,9 @@ public final class SchematicBuilder {
      * along it, as a kelp channel walled in on its sides. The checks that keep blocks still to go in dry stay as they are.
      */
     private boolean wetPourStand(Level level, BlockPos feet, BlockPos pouredAt) {
+        // Never under the water poured: it falls onto the player and fills where they stand, a block deep, as a corridor
+        // under IKEA v1's machine filled from the kelp spots of y 68 poured into from it, feet at 66 (v1-clean3).
+        if (pouredAt != null && feet.getY() < pouredAt.getY()) return false;
         int i = plan.indexOf(feet);
         if (i < 0 || !holdsWaterLater(i)) return false;
         BlockPos floor = feet.below();
@@ -5848,8 +5851,14 @@ public final class SchematicBuilder {
         }
         if (plan.soaking(i) && !BlockRules.fillsInPlace(current)) return inView(player, eye, pos, reach - 0.25) ? 2 : 0;
         if (plan.soaking(i)) return !floods(level, pos, feet) && PlacementSolver.fill(player, eye, pos, reach) != null ? 2 : 0;
-        if (plan.needsPour(i)) return (!floods(level, pos, feet) || wetPourStand(level, BlockPos.containing(feet), pos))
-                && PlacementSolver.pour(level, player, eye, pos, Fluids.WATER, reach) != null ? 2 : 0;
+        if (plan.needsPour(i)) {
+            if (floods(level, pos, feet) && !wetPourStand(level, BlockPos.containing(feet), pos)) return 0;
+            // Kelp goes in right after against the same face, from where the walk comes to rest: a pour that only works
+            // from the very middle counts for little, as v1-clean3's walks for the kelp of y 68 placed nothing after each
+            // pour ("from its middle a look, from the feet no look").
+            PlacementSolver.Click pour = PlacementSolver.pour(level, player, eye, pos, Fluids.WATER, reach);
+            return pour == null ? 0 : steadyFrom(player, feet, pour, reach) ? 2 : 1;
+        }
         if (BlockRules.needsTool(current, target)) {
             return carriedTool(player, target) != null && PlacementSolver.till(player, eye, pos, reach) != null ? 2 : 0;
         }
