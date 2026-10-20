@@ -1454,6 +1454,7 @@ public final class SchematicBuilder {
                     continue;
                 }
             }
+            else if (upWaitHolds(player.level(), i)) continue;
             if (missedHere.contains(i) && player.blockPosition().equals(missedAt)) {
                 if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
                 continue;
@@ -1745,6 +1746,7 @@ public final class SchematicBuilder {
         if (sealing && !lift) {
             // Every block left in reach of a walk would shut in another: let them go in after all.
             sealsLifted = true;
+            sealsLiftedAt = tick;
             nextAction = System.nanoTime();
             return;
         }
@@ -1823,6 +1825,7 @@ public final class SchematicBuilder {
                     if (seals == 0) return -2;
                     if (seals == 1) continue;
                 }
+                else if (upWaitHolds(player.level(), i)) continue;
             } else if (st != BuildPlan.Status.UNLOADED) {
                 // An unloaded block may well be missing too; the layer waits until the player is near enough to see it.
                 continue;
@@ -1831,6 +1834,43 @@ public final class SchematicBuilder {
         }
         return -1;
     }
+
+    /**
+     * Whether block {@code i} waits for a block facing up beside it, still to go in, that is only placed with a look up
+     * from below past this spot, as the ice ring round a column of up-facing observers took every such look. Only over
+     * open space, where that look comes up from: one over a block can't be looked past from below, and is wanted in as
+     * the face the click goes on. Unlike the other seals, it holds when they are lifted, until {@link #UP_WAIT_TICKS}
+     * after: once in, such a block shuts the other in for good.
+     */
+    private boolean waitsForUpFacing(Level level, int i) {
+        if (plan.kind(i) != BlockRules.Kind.PLACE || BlockRules.facesUp(plan.target(i))) return false;
+        BlockPos pos = plan.pos(i);
+        if (!level.getBlockState(pos.below()).canBeReplaced() || !level.getBlockState(pos).canBeReplaced()) return false;
+        for (Direction side : Direction.Plane.HORIZONTAL) {
+            // A row of them goes in in any order: each is placed from below, not past the other.
+            BlockPos at = pos.relative(side);
+            int j = plan.indexOf(at);
+            if (j < 0 || plan.status(j) != BuildPlan.Status.PENDING || !BlockRules.facesUp(plan.target(j))) continue;
+            if (!level.getBlockState(at).canBeReplaced()) continue;
+            if (debug() && tick - upWaitLogged.getOrDefault(i, -UP_WAIT_TICKS) > 200) {
+                upWaitLogged.put(i, tick);
+                LOGGER.info("{} at {} waits: it would take the look up at {} at {}", plan.target(i).getBlock().getName().getString(),
+                        pos.toShortString(), plan.target(j).getBlock().getName().getString(), at.toShortString());
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /** With the seals lifted, block {@code i} still waits for an up-facing neighbour, for {@link #UP_WAIT_TICKS} after. */
+    private boolean upWaitHolds(Level level, int i) {
+        return tick - sealsLiftedAt < UP_WAIT_TICKS && waitsForUpFacing(level, i);
+    }
+
+    /** How long, after the seals are lifted, a block still waits for an up-facing neighbour: the walks get a few more tries. */
+    private static final long UP_WAIT_TICKS = 6000;
+    private long sealsLiftedAt = Long.MIN_VALUE / 2;
+    private final Map<Integer, Long> upWaitLogged = new HashMap<>();
 
     /**
      * Whether placing block {@code i} now would shut in a block beside it that is still to go in: one that can go in
@@ -1847,19 +1887,7 @@ public final class SchematicBuilder {
         if (System.nanoTime() - started > PLAN_NANOS) return 0;
         Overlay view = null;
         byte result = 2;
-        // A block facing up beside it, still to go in, takes a look up from below past this spot: this one waits for it,
-        // as the ice ring round a column of up-facing observers took every such look. Only over open space, where that look
-        // comes up from: one over a block can't be looked past from below, and is wanted in as the face the click goes on.
-        boolean overOpen = level.getBlockState(pos.below()).canBeReplaced();
-        for (Direction side : Direction.Plane.HORIZONTAL) {
-            // A row of them goes in in any order: each is placed from below, not past the other.
-            if (!overOpen || BlockRules.facesUp(plan.target(i))) break;
-            BlockPos at = pos.relative(side);
-            int j = plan.indexOf(at);
-            if (j < 0 || plan.status(j) != BuildPlan.Status.PENDING || !BlockRules.facesUp(plan.target(j))) continue;
-            if (!level.getBlockState(at).canBeReplaced()) continue;
-            if (debug()) LOGGER.info("{} at {} waits: it would take the look up at {} at {}", plan.target(i).getBlock().getName().getString(),
-                    pos.toShortString(), plan.target(j).getBlock().getName().getString(), at.toShortString());
+        if (waitsForUpFacing(level, i)) {
             sealStamp[i] = stamp;
             seal[i] = 1;
             return 1;
@@ -4109,6 +4137,7 @@ public final class SchematicBuilder {
         for (int i : candidates) {
             if (plan.status(i) != BuildPlan.Status.PENDING || support(player, i, started) != 1) continue;
             if (!lift && seals(player, i, started) == 1) continue;
+            if (lift && upWaitHolds(player.level(), i)) continue;
             Item item = plan.item(i);
             if (item == null || !creative && (materials.total(item) == 0 || waitsForDrop(level, i, materials))) continue;
             // Only in a box, with no room for one a moment ago: it waits for that on arrival too, and a walk for it is for
@@ -4578,6 +4607,7 @@ public final class SchematicBuilder {
         for (int i : candidates) {
             if (plan.status(i) != BuildPlan.Status.PENDING || plan.kind(i) != BlockRules.Kind.PLACE || support(player, i, started) != 1) continue;
             if (!lift && seals(player, i, started) == 1) continue;
+            if (lift && upWaitHolds(player.level(), i)) continue;
             BlockPos pos = plan.pos(i);
             BlockState target = plan.target(i);
             if (level.getBlockState(pos).getBlock() == target.getBlock()) continue;
@@ -4634,6 +4664,7 @@ public final class SchematicBuilder {
         for (int i : candidates) {
             if (plan.status(i) != BuildPlan.Status.PENDING || plan.kind(i) != BlockRules.Kind.PLACE || support(player, i, started) != 1) continue;
             if (!lift && seals(player, i, started) == 1) continue;
+            if (lift && upWaitHolds(player.level(), i)) continue;
             BlockPos pos = plan.pos(i);
             BlockState target = plan.target(i);
             if (level.getBlockState(pos).getBlock() == target.getBlock()) continue;
