@@ -357,6 +357,12 @@ public final class ChunkMiner {
             message(client, "can't start: " + noToolReason() + ".", ChatFormatting.YELLOW);
             return false;
         }
+        if (s.goodChunks && !client.level.dimension().equals(net.minecraft.world.level.Level.OVERWORLD)) {
+            // ChunkFinder judges chunks by the overworld's plants and caves; elsewhere a chunk it lists would be by chance.
+            s.enabled = false;
+            message(client, "can't look for a good chunk outside the overworld.", ChatFormatting.YELLOW);
+            return false;
+        }
         active = true;
         level = client.level;
         lastHealth = player.getHealth();
