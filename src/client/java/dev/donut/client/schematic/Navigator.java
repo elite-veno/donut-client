@@ -544,6 +544,20 @@ public final class Navigator {
      * from 0.3 to 0.7 each way, isn't all under it. However the shape is cut into boxes.
      */
     /**
+     * Whether a cell beside the place to stand, at the feet's height, has nothing under it either to stop the player: an
+     * open gate, water over a gap, plain air. A step that comes down onto such a place carries the body on past it.
+     */
+    static boolean besideFall(BlockGetter level, Node node) {
+        BlockPos feet = node.feetCell();
+        for (Direction side : Direction.Plane.HORIZONTAL) {
+            BlockPos beside = feet.relative(side);
+            if (level.getBlockState(beside).getCollisionShape(level, beside).isEmpty()
+                    && level.getBlockState(beside.below()).getCollisionShape(level, beside.below()).isEmpty()) return true;
+        }
+        return false;
+    }
+
+    /**
      * Whether the place to stand is a narrow top, a closed gate's or a fence's, with a drop of two blocks or more right
      * beside it: a few centimetres of drift off it and the player is down there.
      */

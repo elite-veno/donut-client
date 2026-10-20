@@ -275,11 +275,16 @@ final class Walker {
         // A walk to a spot whose look works only from its very middle edges on crouched for the last bit, as a player
         // lining up on an exact spot does: slower, no run-on past it, and no dithering of the keys to get it right.
         boolean easing = last && precise && onTop && to.move() == Navigator.Move.WALK && distance < 1.0;
-        boolean crouchHere = rail || wary || last && onTop && narrow && within(at, to) || easing;
+        // A step that comes down onto a place with a fall beside it, a drop into a channel beside open gates or water over
+        // a gap, is landed crouched: the run-on of the drop carries an upright player on into that cell and down through it,
+        // where crouched the edge holds them. From just before the landing until the place is reached.
+        boolean fallLanding = (to.move() == Navigator.Move.DROP || to.move() == Navigator.Move.WALK && to.feet() < from.feet() - 0.05)
+                && (within(at, to) || !player.onGround() && distance < 1.2) && Navigator.besideFall(player.level(), to);
+        boolean crouchHere = rail || wary || last && onTop && narrow && within(at, to) || easing || fallLanding;
         if (!bridgeCrouch && crouchHere != edgeCrouch && (crouchHere || player.onGround())) {
             climb.crouch(crouchHere);
             edgeCrouch = crouchHere;
-            preciseCrouch = crouchHere && easing && !(rail || wary || last && onTop && narrow && within(at, to));
+            preciseCrouch = crouchHere && easing && !(rail || wary || fallLanding || last && onTop && narrow && within(at, to));
         }
         // On ice a step where the way turns, or one beside a drop, is come to rest at as the walk's end is: a slide carries
         // a player walking on past the corner and off the side of a walkway one block wide, as a player who knows ice
