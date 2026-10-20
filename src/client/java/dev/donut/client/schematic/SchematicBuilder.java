@@ -6438,11 +6438,25 @@ public final class SchematicBuilder {
             for (int dz = -1; dz <= 1; dz++) {
                 if (dx == 0 && dz == 0 || (dx != 0 && dz != 0) != corners) continue;
                 BlockPos next = at.offset(dx, 0, dz);
-                if (level.getBlockState(next).getCollisionShape(level, next).isEmpty()
-                        && level.getBlockState(next.below()).getCollisionShape(level, next.below()).isEmpty()) return true;
+                if (level.getBlockState(next).getCollisionShape(level, next).isEmpty() && !catches(level, next.below())) return true;
             }
         }
         return false;
+    }
+
+    /**
+     * Whether the block at {@code pos} stops a dropped item on its top: most of the cell covered at the top of its shape.
+     * Iron bars, a pane or a fence has a shape, but an item slips past it into the cell, as a broken box did down into the
+     * bars of a farm's channel, a block under the player and out of reach.
+     */
+    private static boolean catches(Level level, BlockPos pos) {
+        VoxelShape shape = level.getBlockState(pos).getCollisionShape(level, pos);
+        if (shape.isEmpty()) return false;
+        double top = shape.max(Direction.Axis.Y), area = 0;
+        for (AABB box : shape.toAabbs()) {
+            if (box.maxY >= top - 1e-3) area += (Math.min(box.maxX, 1) - Math.max(box.minX, 0)) * (Math.min(box.maxZ, 1) - Math.max(box.minZ, 0));
+        }
+        return area >= 0.5;
     }
 
     /** How long the look onto a placed shulker box may take before it is tried from elsewhere. */
@@ -6668,8 +6682,15 @@ public final class SchematicBuilder {
                         Navigator.Path path = navigator(player, false).find(Navigator.standingAt(level, player), node -> new AABB(node.x() + 0.2,
                                 node.feet(), node.z() + 0.2, node.x() + 0.8, node.feet() + 1.8, node.z() + 0.8).inflate(1, 0.5, 1).intersects(item) ? 1 : 0);
                         stopWalking(client);
-                        // Not into a place with no way back out, for a box either.
-                        if (path != null && path.nodes().size() > 1 && !dropsIntoTrap(player, path)) walker.start(path.nodes());
+                        // Not into a place with no way back out, for a box either; unless helper blocks climb out of it, over
+                        // cells the build fills later, as climbUpOut then does: the box, with what it holds, is worth that.
+                        boolean trapped = path != null && path.nodes().size() > 1 && dropsIntoTrap(player, path);
+                        if (trapped && helperItem(player) != null && escapeFrom(player, level, path.end(), null) != null) {
+                            if (debug()) LOGGER.info("Down for the shulker box after all: helper blocks climb back out from {} {} {}",
+                                    path.end().x(), path.end().feet(), path.end().z());
+                            trapped = false;
+                        }
+                        if (path != null && path.nodes().size() > 1 && !trapped) walker.start(path.nodes());
                     } else {
                         walkTo(client, player, dropped);
                     }
