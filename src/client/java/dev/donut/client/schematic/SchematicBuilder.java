@@ -800,6 +800,8 @@ public final class SchematicBuilder {
         filledFrom = null;
         helpers.clear();
         helperSpot.clear();
+        guardSpot.clear();
+        guardWalks.clear();
         helpersLeft.clear();
         leftRetried = false;
         cleanupWide = false;
@@ -1135,6 +1137,8 @@ public final class SchematicBuilder {
         helperFetchTick = -100_000;
         helpers.clear();
         helperSpot.clear();
+        guardSpot.clear();
+        guardWalks.clear();
         helpersLeft.clear();
         leftRetried = false;
         cleanupWide = false;
@@ -1931,6 +1935,7 @@ public final class SchematicBuilder {
         // Twice in a row no place reached had a block in reach, with blocks left that wait for nothing (planWalk only
         // weighs those): shut in, as after a fall under the build. Climbing out through cells the build fills later is
         // tried at once, not after walks there are none to make.
+        if (settings().walk && placeGuard(client, player, layerNumber)) return;
         if (settings().walk && noneInReach >= 2) {
             if (debug()) LOGGER.info("No place reached has a block in reach or a look, {} searches in a row: climbing out", noneInReach);
             noneInReach = 0;
@@ -2421,6 +2426,117 @@ public final class SchematicBuilder {
      * there, the current carries the player off into it, upright or not (v4-full10, 21:34: on 3 69 8, the flow (0, 0, -1)
      * pulled the player north over the fall column at z 7 and down through the gate at 3,68,7).
      */
+    /** How many of the blocks a walk search found no place for {@link #guardFor} weighs. */
+    private static final int GUARD_CHECKS = 3;
+    /**
+     * Helper blocks put into a fall a current at a place to stand runs into, by the block that place is for (see
+     * {@link #guardFor}); and walks made to put each down.
+     */
+    private final Map<Integer, BlockPos> guardSpot = new HashMap<>();
+    private final Map<Integer, Integer> guardWalks = new HashMap<>();
+
+    /**
+     * Where a helper block makes a place to stand for block {@code i} safe, or null: a place near it with a look at it,
+     * on a full block, ruled out only by water at the feet running into a fall beside it, an open gate or a gap with
+     * nothing under it (see {@link #currentIntoFall}), as ikea_v4's kelp channel z 8 running into the fall column of z 7,
+     * the only place for the dispensers facing north at z 9. With a helper block in that fall the current runs into it
+     * and carries no one off. Only a fall in water or open air the build leaves so, or fills with water itself; the
+     * helper block comes away once block {@code i} is in, as any helper block serving a block, and the water runs back
+     * or is poured again.
+     */
+    private BlockPos guardFor(LocalPlayer player, int i) {
+        if (plan.kind(i) != BlockRules.Kind.PLACE) return null;
+        Item item = BlockRules.item(plan.target(i)), helperItem = helperItem(player);
+        if (item == null || helperItem == null) return null;
+        Level level = player.level();
+        BlockPos pos = plan.pos(i);
+        BlockState target = plan.target(i), helperState = Block.byItem(helperItem).defaultBlockState();
+        ItemStack stack = new ItemStack(item);
+        double reach = player.blockInteractionRange() - 0.2;
+        LongPredicate notThere = at -> unclickable(at, i);
+        for (BlockPos feet : BlockPos.betweenClosed(pos.offset(-2, -2, -2), pos.offset(2, 0, 2))) {
+            BlockPos floor = feet.below();
+            if (feet.equals(pos) || !level.getBlockState(floor).isCollisionShapeFullBlock(level, floor)) continue;
+            if (!level.getBlockState(feet).getCollisionShape(level, feet).isEmpty()
+                    || !level.getBlockState(feet.above()).getCollisionShape(level, feet.above()).isEmpty()) continue;
+            if (!currentIntoFall(level, feet)) continue;
+            BlockPos fall = fallBeside(level, feet);
+            if (fall == null || fall.equals(pos) || !level.getBlockState(fall).canBeReplaced()) continue;
+            int j = plan.indexOf(fall);
+            if (j >= 0 && !(plan.kind(j) != BlockRules.Kind.PLACE && plan.target(j).getBlock() instanceof LiquidBlock)) continue;
+            Overlay guarded = new Overlay(level, Map.of(fall.asLong(), helperState));
+            if (currentIntoFall(guarded, feet)) continue;
+            Vec3 standing = new Vec3(feet.getX() + 0.5, feet.getY(), feet.getZ() + 0.5);
+            if (PlacementSolver.fromSpot(player, guarded, standing, pos, target, stack, reach, notThere) == null) continue;
+            return fall.immutable();
+        }
+        return null;
+    }
+
+    /** The cell beside {@code feet} the water there runs into with nothing under it, as {@link #currentIntoFall} finds. */
+    private static BlockPos fallBeside(BlockGetter level, BlockPos feet) {
+        for (int up = 0; up <= 1; up++) {
+            BlockPos cell = feet.above(up);
+            FluidState fluid = level.getFluidState(cell);
+            if (fluid.isEmpty()) continue;
+            Vec3 flow = fluid.getFlow(level, cell);
+            for (Direction side : Direction.Plane.HORIZONTAL) {
+                if (flow.x * side.getStepX() + flow.z * side.getStepZ() < 0.5) continue;
+                BlockPos beside = feet.relative(side);
+                if (level.getBlockState(beside).getCollisionShape(level, beside).isEmpty()
+                        && level.getBlockState(beside.below()).getCollisionShape(level, beside.below()).isEmpty()) return beside;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Puts down a guard of {@link #guardFor} still to go in: from here when it can, else after a walk to where a look
+     * reaches its spot, the walk's places as any walk's (none in a current into a fall). True when begun.
+     */
+    private boolean placeGuard(Minecraft client, LocalPlayer player, int layerNumber) {
+        if (guardSpot.isEmpty() || helperItem(player) == null) return false;
+        Level level = player.level();
+        for (Iterator<Map.Entry<Integer, BlockPos>> it = guardSpot.entrySet().iterator(); it.hasNext(); ) {
+            Map.Entry<Integer, BlockPos> entry = it.next();
+            int i = entry.getKey();
+            BlockPos guard = entry.getValue();
+            if (plan.status(i) != BuildPlan.Status.PENDING || !level.getBlockState(guard).canBeReplaced()) {
+                // In, or something there already: the guard is done with, or not needed.
+                if (plan.status(i) != BuildPlan.Status.PENDING) it.remove();
+                continue;
+            }
+            if (placeHelper(client, player, i, guard, layerNumber)) {
+                if (debug()) LOGGER.info("A helper block at {}, against the current into the fall there, for {} at {}", guard.toShortString(),
+                        plan.target(i).getBlock().getName().getString(), plan.pos(i).toShortString());
+                return true;
+            }
+            if (guardWalks.merge(i, 1, Integer::sum) > REPAIRS) {
+                it.remove();
+                continue;
+            }
+            Item helperItem = helperItem(player);
+            BlockState helperState = Block.byItem(helperItem).defaultBlockState();
+            ItemStack helperStack = new ItemStack(helperItem);
+            double reach = player.blockInteractionRange() - 0.25;
+            Map<Long, Boolean> wetCells = new HashMap<>();
+            List<BlockPos> poured = recentPours();
+            Navigator.Path path = navigator(player, true).find(Navigator.standingAt(level, player), node -> {
+                if (node.feetCell().equals(guard) || currentIntoFall(level, node.feetCell())) return 0;
+                if (wetSoon(level, node.feetCell(), poured, wetCells) && !stillWater(level, node)) return 0;
+                return PlacementSolver.fromSpot(player, node.standing(), guard, helperState, helperStack, reach, helpers::containsKey) != null ? 1 : 0;
+            });
+            if (path == null || path.nodes().size() < 2 || dropsIntoTrap(player, path)) continue;
+            if (!climbReady(client, player, path)) return true;
+            releaseKeys(client);
+            walker.start(path.nodes(), Vec3.atCenterOf(guard));
+            if (debug()) LOGGER.info("Walking {} steps to put a helper block at {} against the current into the fall there, for {} at {}",
+                    path.nodes().size() - 1, guard.toShortString(), plan.target(i).getBlock().getName().getString(), plan.pos(i).toShortString());
+            return true;
+        }
+        return false;
+    }
+
     static boolean currentIntoFall(BlockGetter level, BlockPos feet) {
         for (int up = 0; up <= 1; up++) {
             BlockPos cell = feet.above(up);
@@ -3812,6 +3928,8 @@ public final class SchematicBuilder {
         boolean helper = helpers.containsKey(cell.asLong()) && !(view instanceof Overlay overlay && overlay.changes(cell));
         if (!state.canBeReplaced() || helper) return false;
         if (cleaning && cleared.contains(cell.asLong())) return false;
+        // A guard against a current into a fall (see guardFor): in water, or water the build has there, for a while.
+        if (guardSpot.containsValue(cell)) return true;
         int i = plan.indexOf(cell);
         boolean water = i >= 0 && (plan.kind(i) == BlockRules.Kind.FLUID || plan.kind(i) == BlockRules.Kind.AUTO)
                 && plan.target(i).getBlock() instanceof LiquidBlock && plan.target(i).getFluidState().is(FluidTags.WATER);
@@ -5186,6 +5304,16 @@ public final class SchematicBuilder {
             }
         }
         noStand = path == null ? List.copyOf(near) : List.of();
+        if (path == null && helperItem(player) != null) {
+            for (int i : near.subList(0, Math.min(GUARD_CHECKS, near.size()))) {
+                if (guardSpot.containsKey(i) || guardWalks.getOrDefault(i, 0) >= REPAIRS) continue;
+                BlockPos guard = guardFor(player, i);
+                if (guard == null) continue;
+                guardSpot.put(i, guard);
+                if (debug()) LOGGER.info("{} at {}: its place to stand is in a current into a fall at {}, a helper block goes there first",
+                        plan.target(i).getBlock().getName().getString(), plan.pos(i).toShortString(), guard.toShortString());
+            }
+        }
         if (path == null && tick - lastProgress > GIVE_UP_TICKS) {
             // Nothing has gone in for minutes, and still no place to stand with a look at it: given up on, as a player
             // leaves what they can't reach, and counted as failed at the end; the build goes on with the rest.
