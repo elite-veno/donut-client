@@ -835,7 +835,7 @@ public final class SchematicBuilder {
             return;
         }
         if (client.gui.screen() instanceof AbstractContainerScreen<?> && !(client.gui.screen() instanceof InventoryScreen)
-                && clickedBlock != null && tick - clickedAt <= MENU_AFTER_CLICK) {
+                && clickedBlock != null && tick - clickedAt <= MENU_AFTER_CLICK && hasMenu(client.level, clickedPos)) {
             // A click of the builder's own opened the block's menu: the block takes a crouched click from now on, as a
             // player learns which blocks open on a click. Closed again at once, and the click is made again.
             BlockRules.learnInteractive(clickedBlock);
@@ -2777,9 +2777,23 @@ public final class SchematicBuilder {
     /** How many ticks after a click a menu that opens is taken for its doing. */
     private static final int MENU_AFTER_CLICK = 10;
 
+    private BlockPos clickedPos;
+
     private void noteClick(LocalPlayer player, BlockHitResult hit) {
         clickedBlock = player.isShiftKeyDown() ? null : player.level().getBlockState(hit.getBlockPos()).getBlock();
+        clickedPos = hit.getBlockPos();
         clickedAt = tick;
+    }
+
+    /**
+     * Whether the block clicked at {@code pos} can have a menu at all: one it hands out, or a block entity, as a chest's or
+     * an ender chest's. A menu the server opens by itself just after a click, as a server's own check or shop window, is
+     * none of the click's doing: it is left open, as the player's, rather than closed and the block learnt wrong.
+     */
+    private static boolean hasMenu(Level level, BlockPos pos) {
+        if (level == null || pos == null) return false;
+        BlockState state = level.getBlockState(pos);
+        return state.getMenuProvider(level, pos) != null || level.getBlockEntity(pos) != null;
     }
 
     /** A check that the crosshair, with a look, is on {@code pos}, and on its {@code face} unless that is null. */
