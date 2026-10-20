@@ -2219,6 +2219,10 @@ public final class SchematicBuilder {
             // this block in first, and is clicked onto it.
             BlockState grows = plan.target(j);
             if (grows.getBlock() instanceof MultifaceBlock && MultifaceBlock.hasFace(grows, side.getOpposite())) continue;
+            // Kelp in a spot still dry goes in by a pour into its spot first (da-45): a block put beside it only adds a face
+            // to pour against, and shuts nothing in (v4-clean: the glass 18,69,8 and the like held back for the kelp beside
+            // them, the kelp waiting for its layer's dry blocks, layer 5 passed over).
+            if (plan.plant(j) && plan.needsPour(j)) continue;
             byte support = support(player, j, started);
             if (support == 0) return 0;
             if (support != 1 || helperSpot.containsKey(j)) continue;
@@ -3198,6 +3202,15 @@ public final class SchematicBuilder {
         } else if (current.getBlock() == target.getBlock()) {
             // Topping up or clicking a block already there needs nothing more.
             supported = true;
+        } else if (plan.plant(i) && plan.needsPour(i)) {
+            // Kelp or seagrass in a spot still dry: it goes in once water is poured into its spot, against any face beside it
+            // that takes a bucket (decide's pour-first), so its layer waits for it as a player fills a kelp row before closing
+            // over it: ikea_v4's 14,69,16, left dry until the source over its column, and out of reach by then (v4-full14).
+            supported = PlacementSolver.pourable(player, pos, Fluids.WATER);
+            if (debug() && supported && plantWaitLogged.putIfAbsent(-2000 - i, tick) == null) {
+                LOGGER.info("{} at {} is dry: it goes in once water is poured into its spot", target.getBlock().getName().getString(),
+                        pos.toShortString());
+            }
         } else {
             Item item = BlockRules.item(target);
             supported = item != null && (PlacementSolver.supported(player, pos, target, new ItemStack(item), at -> unclickable(at, i))
@@ -5528,6 +5541,16 @@ public final class SchematicBuilder {
             }
         }
         noStand = path == null ? List.copyOf(near) : List.of();
+        if (path == null) {
+            // Dry kelp with no place a pour into its spot is made from: passed over again, its layer going on as before
+            // da-45, the water over its column filling it later; worked out again once the blocks round it change.
+            for (int i : near) {
+                if (!plan.plant(i) || !plan.needsPour(i)) continue;
+                plan.support(i, BuildPlan.stamp(level, plan.pos(i)), false);
+                if (debug()) LOGGER.info("{} at {}: no place to pour into its spot from, passed over until the blocks round it change",
+                        plan.target(i).getBlock().getName().getString(), plan.pos(i).toShortString());
+            }
+        }
         if (path == null && debug() && swimStands()) logSwimLooks(player, near, reach);
         if (path == null && helperItem(player) != null) {
             for (int i : near.subList(0, Math.min(GUARD_CHECKS, near.size()))) {
