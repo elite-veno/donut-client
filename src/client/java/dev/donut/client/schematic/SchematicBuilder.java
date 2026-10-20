@@ -1080,6 +1080,7 @@ public final class SchematicBuilder {
         restock = Restock.NONE;
         restockAfterWalk = null;
         aheadLayer.clear();
+        swappedIn.clear();
         restockWalks = 0;
         restockSwaps = 0;
         aim = null;
@@ -6950,6 +6951,11 @@ public final class SchematicBuilder {
         return Integer.MIN_VALUE;
     }
 
+    /** Items swapped into the inventory by {@link #swapForRoom}, with the blocks done then. */
+    private final Map<Item, Integer> swappedIn = new HashMap<>();
+    /** How many blocks go in before a stack swapped in may be swapped back out for another. */
+    private static final int SWAP_BACK_AFTER = 3;
+
     /** The free inventory slots a box opened ahead needs: two kept free, and two to take into. */
     private static final int AHEAD_FREE = 4;
 
@@ -7016,6 +7022,7 @@ public final class SchematicBuilder {
             return false;
         }
         if (debug()) LOGGER.info("Swapping {} for {} in the full shulker box", menu.getSlot(back).getItem(), menu.getSlot(wanted).getItem());
+        swappedIn.put(restockItem, plan.count(BuildPlan.Status.DONE));
         swapClicks.add(back);
         swapClicks.add(wanted);
         swapClicks.add(back);
@@ -7059,6 +7066,10 @@ public final class SchematicBuilder {
             } else if (carried.loose(item) - stack.getCount() >= now.get(item)) {
                 rank = 3;
             } else if (swap) {
+                // Not one just swapped in for another box, before a few of its blocks went in: else box after box swaps
+                // the same few stacks round, as v4-y did five times in 16 s, glass, observers, gates, hoppers, concrete.
+                Integer in = swappedIn.get(item);
+                if (in != null && plan.count(BuildPlan.Status.DONE) - in < SWAP_BACK_AFTER) continue;
                 rank = 6;
             } else {
                 continue;
