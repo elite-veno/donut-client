@@ -7,11 +7,15 @@ import java.util.Set;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.FrontAndTop;
+import net.minecraft.core.Holder;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.tags.TagKey;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.enchantment.Enchantment;
+import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.level.block.BasePressurePlateBlock;
 import net.minecraft.world.level.block.BaseRailBlock;
 import net.minecraft.world.level.block.Block;
@@ -283,6 +287,14 @@ public final class BlockRules {
         Block block = state.getBlock();
         return !(block instanceof HalfTransparentBlock || block instanceof StainedGlassPaneBlock || block instanceof LeavesBlock
                 || block instanceof DropExperienceBlock || block instanceof RedStoneOreBlock || DROPS_OTHER.contains(block));
+    }
+
+    /** Whether the tool has silk touch, with which glass, ice and the like give themselves back. */
+    public static boolean silkTouch(ItemStack stack) {
+        for (Holder<Enchantment> enchantment : stack.getEnchantments().keySet()) {
+            if (enchantment.is(Enchantments.SILK_TOUCH)) return true;
+        }
+        return false;
     }
 
     /**

@@ -9,6 +9,7 @@ import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.Bootstrap;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.Mirror;
@@ -245,6 +246,7 @@ class BlockRulesTest {
         assertFalse(BlockRules.dropsItself(Blocks.OAK_LEAVES.defaultBlockState()));
         assertFalse(BlockRules.dropsItself(Blocks.STONE.defaultBlockState()), "stone gives cobblestone");
         assertFalse(BlockRules.dropsItself(Blocks.DIAMOND_ORE.defaultBlockState()));
+        assertFalse(BlockRules.silkTouch(ItemStack.EMPTY), "an empty hand has no silk touch");
         assertFalse(BlockRules.dropsItself(Blocks.REDSTONE_ORE.defaultBlockState()));
     }
 

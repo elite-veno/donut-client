@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.KeyMapping;
@@ -453,6 +454,19 @@ public final class SchematicBuilder {
     private final Set<Long> pocketPlaces = new HashSet<>();
     /** The other block of a way out through a wall, broken next; null when there is none. */
     private BlockPos pairNext;
+    /**
+     * Blocks of the build broken to open a look at one beside them that no look reached (see {@link #unblock}), by index:
+     * each waits until that {@code stuck} block is in, or five minutes from {@code since}.
+     */
+    private record Unblock(int stuck, long since) { }
+    private final Map<Integer, Unblock> unblocking = new HashMap<>();
+    /** How often each stuck block had a block round it broken, and walked to one; and the surroundings it had none in. */
+    private final Map<Integer, Integer> unblocks = new HashMap<>();
+    private final Map<Integer, Integer> unblockWalks = new HashMap<>();
+    private final Map<Integer, Long> unblockSearched = new HashMap<>();
+    /** Blocks the last walk search found no place to stand for, the first first; and when each was last weighed for that. */
+    private List<Integer> noStand = List.of();
+    private final Map<Integer, Long> standSearched = new HashMap<>();
     /**
      * Helper blocks climbed on during a walk out of where the player was shut in, by position: taken away as soon as
      * the player is out, as the pocket they stand in may be closed again after; and whether the walk under way is one.
@@ -1076,6 +1090,12 @@ public final class SchematicBuilder {
         outSince = -1;
         pocketPlaces.clear();
         pairNext = null;
+        unblocking.clear();
+        unblocks.clear();
+        unblockWalks.clear();
+        unblockSearched.clear();
+        noStand = List.of();
+        standSearched.clear();
         escapeHelpers.clear();
         escapeWalk = false;
         escapeWalks.clear();
@@ -1257,6 +1277,11 @@ public final class SchematicBuilder {
             holdSince = -1;
         }
         int heldNumber = 0;
+        // A block broken to open a look at the one beside it goes in again once that one is in.
+        unblocking.values().removeIf(u -> {
+            BuildPlan.Status stuck = plan.update(level, u.stuck());
+            return stuck != BuildPlan.Status.PENDING && stuck != BuildPlan.Status.UNLOADED || tick - u.since() > 6000;
+        });
         for (Map.Entry<Integer, int[]> entry : plan.layers().entrySet()) {
             number++;
             if (entry.getKey() > heldY) {
@@ -1297,6 +1322,7 @@ public final class SchematicBuilder {
                 }
             }
             if (first == -2) { show("Working out the build order", false); return; }
+            if (first == -1 && unblock(client, player, entry.getValue(), started)) return;
             if (first < 0) continue;
             layer = entry.getValue();
             group = byGroup ? BlockRules.group(plan.target(first)) : 0;
@@ -1363,7 +1389,8 @@ public final class SchematicBuilder {
             BuildPlan.Status st = plan.status(i);
             if (st != BuildPlan.Status.PENDING && st != BuildPlan.Status.UNLOADED) continue;
             // Broken to get out of where the player was shut in: back in once they are out, not to shut them in again.
-            if (brokeOut.contains(i)) continue;
+            // Broken to open a look at a block beside: back in once that one is.
+            if (brokeOut.contains(i) || unblocking.containsKey(i)) continue;
             // Water, lava and kelp wait until every other block of their layer, and of those below, is in.
             if (plan.wetWaits(i)) continue;
             if (byGroup && !inOrder(player, i, group, lift, started)) continue;
@@ -1792,6 +1819,8 @@ public final class SchematicBuilder {
         if (settings().walk && planPit(client, player, candidates, materials, layerNumber, lift)) return;
         if (settings().walk && walkToSpareHelper(client, player)) return;
         if (settings().walk && breakOut(player)) return;
+        // Before the blocks held back go in after all, which may shut the block in for good.
+        if (unblockForStand(client, player)) return;
         if (sealing && !lift) {
             // Every block left in reach of a walk would shut in another: let them go in after all.
             sealsLifted = true;
@@ -1863,7 +1892,7 @@ public final class SchematicBuilder {
     private int firstReady(LocalPlayer player, int[] layer, boolean lift, long started) {
         for (int i : layer) {
             // Broken to get out of a pocket: its layer is done for now, and the build goes on with the next.
-            if (plan.wetWaits(i) || brokeOut.contains(i)) continue;
+            if (plan.wetWaits(i) || brokeOut.contains(i) || unblocking.containsKey(i)) continue;
             BuildPlan.Status st = plan.status(i);
             if (st == BuildPlan.Status.PENDING) st = plan.update(player.level(), i);
             if (st == BuildPlan.Status.PENDING) {
@@ -2350,7 +2379,7 @@ public final class SchematicBuilder {
             int i = plan.indexOf(at);
             if (i < 0 || plan.status(i) != BuildPlan.Status.DONE || plan.kind(i) != BlockRules.Kind.PLACE || at.equals(start.floor())) continue;
             BlockState state = level.getBlockState(at);
-            if (BlockRules.group(state) != 0 || BlockRules.wet(state) || !BlockRules.dropsItself(state) || !getsBack(player, state)
+            if (BlockRules.group(state) != 0 || BlockRules.wet(state) || !spares(player, state, BlockRules.item(plan.target(i)))
                     || state.getDestroySpeed(level, at) < 0 || level.getBlockEntity(at) != null) continue;
             // Shut in a flooded tunnel, every block round it has water beside it: the water runs into the opening, and
             // stops once the block goes in again.
@@ -3909,6 +3938,212 @@ public final class SchematicBuilder {
     /** How often a block that came back set another way is broken and placed again before it is left so. */
     private static final int REPAIRS = 2;
 
+    /** How often a block no look reaches has a block round it broken to open one. */
+    private static final int UNBLOCKS = 2;
+
+    /**
+     * A block of {@code layer} still to go in that no look reaches, while nothing else of the layer can go in either, as
+     * an up-facing observer once the ice beside it went in first: one of the build's own blocks round it, whose absence
+     * opens a look at it, is broken (see {@link #takeOut}). Twice at most for each stuck block.
+     */
+    private boolean unblock(Minecraft client, LocalPlayer player, int[] layer, long started) {
+        Level level = player.level();
+        for (int i : layer) {
+            if (System.nanoTime() - started > PLAN_NANOS) return false;
+            if (!mayUnblock(player, i)) continue;
+            long stamp = BuildPlan.stamp(level, plan.pos(i));
+            if (plan.support(i, stamp) != 2 || unblockSearched.getOrDefault(i, 0L) == stamp) continue;
+            BlockState target = plan.target(i);
+            ItemStack stack = new ItemStack(BlockRules.item(target));
+            LongPredicate notThere = a -> unclickable(a, i);
+            BlockPos blocker = blocker(player, i, open -> PlacementSolver.supported(player, open, plan.pos(i), target, stack, notThere)
+                    || PlacementSolver.supportedFinely(player, open, plan.pos(i), target, stack, notThere));
+            if (blocker != null && takeOut(client, player, i, blocker)) return true;
+            unblockSearched.put(i, stamp);
+        }
+        return false;
+    }
+
+    /** How many blocks round a stuck one {@link #blocker} weighs at most. */
+    private static final int BLOCKER_CHECKS = 6;
+
+    /** How many of the blocks {@link #planWalk} last found no place to stand for {@link #unblockForStand} weighs. */
+    private static final int UNBLOCK_STAND_CHECKS = 2;
+
+    /**
+     * Blocks {@link #planWalk} found no place to stand for, though somewhere a look at each seems to be, as an up-facing
+     * observer is once the ice beside it shuts the looks from below that a walk could reach: when not even a search that
+     * goes by nothing but the look finds a place, one of the build's own blocks round it is broken, one whose absence
+     * gives such a place (see {@link #takeOut}). Each search is made again a minute later at the soonest.
+     */
+    private boolean unblockForStand(Minecraft client, LocalPlayer player) {
+        Level level = player.level();
+        for (int i : noStand.subList(0, Math.min(UNBLOCK_STAND_CHECKS, noStand.size()))) {
+            if (!mayUnblock(player, i) || tick - standSearched.getOrDefault(i, -100_000L) < 1200) continue;
+            standSearched.put(i, tick);
+            String name = plan.target(i).getBlock().getName().getString();
+            if (debug()) LOGGER.info("No walk to a look at {} at {}: weighing a block round it to break, from {}, a drop off the build of {} at most",
+                    name, plan.pos(i).toShortString(), Navigator.standingAt(level, player), farDrop(player));
+            // A place there is after all: the walk found none for what it leaves out, places tried before and the like.
+            Navigator.Path there = standWithLook(player, level, i);
+            if (there != null) {
+                if (debug()) LOGGER.info("No walk to a look at {} at {}, yet one goes by the look alone, to {}: nothing broken for it",
+                        name, plan.pos(i).toShortString(), there.end());
+                continue;
+            }
+            BlockPos blocker = blocker(player, i, open -> standWithLook(player, open, i) != null);
+            if (blocker == null) {
+                if (debug()) LOGGER.info("No place to stand with a look at {} at {}, and no block round it to break gives one", name,
+                        plan.pos(i).toShortString());
+                continue;
+            }
+            if (takeOut(client, player, i, blocker)) return true;
+            if (debug()) LOGGER.info("Breaking {} at {} would give a place to stand with a look at {} at {}, but it can't be reached",
+                    plan.target(plan.indexOf(blocker)), blocker.toShortString(), name, plan.pos(i).toShortString());
+        }
+        return false;
+    }
+
+    /** A walk in {@code view} to a place to stand with a look that places block {@code i}, or null. */
+    private Navigator.Path standWithLook(LocalPlayer player, BlockGetter view, int i) {
+        BlockPos pos = plan.pos(i);
+        BlockState target = plan.target(i);
+        ItemStack stack = new ItemStack(BlockRules.item(target));
+        double reach = player.blockInteractionRange() - 0.2;
+        AABB cell = new AABB(pos);
+        LongPredicate notThere = a -> unclickable(a, i);
+        // For the log: places reached, those in reach, and those in reach with the eye under the block, the few nearest.
+        int[] seen = new int[3];
+        List<Navigator.Node> under = new ArrayList<>();
+        Navigator.Goal goal = node -> {
+            seen[0]++;
+            if (cell.distanceToSqr(node.eye()) > (reach + 0.5) * (reach + 0.5)) return 0;
+            seen[1]++;
+            if (node.eye().y < pos.getY()) {
+                seen[2]++;
+                if (under.size() < 6) under.add(node);
+            }
+            return PlacementSolver.fromSpot(player, view, node.standing(), pos, target, stack, reach, notThere) != null ? 1 : 0;
+        };
+        Navigator.Path path = offTheTop(player, view).climbUpTo(layerY + 2.5).find(Navigator.standingAt(view, player), goal);
+        if (debug()) {
+            LOGGER.info("  look-alone search for {} at {}{}: {} places reached, {} in reach, {} of them with the eye under it{}{}",
+                    target.getBlock().getName().getString(), pos.toShortString(), view instanceof Overlay ? " with a block taken out" : "",
+                    seen[0], seen[1], seen[2], under.isEmpty() ? "" : ", such as " + under, path == null ? "" : ", found " + path.end());
+        }
+        return path;
+    }
+
+    /**
+     * A navigator for walks round a stuck block: one that may drop off the top of the build onto the ground round it, as
+     * {@link #planWalk} does once nothing else is found, for the looks from below the build's top has none of.
+     */
+    private Navigator offTheTop(LocalPlayer player, BlockGetter view) {
+        Navigator navigator = navigator(player, view, true);
+        double down = farDrop(player);
+        return down > 0 ? navigator.dropsOff(down, plan.bounds) : navigator;
+    }
+
+    /**
+     * Whether block {@code i} is one {@link #unblock} or {@link #unblockForStand} may break a block round: only one facing
+     * up, whose look from below the blocks round it can shut for good. Others with no look wait for something, as kelp
+     * waits for its water, and get one later.
+     */
+    private boolean mayUnblock(LocalPlayer player, int i) {
+        if (!BlockRules.facesUp(plan.target(i))) return false;
+        if (plan.kind(i) != BlockRules.Kind.PLACE || plan.status(i) != BuildPlan.Status.PENDING || brokeOut.contains(i)
+                || unblocking.containsKey(i) || unblocks.getOrDefault(i, 0) >= UNBLOCKS) return false;
+        if (unblocking.values().stream().anyMatch(u -> u.stuck() == i)) return false;
+        return BlockRules.item(plan.target(i)) != null && player.level().getBlockState(plan.pos(i)).canBeReplaced();
+    }
+
+    /**
+     * Of the build's own blocks round block {@code i}, the quickest to break of those whose absence {@code opens} says
+     * lets it go in, and that can go in again after, with it in: or null. Only a block breaking costs nothing (see
+     * {@link #spares}), that lets nothing loose, and that the player doesn't stand on or in.
+     */
+    private BlockPos blocker(LocalPlayer player, int i, Predicate<BlockGetter> opens) {
+        Level level = player.level();
+        BlockPos pos = plan.pos(i);
+        BlockState target = plan.target(i);
+        Vec3 eye = player.getEyePosition();
+        Navigator.Node standing = Navigator.standingAt(level, player);
+        List<BlockPos> around = new ArrayList<>();
+        for (BlockPos at : BlockPos.betweenClosed(pos.offset(-1, -1, -1), pos.offset(1, 1, 1))) {
+            int j = plan.indexOf(at);
+            if (j < 0 || j == i || plan.status(j) != BuildPlan.Status.DONE || plan.kind(j) != BlockRules.Kind.PLACE) continue;
+            if (at.equals(standing.floor()) || player.getBoundingBox().intersects(new AABB(at))) continue;
+            // One facing up goes in again only with a look up from below, as shut as the stuck block's own may be; and the
+            // one under the stuck block holds up what is under that, up-facers in a column.
+            if (BlockRules.facesUp(plan.target(j)) || at.equals(pos.below())) continue;
+            // Only one that goes in the same whichever face is clicked, with any look: glass, ice, a full block.
+            if (!BlockRules.placementMatches(plan.target(j).getBlock().defaultBlockState(), plan.target(j))) continue;
+            BlockState state = level.getBlockState(at);
+            if (BlockRules.group(state) != 0 || BlockRules.wet(state) || state.getDestroySpeed(level, at) < 0
+                    || level.getBlockEntity(at) != null || BlockRules.item(plan.target(j)) == null
+                    || !spares(player, state, BlockRules.item(plan.target(j))) || !safeToBreak(level, at, 0)) continue;
+            around.add(at.immutable());
+        }
+        if (debug()) LOGGER.info("Blocks round {} at {} that may be broken for it: {}", target.getBlock().getName().getString(),
+                pos.toShortString(), around.stream().map(BlockPos::toShortString).toList());
+        around.sort(Comparator.comparingDouble(at -> breakTicks(player, level, at) + new AABB(at).distanceToSqr(eye)));
+        // The quickest few: each test may be a whole walk search.
+        for (BlockPos at : around.subList(0, Math.min(BLOCKER_CHECKS, around.size()))) {
+            if (debug()) LOGGER.info("  weighing {} at {} taken out", level.getBlockState(at).getBlock().getName().getString(), at.toShortString());
+            if (!opens.test(new Overlay(level, Map.of(at.asLong(), Blocks.AIR.defaultBlockState())))) continue;
+            // And it goes in again after, with the stuck block in: a face beside it to click and an open side to click it
+            // from. PlacementSolver can't tell more of a spot the block still stands in, the click's checks reading the
+            // world as it is; only a block that goes in the same whichever face is clicked is taken out, so that will do.
+            Overlay after = new Overlay(level, Map.of(at.asLong(), Blocks.AIR.defaultBlockState(), pos.asLong(), target));
+            boolean face = false, open = false;
+            for (Direction side : Direction.values()) {
+                BlockState beside = after.getBlockState(at.relative(side));
+                if (beside.canBeReplaced()) open = true;
+                else face = true;
+            }
+            if (debug() && !(face && open)) LOGGER.info("  {} at {} would have no face beside it or no open side to go in again",
+                    plan.target(plan.indexOf(at)).getBlock().getName().getString(), at.toShortString());
+            if (face && open) return at;
+        }
+        return null;
+    }
+
+    /**
+     * Breaks {@code blocker}, one of the build's own blocks, for stuck block {@code i}; it waits until that block is in,
+     * as a player takes out a block put in too soon. A walk brings it into view when it is out of reach, {@link #REPAIRS}
+     * times at most. False when neither can be done.
+     */
+    private boolean takeOut(Minecraft client, LocalPlayer player, int i, BlockPos blocker) {
+        double reach = player.blockInteractionRange() - 0.25;
+        Vec3 eye = player.getEyePosition();
+        int j = plan.indexOf(blocker);
+        BlockPos pos = plan.pos(i);
+        String name = plan.target(i).getBlock().getName().getString();
+        if (!missedMining(player, blocker) && inView(player, eye, blocker, reach)) {
+            if (debug()) LOGGER.info("No look reaches {} at {}: breaking {} at {}, the build's own, to open one; it goes in again after",
+                    name, pos.toShortString(), plan.target(j), blocker.toShortString());
+            unblocks.merge(i, 1, Integer::sum);
+            unblocking.put(j, new Unblock(i, tick));
+            if (!player.hasInfiniteMaterials()) repairDrops.add(BlockRules.item(plan.target(j)));
+            startBreak(blocker);
+            repairing = j;
+            return true;
+        }
+        if (!settings().walk || unblockWalks.getOrDefault(i, 0) >= REPAIRS) return false;
+        unblockWalks.merge(i, 1, Integer::sum);
+        Navigator.Path path = offTheTop(player, player.level()).find(Navigator.standingAt(player.level(), player),
+                node -> inView(player, node.eye(), blocker, reach) ? 1 : 0);
+        if (path == null || path.nodes().size() < 2 || dropsIntoTrap(player, path)) return false;
+        if (!climbReady(client, player, path)) return true;
+        releaseKeys(client);
+        walker.start(path.nodes(), Vec3.atCenterOf(blocker));
+        show("Walking to " + plan.target(j).getBlock().getName().getString() + " at " + blocker.getX() + " " + blocker.getY() + " "
+                + blocker.getZ() + " to take it out for the " + name + " beside it", false);
+        if (debug()) LOGGER.info("Walking {} steps to break {} at {}, which takes every look at {} at {}", path.nodes().size() - 1,
+                plan.target(j), blocker.toShortString(), name, pos.toShortString());
+        return true;
+    }
+
     /**
      * A block this build placed that the server set another way than the click was for, an observer facing down rather
      * than east say, is broken and placed again, as a player fixes a block put in wrong: from where the player stands, with
@@ -3927,7 +4162,7 @@ public final class SchematicBuilder {
             if (new AABB(pos).distanceToSqr(eye) > reach * reach || plan.update(level, i) != BuildPlan.Status.MISPLACED) continue;
             BlockState state = level.getBlockState(pos);
             Item item = BlockRules.item(plan.target(i));
-            if (item == null || !getsBack(player, state) || !safeToBreak(level, pos, tick - entry.getValue())) continue;
+            if (item == null || !spares(player, state, item) || !safeToBreak(level, pos, tick - entry.getValue())) continue;
             if (!inView(player, eye, pos, reach)) continue;
             repairs.merge(i, 1, Integer::sum);
             if (!player.hasInfiniteMaterials()) repairDrops.add(item);
@@ -3956,7 +4191,7 @@ public final class SchematicBuilder {
             if (plan.status(i) != BuildPlan.Status.MISPLACED || repairs.getOrDefault(i, 0) >= REPAIRS
                     || repairWalks.getOrDefault(i, 0) >= REPAIRS || plan.pos(i).getY() > layerY) continue;
             BlockPos pos = plan.pos(i);
-            if (plan.update(level, i) != BuildPlan.Status.MISPLACED || !getsBack(player, level.getBlockState(pos))
+            if (plan.update(level, i) != BuildPlan.Status.MISPLACED || !spares(player, level.getBlockState(pos), BlockRules.item(plan.target(i)))
                     || !safeToBreak(level, pos, tick - entry.getValue())) continue;
             double away = Vec3.atCenterOf(pos).distanceToSqr(eye);
             if (away < nearest) {
@@ -3977,6 +4212,25 @@ public final class SchematicBuilder {
                 + pos.getZ() + " to place it again", false);
         if (debug()) LOGGER.info("Walking {} steps to place {} at {} again", path.nodes().size() - 1, plan.target(best), pos.toShortString());
         return true;
+    }
+
+    /**
+     * Whether breaking the block costs the build nothing: it gives its own {@code item} back, with a tool that gets it,
+     * glass and ice only with silk touch; or the inventory has enough of the item for every block still to go in and
+     * this one again.
+     */
+    private boolean spares(LocalPlayer player, BlockState state, Item item) {
+        if (player.hasInfiniteMaterials()) return true;
+        if (!getsBack(player, state)) return false;
+        if (BlockRules.dropsItself(state) || silkTouchAtHand(player)) return true;
+        return item != null && Materials.of(player.getInventory()).total(item) > plan.needs().getOrDefault(item, 0);
+    }
+
+    /** Whether the inventory has a tool with silk touch, which {@link #holdTool} takes for a block that needs it. */
+    private static boolean silkTouchAtHand(LocalPlayer player) {
+        Inventory inventory = player.getInventory();
+        for (int slot = 0; slot < Materials.SLOTS; slot++) if (BlockRules.silkTouch(inventory.getItem(slot))) return true;
+        return false;
     }
 
     /** Whether breaking the block gives its item back: it needs no tool for that, or the inventory has one that does. */
@@ -4461,6 +4715,7 @@ public final class SchematicBuilder {
                 }
             }
         }
+        noStand = path == null ? List.copyOf(near) : List.of();
         if (path == null) {
             long now = System.nanoTime();
             failedWalkKey[kind] = searchKey;
@@ -5685,7 +5940,8 @@ public final class SchematicBuilder {
     }
 
     /**
-     * Takes the best tool for a block in hand: one it drops its item for, the fastest of those, else an empty hand.
+     * Takes the best tool for a block in hand: one it drops its item for, glass or ice one with silk touch, the fastest
+     * of those, else an empty hand.
      * True once it is in hand; false while it is moved into the hotbar from the inventory, to come back to.
      */
     private boolean holdTool(Minecraft client, LocalPlayer player, BlockState state) {
@@ -5712,7 +5968,8 @@ public final class SchematicBuilder {
 
     private static double toolScore(ItemStack stack, BlockState state) {
         boolean drops = !state.requiresCorrectToolForDrops() || stack.isCorrectToolForDrops(state);
-        return (drops ? 1000 : 0) + (stack.isEmpty() ? 1 : stack.getDestroySpeed(state));
+        boolean itself = drops && !BlockRules.dropsItself(state) && BlockRules.silkTouch(stack);
+        return (drops ? 1000 : 0) + (itself ? 500 : 0) + (stack.isEmpty() ? 1 : stack.getDestroySpeed(state));
     }
 
     // Shulker boxes ------------------------------------------------------------------------------------------------
