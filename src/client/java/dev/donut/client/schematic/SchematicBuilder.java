@@ -7350,6 +7350,7 @@ public final class SchematicBuilder {
                         LOGGER.info("No room for {}: {} slots free in the box; carried:{}", name(restockItem), boxFree, carried);
                     }
                     LOGGER.info("Took what the next layers need out of the shulker box");
+                    if (debug()) logBoxes(menu, player);
                     player.closeContainer();
                     startBreaking();
                     return;
@@ -7888,6 +7889,27 @@ public final class SchematicBuilder {
             }
         }
         return -1;
+    }
+
+    /**
+     * For the debug log: how full the box closed is, and the boxes carried, those empty among them and the stacks they
+     * hold in all, to see how many slots boxes take that hold nothing any more.
+     */
+    private void logBoxes(ShulkerBoxMenu menu, LocalPlayer player) {
+        int kept = 0;
+        for (int slot = 0; slot < 27; slot++) if (!menu.getSlot(slot).getItem().isEmpty()) kept++;
+        int boxes = 0, empty = 0, stacks = 0;
+        for (int slot = 0; slot < Materials.SLOTS; slot++) {
+            ItemStack stack = player.getInventory().getItem(slot);
+            if (!Materials.isShulkerBox(stack)) continue;
+            boxes++;
+            int inside = 0;
+            for (ItemStack held : Materials.contents(stack)) if (!held.isEmpty()) inside++;
+            if (inside == 0) empty++;
+            stacks += inside;
+        }
+        LOGGER.info("Box closed with {} of 27 slots full; {} boxes carried besides, {} of them empty, {} stacks in them",
+                kept, boxes, empty, stacks);
     }
 
     private static int shulkerCount(Inventory inventory) {
