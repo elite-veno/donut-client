@@ -318,7 +318,11 @@ final class Walker {
         boolean fallLanding = (to.move() == Navigator.Move.DROP || to.move() == Navigator.Move.WALK && to.feet() < from.feet() - 0.05)
                 && (onTop && within(at, to) || !player.onGround() && at.y < from.feet() - 0.05 && distance < 1.2)
                 && Navigator.besideFall(player.level(), to);
-        boolean crouchHere = rail || wary || last && onTop && narrow && within(at, to) || easing || fallLanding;
+        // Never in water: crouched, the keys move the player at a third, and a current running past wins over that, pinning
+        // them against a wall short of the spot (v4-full7, 20:48:39: crouched in the kelp channel, the water from the
+        // sources beside pushing north against the dispensers, held at z 4.30 of 4.50). Nor does the sneak edge hold anyone
+        // in water.
+        boolean crouchHere = !player.isInWater() && (rail || wary || last && onTop && narrow && within(at, to) || easing || fallLanding);
         if (!bridgeCrouch && crouchHere != edgeCrouch && (crouchHere || player.onGround())) {
             climb.crouch(crouchHere);
             edgeCrouch = crouchHere;
