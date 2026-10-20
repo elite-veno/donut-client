@@ -1834,14 +1834,24 @@ public final class SchematicBuilder {
                 return;
             }
             // A walk's helper block beside it in a spot the build shuts in: taken away first if it can be from here, as this
-            // block may be the one that closes the spot over it.
+            // block may be the one that closes the spot over it. So too its own helper block when it goes in against something
+            // else after all, a neighbour put in since: unused, and once this block covers it, walled in by the build round it
+            // it is out of reach of everything but a look from under it, cleanup too.
+            BlockPos clicked = result.click().hit().getBlockPos();
             for (Direction side : Direction.values()) {
                 BlockPos beside = pos.relative(side);
                 Helper helper = helpers.get(beside.asLong());
-                if (helper == null || helper.serves() >= 0 || escapeHelpers.contains(beside.asLong()) || !plan.enclosed(beside)) continue;
-                if (!reclaimable(player, beside, player.blockInteractionRange() - 0.25)) continue;
-                if (debug()) LOGGER.info("{} at {} waits: first taking away the helper block at {}, which the build shuts in",
-                        target, pos.toShortString(), beside.toShortString());
+                if (helper == null || escapeHelpers.contains(beside.asLong())) continue;
+                boolean unused = helper.serves() == i && !beside.equals(clicked);
+                double helperReach = player.blockInteractionRange() - 0.25;
+                if (unused) {
+                    // Wherever its drop falls: it comes away now or never.
+                    if (helpers.containsKey(beside.above().asLong()) || Navigator.standingAt(client.level, player).floor().equals(beside)
+                            || missedMining(player, beside) || !inView(player, player.getEyePosition(), beside, helperReach)
+                            || !safeToBreak(player, beside)) continue;
+                } else if (helper.serves() >= 0 || !plan.enclosed(beside) || !reclaimable(player, beside, helperReach)) continue;
+                if (debug()) LOGGER.info("{} at {} waits: first taking away the helper block at {}, {}", target, pos.toShortString(),
+                        beside.toShortString(), unused ? "which it goes in without" : "which the build shuts in");
                 startBreak(beside);
                 return;
             }
