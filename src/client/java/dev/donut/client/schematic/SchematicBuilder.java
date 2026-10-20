@@ -1017,6 +1017,7 @@ public final class SchematicBuilder {
         noBoxSpot.clear();
         restock = Restock.NONE;
         restockAfterWalk = null;
+        aheadLayer.clear();
         restockWalks = 0;
         restockSwaps = 0;
         aim = null;
@@ -5858,6 +5859,15 @@ public final class SchematicBuilder {
                     restockFailures = 0;
                     paceAfterHands(delay());
                     show("Took " + name(restockItem) + " out of a shulker box", false);
+                    // Where a box just went in, the next one does too: blocks of the layer in other boxes, none of them
+                    // carried, come out now. Up on the build there may be no room for a box at all, and every walk made
+                    // there for them comes to nothing.
+                    Item ahead = restockAhead(player, Materials.of(player.getInventory()));
+                    if (ahead != null) {
+                        aheadLayer.put(ahead, layerY);
+                        restockAfterWalk = ahead;
+                        if (debug()) LOGGER.info("Taking {} out of a shulker box too, while there is room for one here", name(ahead));
+                    }
                     return;
                 }
                 // A box that rolled, slid or fell out of reach is walked to for as long as it can be seen: along a way
@@ -5999,6 +6009,29 @@ public final class SchematicBuilder {
                 ? HELPER_STACKS * restockItem.getDefaultMaxStackSize() : 1, Math::max);
         return needs;
     }
+
+    /**
+     * The item to take out of another shulker box straight after one: the layer still takes it, none is carried, a box
+     * holds some and there is a slot for it. The one the layer takes most of; each once a layer, so a box that gives
+     * none can't be opened over and over. Null when there is none.
+     */
+    private Item restockAhead(LocalPlayer player, Materials carried) {
+        if (player.hasInfiniteMaterials() || !settings().useShulkers || carried.freeSlots() < 1) return null;
+        Item best = null;
+        int most = 0;
+        for (Map.Entry<Item, Integer> need : needsUpTo(player.level(), layerY).entrySet()) {
+            Item item = need.getKey();
+            if (need.getValue() <= most || helperItems.contains(item) || carried.loose(item) > 0 || carried.total(item) == 0) continue;
+            if (Integer.valueOf(layerY).equals(aheadLayer.get(item)) || noRoomFor.containsKey(item)) continue;
+            if (Materials.shulkerWith(player.getInventory(), item) < 0) continue;
+            best = item;
+            most = need.getValue();
+        }
+        return best;
+    }
+
+    /** The layer each item was last taken out of a box ahead for, by {@link #restockAhead}. */
+    private final Map<Item, Integer> aheadLayer = new HashMap<>();
 
     /** What the layers up to height {@code top} still take, by item: the layer being built and those below it still waiting, at the least. */
     private Map<Item, Integer> needsUpTo(Level level, int top) {
