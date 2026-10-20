@@ -42,6 +42,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.tags.FluidTags;
+import net.minecraft.tags.TagKey;
 import net.minecraft.util.Mth;
 import net.minecraft.world.Container;
 import net.minecraft.world.InteractionHand;
@@ -213,7 +214,7 @@ public final class SchematicBuilder {
     private final List<Item> missing = new ArrayList<>();
 
     /** What a click is for. */
-    private enum Act { PLACE, POUR, ADJUST, HELPER, REFILL, FILL_BUCKET }
+    private enum Act { PLACE, POUR, ADJUST, HELPER, REFILL, FILL_BUCKET, TILL }
 
     /**
      * A click being lined up: the camera turns to it, rests, and the click goes out once the crosshair is on the same
@@ -1605,6 +1606,24 @@ public final class SchematicBuilder {
                 startAim(client, player, new Aim(Act.POUR, i, pour, bucket, pos, current, layerNumber));
                 return;
             }
+            if (BlockRules.needsTool(current, target)) {
+                // Placed as dirt: tilled into farmland with a hoe, or made a path with a shovel, as a player makes them.
+                if (edge) continue;
+                Item tool = carriedTool(player, target);
+                if (tool == null) {
+                    Item wanted = target.is(Blocks.FARMLAND) ? Items.WOODEN_HOE : Items.WOODEN_SHOVEL;
+                    if (!missing.contains(wanted)) missing.add(wanted);
+                    continue;
+                }
+                PlacementSolver.Click till = PlacementSolver.till(player, eye, pos, reach);
+                if (till == null) {
+                    if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
+                    noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH);
+                    continue;
+                }
+                startAim(client, player, new Aim(Act.TILL, i, till, tool, pos, current, layerNumber));
+                return;
+            }
             if (current.getBlock() == target.getBlock() && BlockRules.missing(current, target) == 0) {
                 // A chest waiting for its other half needs nothing; clicking it would only open it.
                 if (BlockRules.adjustClicks(current, target) == 0 || edge) continue;
@@ -2932,6 +2951,11 @@ public final class SchematicBuilder {
                 plan.tried(i, planned.before());
                 paceAfterClick(quick());
                 show(layer + "setting " + planned.before().getBlock().getName().getString(), false);
+            }
+            case TILL -> {
+                plan.tried(i, planned.before());
+                paceAfterClick(quick());
+                show(layer + "making " + plan.target(i).getBlock().getName().getString(), false);
             }
             case PLACE, POUR -> {
                 if (plan.target(i).getBlock() instanceof SignBlock) {
@@ -4442,6 +4466,9 @@ public final class SchematicBuilder {
         if (plan.soaking(i) && !BlockRules.fillsInPlace(current)) return inView(player, eye, pos, reach - 0.25) ? 2 : 0;
         if (plan.soaking(i)) return !floods(level, pos, feet) && PlacementSolver.fill(player, eye, pos, reach) != null ? 2 : 0;
         if (plan.needsPour(i)) return !floods(level, pos, feet) && PlacementSolver.pour(level, player, eye, pos, Fluids.WATER, reach) != null ? 2 : 0;
+        if (BlockRules.needsTool(current, target)) {
+            return carriedTool(player, target) != null && PlacementSolver.till(player, eye, pos, reach) != null ? 2 : 0;
+        }
         if (current.getBlock() == target.getBlock() && BlockRules.missing(current, target) == 0) {
             // Already in as it should be, with a status not yet read again: worth a walk only when a click still sets something.
             return BlockRules.adjustClicks(current, target) > 0 && PlacementSolver.use(player, eye, pos, reach, target) != null ? 2 : 0;
@@ -5398,6 +5425,18 @@ public final class SchematicBuilder {
      * the inventory is moved into the hotbar first, which takes a few ticks with the inventory open: false then, with
      * the move under way.
      */
+    /** A hoe or shovel carried that makes {@code target} out of dirt, or null; any, in creative. */
+    private static Item carriedTool(LocalPlayer player, BlockState target) {
+        TagKey<Item> tools = BlockRules.tool(target);
+        Inventory inventory = player.getInventory();
+        for (int slot = 0; slot < Materials.SLOTS; slot++) {
+            ItemStack stack = inventory.getItem(slot);
+            if (stack.is(tools)) return stack.getItem();
+        }
+        if (!player.hasInfiniteMaterials()) return null;
+        return target.is(Blocks.FARMLAND) ? Items.IRON_HOE : Items.IRON_SHOVEL;
+    }
+
     private boolean holdInHand(Minecraft client, LocalPlayer player, Item item) {
         if (selectInHotbar(player, item)) return true;
         Inventory inventory = player.getInventory();

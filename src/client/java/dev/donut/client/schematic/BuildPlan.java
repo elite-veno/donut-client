@@ -409,6 +409,10 @@ public final class BuildPlan {
             if (failed[i]) return Status.FAILED;
             return current.canBeReplaced() ? Status.PENDING : Status.WRONG;
         }
+        if (BlockRules.needsTool(current, target)) {
+            // In as the dirt it is made from: the hoe or the shovel is still to be used on it.
+            return failed[i] ? Status.FAILED : Status.PENDING;
+        }
         if (BlockRules.loneHalf(current, target)) {
             // Half of a double chest standing alone: not done until the other half joins it. With the other half
             // there alone as well, the two never join by themselves: one goes again, to be placed against the other.

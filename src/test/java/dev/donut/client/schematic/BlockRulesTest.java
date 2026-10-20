@@ -32,6 +32,31 @@ class BlockRulesTest {
         Bootstrap.bootStrap();
     }
 
+    @Test
+    void farmlandAndPathsArePlacedAsDirtAndMadeWithATool() {
+        BlockState farmland = Blocks.FARMLAND.defaultBlockState(), path = Blocks.DIRT_PATH.defaultBlockState();
+        BlockState dirt = Blocks.DIRT.defaultBlockState();
+        assertEquals(BlockRules.Kind.PLACE, BlockRules.kind(farmland));
+        assertEquals(Items.DIRT, BlockRules.item(farmland));
+        assertEquals(Items.DIRT, BlockRules.item(path));
+        assertTrue(BlockRules.needsTool(dirt, farmland));
+        assertTrue(BlockRules.needsTool(dirt, path));
+        assertFalse(BlockRules.needsTool(farmland, farmland));
+        assertFalse(BlockRules.satisfied(dirt, farmland), "dirt is not farmland yet");
+        assertEquals(net.minecraft.tags.ItemTags.HOES, BlockRules.tool(farmland));
+        assertEquals(net.minecraft.tags.ItemTags.SHOVELS, BlockRules.tool(path));
+    }
+
+    @Test
+    void stemsBentToTheirFruitArePlantedAsStems() {
+        BlockState attached = Blocks.ATTACHED_PUMPKIN_STEM.defaultBlockState();
+        assertEquals(BlockRules.Kind.PLACE, BlockRules.kind(attached));
+        assertEquals(Items.PUMPKIN_SEEDS, BlockRules.item(attached));
+        assertEquals(Items.MELON_SEEDS, BlockRules.item(Blocks.ATTACHED_MELON_STEM.defaultBlockState()));
+        assertTrue(BlockRules.satisfied(Blocks.PUMPKIN_STEM.defaultBlockState(), attached), "a stem there will bend to its fruit");
+        assertTrue(BlockRules.satisfied(attached, Blocks.PUMPKIN_STEM.defaultBlockState()));
+    }
+
     private static BlockState repeater(Direction facing, int delay) {
         return Blocks.REPEATER.defaultBlockState().setValue(BlockStateProperties.HORIZONTAL_FACING, facing)
                 .setValue(BlockStateProperties.DELAY, delay);

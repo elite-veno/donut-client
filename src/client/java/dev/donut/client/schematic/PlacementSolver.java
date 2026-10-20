@@ -252,7 +252,15 @@ public final class PlacementSolver {
      */
     public static Click use(LocalPlayer player, Vec3 eye, BlockPos pos, double reach, BlockState target) {
         Direction keep = target.getBlock() instanceof FenceGateBlock ? target.getValue(FenceGateBlock.FACING) : null;
-        return onBlock(player, eye, pos, reach, keep, false);
+        return onBlock(player, eye, pos, reach, keep, false, false);
+    }
+
+    /**
+     * How to use a hoe or a shovel on the dirt at {@code pos}: the nearest spot in view on any face but its bottom, which
+     * neither tool works on.
+     */
+    public static Click till(LocalPlayer player, Vec3 eye, BlockPos pos, double reach) {
+        return onBlock(player, eye, pos, reach, null, false, true);
     }
 
     /**
@@ -261,11 +269,15 @@ public final class PlacementSolver {
      * its trace meets it, whichever face that is. It is clicked standing: crouched, the bucket pours in front of it.
      */
     public static Click fill(LocalPlayer player, Vec3 eye, BlockPos pos, double reach) {
-        return onBlock(player, eye, pos, reach, null, false);
+        return onBlock(player, eye, pos, reach, null, false, false);
     }
 
-    /** The nearest spot in view on the block at {@code pos}, with no look from the far side of {@code keep}. */
-    private static Click onBlock(LocalPlayer player, Vec3 eye, BlockPos pos, double reach, Direction keep, boolean crouch) {
+    /**
+     * The nearest spot in view on the block at {@code pos}, with no look from the far side of {@code keep}, and none on its
+     * bottom with {@code notBottom}.
+     */
+    private static Click onBlock(LocalPlayer player, Vec3 eye, BlockPos pos, double reach, Direction keep, boolean crouch,
+                                 boolean notBottom) {
         Level level = player.level();
         BlockState state = level.getBlockState(pos);
         VoxelShape shape = state.getShape(level, pos);
@@ -274,6 +286,7 @@ public final class PlacementSolver {
         Click best = null;
         double bestDistance = Double.MAX_VALUE;
         for (Direction face : Direction.values()) {
+            if (notBottom && face == Direction.DOWN) continue;
             for (double a : SPOTS) {
                 for (double b : SPOTS) {
                     long seed = seed(pos, face, a, b);

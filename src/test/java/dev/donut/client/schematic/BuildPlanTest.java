@@ -91,6 +91,17 @@ class BuildPlanTest {
     }
 
     @Test
+    void farmlandPlacedAsDirtWaitsForTheHoe() {
+        Map<BlockPos, BlockState> blocks = new LinkedHashMap<>();
+        BlockPos at = new BlockPos(0, 0, 0);
+        blocks.put(at, Blocks.FARMLAND.defaultBlockState());
+        BuildPlan plan = BuildPlan.of(blocks, true);
+        int i = plan.indexOf(at);
+        assertEquals(BuildPlan.Status.PENDING, plan.update(i, Blocks.DIRT.defaultBlockState()), "dirt is not farmland, nor a wrong block");
+        assertEquals(BuildPlan.Status.DONE, plan.update(i, Blocks.FARMLAND.defaultBlockState().setValue(BlockStateProperties.MOISTURE, 7)));
+    }
+
+    @Test
     void aHalfOfADoubleChestStandingAloneIsNotDone() {
         BlockState left = Blocks.CHEST.defaultBlockState().setValue(net.minecraft.world.level.block.ChestBlock.TYPE,
                 net.minecraft.world.level.block.state.properties.ChestType.LEFT);

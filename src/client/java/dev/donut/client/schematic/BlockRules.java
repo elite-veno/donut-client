@@ -7,6 +7,8 @@ import java.util.Set;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.FrontAndTop;
+import net.minecraft.tags.ItemTags;
+import net.minecraft.tags.TagKey;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
@@ -108,7 +110,15 @@ public final class BlockRules {
 
     /** Stems of growing plants, placed as the plant's tip; the tip turns into stem when the next one goes on it. */
     private static final Map<Block, Block> HEADS = Map.of(Blocks.KELP_PLANT, Blocks.KELP, Blocks.TWISTING_VINES_PLANT,
-            Blocks.TWISTING_VINES, Blocks.WEEPING_VINES_PLANT, Blocks.WEEPING_VINES, Blocks.CAVE_VINES_PLANT, Blocks.CAVE_VINES);
+            Blocks.TWISTING_VINES, Blocks.WEEPING_VINES_PLANT, Blocks.WEEPING_VINES, Blocks.CAVE_VINES_PLANT, Blocks.CAVE_VINES,
+            // A stem that grew a pumpkin or a melon beside it, which has no item: planted as a stem, it bends to its fruit.
+            Blocks.ATTACHED_PUMPKIN_STEM, Blocks.PUMPKIN_STEM, Blocks.ATTACHED_MELON_STEM, Blocks.MELON_STEM);
+
+    /**
+     * Blocks a player makes out of dirt with a tool: farmland tilled with a hoe, a path with a shovel. Placed as dirt,
+     * then the tool is used on its top.
+     */
+    private static final Map<Block, Block> MADE_FROM_DIRT = Map.of(Blocks.FARMLAND, Blocks.DIRT, Blocks.DIRT_PATH, Blocks.DIRT);
 
     private BlockRules() { }
 
@@ -141,8 +151,20 @@ public final class BlockRules {
 
     /** What placing makes first: the tip of a growing plant for its stem, otherwise the target itself. */
     public static BlockState placedAs(BlockState target) {
+        Block from = MADE_FROM_DIRT.get(target.getBlock());
+        if (from != null) return from.defaultBlockState();
         Block head = HEADS.get(target.getBlock());
         return head == null ? target : head.defaultBlockState();
+    }
+
+    /** Whether the world's block is the dirt the target, farmland or a path, is made from with a tool. */
+    public static boolean needsTool(BlockState current, BlockState target) {
+        return MADE_FROM_DIRT.get(target.getBlock()) == current.getBlock();
+    }
+
+    /** The tools that make the target out of dirt: hoes for farmland, shovels for a path. */
+    public static TagKey<Item> tool(BlockState target) {
+        return target.is(Blocks.FARMLAND) ? ItemTags.HOES : ItemTags.SHOVELS;
     }
 
     /** The same block, counting a growing plant's tip and stem as one, since the plant turns one into the other. */
