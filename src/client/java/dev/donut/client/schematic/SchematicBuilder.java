@@ -2423,6 +2423,11 @@ public final class SchematicBuilder {
         if (tick - idleLast > 40) idleSince = tick;
         idleLast = tick;
         if (tick - idleSince < 100) return false;
+        return stepDownNow(player);
+    }
+
+    /** Takes away the helper block underfoot, on top of a pillar of them, to stand a block lower: false when there is none. */
+    private boolean stepDownNow(LocalPlayer player) {
         Level level = player.level();
         BlockPos under = BlockPos.containing(player.getX(), player.getY() - 0.05, player.getZ());
         if (!player.onGround() || !helpers.containsKey(under.asLong())) return false;
@@ -4271,6 +4276,23 @@ public final class SchematicBuilder {
         // Standing more than a couple of blocks over the layer sees nothing more of it.
         double ceiling = layerY + 2.5;
         Navigator.Path path = navigator(player, true).climbUpTo(ceiling).vary(leaning).firmWhen(firm::contains).find(start, goal);
+        if (path == null) {
+            // Up on the build every place to stand is on top of it, where a block that needs a look from below or beside
+            // has none: down off it onto the ground round it, a jump of a few blocks, and from there up beside it, as a
+            // player would. Only once the ways that do no harm found nothing, never down a gap within the build, and on a
+            // pillar of helper blocks only once it has been taken down.
+            double down = farDrop(player);
+            if (down > 0 && stepDownNow(player)) return true;
+            if (down > 0) {
+                path = navigator(player, true).climbUpTo(ceiling).vary(leaning).firmWhen(firm::contains).dropsOff(down, plan.bounds)
+                        .find(start, goal);
+                if (path != null && (path.nodes().size() == 1 || dropsIntoTrap(player, path))) path = null;
+                if (path != null && debug()) {
+                    LOGGER.info("No place to stand from up here: down off the build first, on the way to {} {} {}", path.end().x(),
+                            path.end().feet(), path.end().z());
+                }
+            }
+        }
         if (path == null) {
             long now = System.nanoTime();
             failedWalkKey[kind] = searchKey;
