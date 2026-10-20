@@ -68,6 +68,34 @@ class NavigatorTest {
         assertEquals(Navigator.Move.JUMP, path.end().move());
     }
 
+    /** A 3x3 tower of stone from y 65 to y 69 at x 0..2, z 0..2, with a one-block gap at 1, 65..69, 1 inside it. */
+    private static Map<BlockPos, BlockState> tower() {
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        for (int x = 0; x <= 2; x++) {
+            for (int z = 0; z <= 2; z++) {
+                for (int y = 65; y <= 69; y++) if (x != 1 || z != 1) blocks.put(new BlockPos(x, y, z), Blocks.STONE.defaultBlockState());
+            }
+        }
+        return blocks;
+    }
+
+    @Test
+    void aFarDropOnlyGoesOffTheBuild() {
+        BlockGetter level = world(tower());
+        Navigator.Node start = new Navigator.Node(0, 69, 0, 70, Navigator.Move.START);
+        Navigator.Goal ground = node -> node.feet() < 66 ? 1 : 0;
+        // Five blocks down to the floor round it: too far for a plain drop.
+        assertNull(navigator(level).find(start, ground));
+        AABB build = new AABB(0, 65, 0, 3, 70, 3);
+        Navigator.Path path = navigator(level).dropsOff(6, build).find(start, ground);
+        assertNotNull(path);
+        assertEquals(65, path.end().feet(), 1e-6);
+        assertFalse(path.end().x() >= 0 && path.end().x() <= 2 && path.end().z() >= 0 && path.end().z() <= 2);
+        // Never down the gap within the build, though it is as deep.
+        Navigator.Path gap = navigator(level).dropsOff(6, build).find(start, node -> node.x() == 1 && node.z() == 1 && node.feet() < 66 ? 1 : 0);
+        assertNull(gap);
+    }
+
     @Test
     void walkingOnFlatGroundIsAWalk() {
         Navigator.Node start = new Navigator.Node(0, 64, 0, 65, Navigator.Move.START);

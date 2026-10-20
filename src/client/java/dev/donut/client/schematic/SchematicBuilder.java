@@ -45,6 +45,7 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.Container;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.food.FoodProperties;
@@ -5458,6 +5459,17 @@ public final class SchematicBuilder {
 
     // Shulker boxes ------------------------------------------------------------------------------------------------
 
+    /**
+     * How far down the feet may drop off a build on the way to room for a shulker box: past the safe fall, by the damage
+     * the player can take and still keep most of their health, two hearts at the most; none in creative, where falls
+     * do no harm and the usual drops do.
+     */
+    private static double farDrop(LocalPlayer player) {
+        if (player.hasInfiniteMaterials()) return 0;
+        double damage = Math.floor(Math.min(4, player.getHealth() - 12));
+        return damage < 1 ? 0 : player.getAttributeValue(Attributes.SAFE_FALL_DISTANCE) + damage;
+    }
+
     private void startRestock(Minecraft client, LocalPlayer player, Item item, Materials materials) {
         Inventory inventory = player.getInventory();
         if (!settings().useShulkers) {
@@ -5507,6 +5519,16 @@ public final class SchematicBuilder {
                 Navigator.Path path = navigator(player, false).find(start, roomy);
                 // Shut in by the build on foot, as on top of a pillar among finished blocks: climbing, or down and out.
                 if (path == null && helperItem(player) != null) path = navigator(player, true).find(start, roomy);
+                // Up on a build there is seldom room for a box: with no way down that does no harm, a jump of a few
+                // blocks onto the ground round it, as a player gets down from a build with no stairs.
+                double down = farDrop(player);
+                if (path == null && down > 0) {
+                    path = navigator(player, false).dropsOff(down, plan.bounds).find(start, roomy);
+                    if (path == null && helperItem(player) != null) path = navigator(player, true).dropsOff(down, plan.bounds).find(start, roomy);
+                    if (path != null && debug()) LOGGER.info("No room for a shulker box up here: jumping down off the build to {} {} {}",
+                            path.end().x(), path.end().feet(), path.end().z());
+                }
+                if (path != null && dropsIntoTrap(player, path)) path = null;
                 if (path != null && path.nodes().size() > 1 && restockWalks < 3) {
                     if (!climbReady(client, player, path)) return;
                     releaseKeys(client);

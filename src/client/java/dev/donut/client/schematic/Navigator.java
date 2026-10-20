@@ -69,6 +69,9 @@ public final class Navigator {
     private double climbCeiling = Double.POSITIVE_INFINITY;
     /** The most climbing steps one way may take: each puts down a helper block, and the player carries so many. */
     private int pillars = Integer.MAX_VALUE;
+    /** How far a drop may go down onto ground outside {@link #farDropOff}, past {@link #DROP}; see {@link #dropsOff}. */
+    private double farDrop = 0;
+    private AABB farDropOff;
     /** Whether a way may bridge a gap with a helper block; see {@link #noBridges}. */
     private boolean bridges = true;
     /** Which places the goal scores are a firm find; see {@link #firmWhen}. */
@@ -154,6 +157,17 @@ public final class Navigator {
      * block higher, so a step, or a place and a block's index, came out the same as one a block over and 31 along.
      */
     public static long pairKey(long a, long b) { return a * 0x9E3779B97F4A7C15L + b; }
+
+    /**
+     * Lets a drop go down as far as {@code feet}, past the usual {@link #DROP}, where it lands outside {@code off} seen from
+     * above: off the top of a build onto the open ground round it, as a player jumps down a few blocks when there is no
+     * other way, never into a gap within the build.
+     */
+    public Navigator dropsOff(double feet, AABB off) {
+        farDrop = feet;
+        farDropOff = off;
+        return this;
+    }
 
     /** Looks at no more than {@code nodes} places to stand, for a quick search. */
     public Navigator limit(int nodes) {
@@ -278,7 +292,8 @@ public final class Navigator {
         double cost = switch (to.move()) {
             case WALK -> from.x() != to.x() && from.z() != to.z() ? 1.41 : 1;
             case JUMP -> 2;
-            case DROP -> 1.5 + (from.feet() - to.feet()) * 0.5;
+            // Past the usual drop, each block more costs the player some health: only where nothing else does.
+            case DROP -> 1.5 + (from.feet() - to.feet()) * 0.5 + Math.max(0, from.feet() - to.feet() - DROP) * 6;
             case PILLAR -> 6;
             case BRIDGE -> 8;
             case START -> 0;
@@ -323,12 +338,14 @@ public final class Navigator {
             int nx = from.x() + d[0], nz = from.z() + d[1];
             if (nx < area.minX || nx >= area.maxX || nz < area.minZ || nz >= area.maxZ) continue;
             boolean diagonal = d[0] != 0 && d[1] != 0;
-            for (int ny = from.y() + 2; ny >= from.y() - 4; ny--) {
+            boolean farOff = farDrop > DROP && (nx + 1 <= farDropOff.minX || nx >= farDropOff.maxX || nz + 1 <= farDropOff.minZ || nz >= farDropOff.maxZ);
+            int lowest = from.y() - 4 - (farOff ? (int) Math.ceil(farDrop - DROP) : 0);
+            for (int ny = from.y() + 2; ny >= lowest; ny--) {
                 if (ny < area.minY || ny >= area.maxY) continue;
                 Double feet = standable(nx, ny, nz);
                 if (feet == null) continue;
                 double rise = feet - from.feet();
-                if (rise > JUMP || rise < -DROP) continue;
+                if (rise > JUMP || rise < -(farOff ? farDrop : DROP)) continue;
                 // Into or out of a bowl, as a hopper's or a composter's, the feet get over its rim on the way, higher
                 // than where they rest: a step that looks small can take a jump.
                 double over = Math.max(rise, Math.max(rim(nx, ny, nz), rim(from.x(), from.y(), from.z())) - from.feet());
