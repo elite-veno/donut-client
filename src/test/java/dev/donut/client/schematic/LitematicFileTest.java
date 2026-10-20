@@ -105,6 +105,19 @@ class LitematicFileTest {
     }
 
     @Test
+    void overlappingRegionsGiveOneBlockAPosition() throws IOException {
+        List<CompoundTag> palette = List.of(block("minecraft:air"), block("minecraft:stone"), block("minecraft:dirt"));
+        // Two 2x1x1 regions sharing the cell at x 1: stone in one, dirt in the other.
+        CompoundTag root = LitematicFixture.schematic("overlap", 4700,
+                new LitematicFixture.Region("a", new int[] {0, 0, 0}, new int[] {2, 1, 1}, palette, new int[] {1, 1}),
+                new LitematicFixture.Region("b", new int[] {1, 0, 0}, new int[] {2, 1, 1}, palette, new int[] {2, 2}));
+        Schematic schematic = Schematic.of(LitematicFile.parse(root, "x"), UnaryOperator.identity());
+        assertEquals(3, schematic.size(), "x 0, 1 and 2, the shared cell once");
+        java.util.Set<BlockPos> seen = new java.util.HashSet<>();
+        for (int i = 0; i < schematic.size(); i++) assertTrue(seen.add(schematic.pos(i)), "one block at " + schematic.pos(i));
+    }
+
+    @Test
     void unknownBlocksAreCountedAndLeftOut() throws IOException {
         List<CompoundTag> palette = List.of(block("minecraft:air"), block("minecraft:stone"), block("othermod:widget"));
         CompoundTag root = LitematicFixture.schematic("modded", 4700,

@@ -3,6 +3,7 @@ package dev.donut.client.schematic;
 import com.mojang.datafixers.DataFixer;
 import com.mojang.serialization.Dynamic;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -69,6 +70,9 @@ public final class Schematic {
     static Schematic of(LitematicFile file, java.util.function.UnaryOperator<CompoundTag> update) {
         List<Long> positions = new ArrayList<>();
         List<BlockState> states = new ArrayList<>();
+        // Where each position went in: regions may overlap, and a block of a region read later takes the place of one
+        // before, so that one position has one block, not two the build can never both make.
+        Map<Long, Integer> at = new HashMap<>();
         Map<String, Integer> unknown = new LinkedHashMap<>();
         int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
         int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
@@ -104,7 +108,13 @@ public final class Schematic {
                             continue;
                         }
                         if (state.isAir()) continue;
-                        positions.add(BlockPos.asLong(region.minX() + x, region.minY() + y, region.minZ() + z));
+                        long pos = BlockPos.asLong(region.minX() + x, region.minY() + y, region.minZ() + z);
+                        Integer before = at.putIfAbsent(pos, positions.size());
+                        if (before != null) {
+                            states.set(before, state);
+                            continue;
+                        }
+                        positions.add(pos);
                         states.add(state);
                     }
                 }
