@@ -364,6 +364,8 @@ public final class BuildPlan {
                 int need = kinds[cursor] == BlockRules.Kind.FLUID || bucket ? 1 : BlockRules.itemsNeeded(current, targets[cursor]);
                 // Broken to go in again into water, a block takes a bucket now and itself after.
                 if (needsPour(cursor) && item != null) needsBuilding.merge(item, 1, Integer::sum);
+                // Full of water in the schematic and not in yet: it goes in dry, and its water after it, a bucket.
+                if (!bucket && soak[cursor] && kinds[cursor] == BlockRules.Kind.PLACE) needsBuilding.merge(Items.WATER_BUCKET, 1, Integer::sum);
                 if (bucket) item = Items.WATER_BUCKET;
                 if (item != null && need > 0) needsBuilding.merge(item, need, Integer::sum);
             }

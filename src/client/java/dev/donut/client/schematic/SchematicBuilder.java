@@ -7611,12 +7611,33 @@ public final class SchematicBuilder {
     /** What the layers up to height {@code top} still take, by item: the layer being built and those below it still waiting, at the least. */
     private Map<Item, Integer> needsUpTo(Level level, int top) {
         Map<Item, Integer> needs = new HashMap<>();
-        for (int[] layer : plan.layers().headMap(top, true).values()) {
-            for (int i : layer) {
+        // Up on a layer higher over the ground round the build than a jump down from it reaches, a box may find no room
+        // there, and no way down to room: the top of the slab farm, a glass rim round water channels, nine blocks up. The
+        // water of such a layer, the one being built or the next, comes along with its solid blocks, a bucket a slot: as
+        // many as the inventory has room for past the slots kept free and those the solid blocks still to come out take.
+        // Worked out here alone, so what a box gives and what goes back into one agree.
+        // Measured by the furthest a jump down can go at full health, not now: a layer is too high or it isn't, and what
+        // a box gives and takes back mustn't change as the player is hurt and heals.
+        LocalPlayer player = Minecraft.getInstance().player;
+        double down = player == null ? 0 : player.getAttributeValue(Attributes.SAFE_FALL_DISTANCE) + 4;
+        boolean anyHigh = player != null && !player.hasInfiniteMaterials() && layerY + 2 - plan.bounds.minY > down;
+        int buckets = anyHigh ? bucketRoom(player, level, top) : 0;
+        for (Map.Entry<Integer, int[]> entry : plan.layers().headMap(top, true).entrySet()) {
+            boolean high = anyHigh && entry.getKey() <= layerY + 1 && entry.getKey() + 1 - plan.bounds.minY > down;
+            for (int i : entry.getValue()) {
                 BuildPlan.Status st = plan.status(i);
                 if (st != BuildPlan.Status.PENDING && st != BuildPlan.Status.UNLOADED) continue;
                 // Water and kelp wait for the solid blocks of their layer: their buckets, a slot each, stay in the box till then.
-                if (plan.wetWaits(i)) continue;
+                if (plan.wetWaits(i)) {
+                    if (!high || buckets <= 0 || plan.item(i) != Items.WATER_BUCKET) continue;
+                    buckets--;
+                }
+                // A block full of water in the schematic not in yet takes a bucket after it, as it goes in dry first.
+                if (high && buckets > 0 && plan.kind(i) == BlockRules.Kind.PLACE && BlockRules.soaked(plan.target(i))
+                        && !plan.soaking(i) && !plan.needsPour(i)) {
+                    needs.merge(Items.WATER_BUCKET, 1, Integer::sum);
+                    buckets--;
+                }
                 Item item = plan.item(i);
                 if (item == null) continue;
                 int count = plan.kind(i) == BlockRules.Kind.FLUID || plan.soaking(i) ? 1
@@ -7629,6 +7650,32 @@ public final class SchematicBuilder {
             }
         }
         return needs;
+    }
+
+    /**
+     * Slots free for buckets of water carried up to a high layer (see {@link #needsUpTo}): those free now, less the ones
+     * kept free and those the solid blocks of the layers up to {@code top} still take beyond what is carried, a stack each.
+     */
+    private int bucketRoom(LocalPlayer player, Level level, int top) {
+        Materials carried = Materials.of(player.getInventory());
+        Map<Item, Integer> solid = new HashMap<>();
+        for (int[] layer : plan.layers().headMap(top, true).values()) {
+            for (int i : layer) {
+                BuildPlan.Status st = plan.status(i);
+                if (st != BuildPlan.Status.PENDING && st != BuildPlan.Status.UNLOADED || plan.wetWaits(i)) continue;
+                Item item = plan.item(i);
+                if (item == null || item == Items.WATER_BUCKET) continue;
+                solid.merge(item, BlockRules.itemsNeeded(level.getBlockState(plan.pos(i)), plan.target(i)), Integer::sum);
+            }
+        }
+        int stacks = 0;
+        for (Map.Entry<Item, Integer> e : solid.entrySet()) {
+            int missing = e.getValue() - carried.loose(e.getKey());
+            if (missing > 0) stacks += (missing + e.getKey().getDefaultMaxStackSize() - 1) / e.getKey().getDefaultMaxStackSize();
+        }
+        // The buckets carried already count as room for them: else each one taken would shrink the room, and those taken
+        // would go back into the next box as wanted by nothing.
+        return Math.max(0, carried.freeSlots() + carried.total(Items.WATER_BUCKET) - AHEAD_FREE - stacks);
     }
 
     /**
