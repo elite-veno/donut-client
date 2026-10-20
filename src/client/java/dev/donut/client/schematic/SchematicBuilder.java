@@ -321,6 +321,11 @@ public final class SchematicBuilder {
     private int walkFailures;
     /** For the debug log: the blocks the walk under way was planned for, and where it was to end. */
     private final Set<Integer> walkExpects = new HashSet<>();
+    /**
+     * The blocks the last walk was made for with the seals lifted. A block placed on arriving puts the seals back, and
+     * the others it was made for would wait again, unmentioned, though the walk was for them: they keep the lift there.
+     */
+    private final Set<Integer> liftedFor = new HashSet<>();
     private Navigator.Node walkEnd;
     /** Places tried and found useless since the last block went in, so the next walk goes somewhere else. */
     private final Set<Long> uselessSpots = new HashSet<>();
@@ -1141,6 +1146,7 @@ public final class SchematicBuilder {
         lastWalkEnd = null;
         walkEnd = null;
         walkExpects.clear();
+        liftedFor.clear();
         nextAction = System.nanoTime() + 500_000_000L;
         int layers = plan.layers().size();
         String span = layers == 0 ? "" : " (y " + plan.layers().firstKey() + (layers > 1 ? " to " + plan.layers().lastKey() : "") + ")";
@@ -1294,6 +1300,7 @@ public final class SchematicBuilder {
                     orderLifted = false;
                     // Walks, misses and useless places counted in the layer left: none of them is about this one.
                     walksSinceClick = 0;
+                    liftedFor.clear();
                     arrivalMisses.clear();
                     uselessSpots.clear();
                     lastWalkEnd = null;
@@ -1331,6 +1338,7 @@ public final class SchematicBuilder {
                 sealsLifted = false;
                 orderLifted = false;
                 walksSinceClick = 0;
+                liftedFor.clear();
                 arrivalMisses.clear();
                 uselessSpots.clear();
                 lastWalkEnd = null;
@@ -1488,6 +1496,8 @@ public final class SchematicBuilder {
         }
         // A block whose going in would take the last look at a farther one still to go in here waits for it, as long as
         // something else goes in this tick; else it goes in after all.
+        // Still where the last walk, made with the seals lifted, came to rest: the blocks it was made for keep the lift.
+        boolean stayLifted = !liftedFor.isEmpty() && walkEnd != null && player.position().distanceToSqr(walkEnd.standing()) < 2.25;
         Aim held = null;
         int place = -1;
         for (int i : candidates) {
@@ -1504,7 +1514,7 @@ public final class SchematicBuilder {
             if (support != 1) continue;
             if (nearest < 0) nearest = i;
             if (far) break;
-            if (!lift) {
+            if (!lift && !(stayLifted && liftedFor.contains(i))) {
                 byte seals = seals(player, i, started);
                 if (seals == 0) return;
                 if (seals == 1) {
@@ -4820,6 +4830,8 @@ public final class SchematicBuilder {
         }
         walkExpects.clear();
         walkExpects.addAll(expectedBlocks.getOrDefault(end.key(), List.of()));
+        liftedFor.clear();
+        if (lift) liftedFor.addAll(walkExpects);
         walkEnd = end;
         return true;
     }
