@@ -390,6 +390,11 @@ public final class SchematicBuilder {
     /** Whether the cleanup's last try is on: climbing searches that go much further before a helper block is left. */
     private boolean cleanupWide;
     /**
+     * Whether the cleanup's walks may jump down off the build, as {@link Navigator#dropsOff} lets them: a last round, for
+     * helper blocks on the ground round a build the player is up on, with no other way down.
+     */
+    private boolean cleanupDrop;
+    /**
      * Spots the cleanup has taken a helper block away from: no climb puts one there again, or two columns are taken down
      * and put up again in turn, each climb for one going up where the other stood.
      */
@@ -797,6 +802,7 @@ public final class SchematicBuilder {
         helpersLeft.clear();
         leftRetried = false;
         cleanupWide = false;
+        cleanupDrop = false;
         cleared.clear();
         pitWalks.clear();
         pitFill = null;
@@ -1127,6 +1133,7 @@ public final class SchematicBuilder {
         helpersLeft.clear();
         leftRetried = false;
         cleanupWide = false;
+        cleanupDrop = false;
         cleared.clear();
         pitWalks.clear();
         pitFill = null;
@@ -3893,6 +3900,8 @@ public final class SchematicBuilder {
                 double away = dx * dx + dz * dz;
                 return (pos.getY() >= feet ? 0 : 10_000_000) + (away > NEAR_COLUMN * NEAR_COLUMN ? away : -1_000_000 - pos.getY());
             }));
+            // In the last round only, and never down a gap within the build (see dropsOff).
+            double cleanupDown = cleanupDrop ? farDrop(player) : 0;
             for (BlockPos top : walkOrder) {
                 if (cleanupSkipped.contains(top.asLong()) || cleanupMisses.getOrDefault(top.asLong(), 0) >= CLEANUP_MISSES) continue;
                 // Climbing too: the top of a tall pillar is only in reach from up beside it. Each block climbed on is a
@@ -3905,7 +3914,7 @@ public final class SchematicBuilder {
                 Navigator.Path path = null;
                 boolean toColumn = false;
                 if (awayX * awayX + awayZ * awayZ > NEAR_COLUMN * NEAR_COLUMN && nearWalks.getOrDefault(top.asLong(), 0) < 2) {
-                    path = navigator(player, false).limit(20_000).find(here, node -> {
+                    path = navigator(player, false).limit(20_000).dropsOff(cleanupDown, plan.bounds).find(here, node -> {
                         double dx = top.getX() - node.x(), dz = top.getZ() - node.z();
                         return dx * dx + dz * dz <= 4 ? 1 : 0;
                     });
@@ -3926,7 +3935,7 @@ public final class SchematicBuilder {
                 boolean besideColumn = path == null && top.equals(cleanupColumn);
                 if (besideColumn) cleanupColumn = null;
                 if (path == null) {
-                    Navigator navigator = navigator(player, true).limit(cleanupWide || besideColumn ? 60_000 : 6000);
+                    Navigator navigator = navigator(player, true).limit(cleanupWide || besideColumn ? 60_000 : 6000).dropsOff(cleanupDown, plan.bounds);
                     if (cleanupBridges >= CLEANUP_BRIDGES) navigator.noBridges();
                     boolean missedHere = missedMining(player, top);
                     long topKey = top.asLong();
@@ -3937,6 +3946,7 @@ public final class SchematicBuilder {
                             || missedHere && node.key() == here.key() || cleanupFailed.contains(Navigator.pairKey(topKey, node.key())) ? 0
                             : viewScore(player, node.eye(), top, reach));
                 }
+                if (path != null && cleanupDown > 0 && dropsIntoTrap(player, path)) path = null;
                 if (path != null && path.nodes().size() > 1) {
                     if (!climbReady(client, player, path)) return true;
                     cleanupBridges += (int) path.nodes().stream().filter(node -> node.move() == Navigator.Move.BRIDGE).count();
@@ -3961,6 +3971,23 @@ public final class SchematicBuilder {
                 startBreak(under);
                 return true;
             }
+            // Up on a helper bridge, nothing under it to step down onto: a few steps onto the top of a helper pillar,
+            // which has ground under it, to go down that one a block at a time, as a player digs down the pillar they
+            // climbed rather than stay up on a bridge.
+            if (player.onGround() && helpers.containsKey(under.asLong()) && !safeToBreak(player, under)) {
+                Navigator.Path toPillar = navigator(player, false).limit(BOX_WALK_NODES).find(here, node -> {
+                    if (node.key() == here.key()) return 0;
+                    BlockPos floor = node.floor();
+                    return helpers.containsKey(floor.asLong()) && groundUnder(player.level(), floor) ? 1 : 0;
+                });
+                if (toPillar != null && toPillar.nodes().size() > 1 && !dropsIntoTrap(player, toPillar)) {
+                    if (debug()) LOGGER.info("No helper block left in reach of a walk from {}, up on a bridge: onto the helper pillar at {} {} {} to go down it",
+                            here, toPillar.end().x(), toPillar.end().feet(), toPillar.end().z());
+                    walker.start(toPillar.nodes());
+                    show("Taking the helper blocks away", false);
+                    return true;
+                }
+            }
         }
         if (settings().walk && !cleanupWide) {
             // One more round before any is left, with climbing searches that go ten times as far: from the ground, the way
@@ -3969,6 +3996,15 @@ public final class SchematicBuilder {
             cleanupSkipped.clear();
             nearWalks.clear();
             if (debug()) LOGGER.info("Cleanup: {} helper blocks out of reach, looking further for a way to them", helpers.size());
+            return true;
+        }
+        if (settings().walk && !cleanupDrop && farDrop(player) > 0) {
+            // Still out of reach, up on the build with no way down that does no harm: once more, with a jump down off it
+            // onto the ground round it allowed, as planWalk has when no place to stand is found up there.
+            cleanupDrop = true;
+            cleanupSkipped.clear();
+            nearWalks.clear();
+            if (debug()) LOGGER.info("Cleanup: {} helper blocks out of reach, looking again with a jump down off the build", helpers.size());
             return true;
         }
         for (long key : helpers.keySet()) {
