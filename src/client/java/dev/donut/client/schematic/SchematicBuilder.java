@@ -1725,6 +1725,12 @@ public final class SchematicBuilder {
                 // of one broken for that gets the water before the block goes in again. Either goes in with the layer's
                 // other water, as the water runs out of it as from a source.
                 Item bucket = Items.WATER_BUCKET;
+                if (!creative && plan.plant(i) && lowOnWater(player, materials) && poolToMake(level, candidates)) {
+                    // Few buckets left and no water about that comes back: the build's water that makes a pool goes in
+                    // first, a source beside a source, to fill the rest from; a kelp spot's bucket would be one less for it.
+                    passedOver(i, "a pool of water to fill buckets from goes in first");
+                    continue;
+                }
                 if (!creative && materials.total(bucket) == 0) {
                     // Out of water buckets: an empty one is filled where water comes back, as for the build's own water. A
                     // dry kelp spot takes a bucket of its own (da-45), more than the build's sources hand out.
@@ -3784,6 +3790,37 @@ public final class SchematicBuilder {
     }
 
     // Water ------------------------------------------------------------------------------------------------------
+
+    /** Whether the water buckets carried are few and no water about comes back to fill more from (see renewingWater). */
+    private boolean lowOnWater(LocalPlayer player, Materials materials) {
+        if (materials.total(Items.WATER_BUCKET) > 3) return false;
+        if (tick - waterTick > 40) {
+            renewing = renewingWater(player);
+            waterTick = tick;
+        }
+        return renewing.isEmpty();
+    }
+
+    /**
+     * Whether one of {@code candidates} is a water source of the build still to pour that makes a pool, one that comes
+     * back once filled from: beside it a source in the world already, or another such water source of the build.
+     */
+    private boolean poolToMake(Level level, List<Integer> candidates) {
+        for (int j : candidates) {
+            if (plan.kind(j) != BlockRules.Kind.FLUID || plan.status(j) != BuildPlan.Status.PENDING) continue;
+            BlockState target = plan.target(j);
+            if (!target.getFluidState().isSource() || !target.getFluidState().getType().isSame(Fluids.WATER)) continue;
+            BlockPos pos = plan.pos(j);
+            for (Direction side : Direction.Plane.HORIZONTAL) {
+                BlockPos beside = pos.relative(side);
+                FluidState there = level.getFluidState(beside);
+                if (there.isSource() && there.getType().isSame(Fluids.WATER)) return true;
+                int k = plan.indexOf(beside);
+                if (k >= 0 && plan.kind(k) == BlockRules.Kind.FLUID && plan.target(k).getFluidState().isSource()) return true;
+            }
+        }
+        return false;
+    }
 
     /**
      * Fills an empty bucket from water that comes back, from where the player stands or after a walk to it: an empty
