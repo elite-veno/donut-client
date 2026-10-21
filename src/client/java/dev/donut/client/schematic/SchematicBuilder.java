@@ -1,5 +1,7 @@
 package dev.donut.client.schematic;
 
+import dev.donut.client.finder.LoadedChunks;
+
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.config.SchematicSettings;
 import dev.donut.client.finder.ChunkEvents;
@@ -822,6 +824,10 @@ public final class SchematicBuilder {
         guardSpot.clear();
         guardWalks.clear();
         guardMemoCleared.clear();
+        lookUpStandFor.clear();
+        upFace.clear();
+        upFaceFailed.clear();
+        noFaceLogged.clear();
         helpersLeft.clear();
         leftRetried = false;
         cleanupWide = false;
@@ -1163,6 +1169,10 @@ public final class SchematicBuilder {
         guardSpot.clear();
         guardWalks.clear();
         guardMemoCleared.clear();
+        lookUpStandFor.clear();
+        upFace.clear();
+        upFaceFailed.clear();
+        noFaceLogged.clear();
         helpersLeft.clear();
         leftRetried = false;
         cleanupWide = false;
@@ -1191,7 +1201,9 @@ public final class SchematicBuilder {
         uselessPits.clear();
         pitTries.clear();
         sealsLifted = false;
-        sealsLiftedAt = UNLIFTED;
+        upWaitLifted.clear();
+        upWaitCountedAt = -1;
+        endLayerSkip();
         orderLifted = false;
         // A build begun again, or another with its bottom layer at the same height, starts its first layer afresh: no walks
         // or misses carried over from the last one.
@@ -1355,6 +1367,7 @@ public final class SchematicBuilder {
             holdSince = -1;
         }
         int heldNumber = 0;
+        int heldOnlyY = Integer.MIN_VALUE;
         // A block broken to open a look at the one beside it goes in again once that one is in.
         unblocking.values().removeIf(u -> {
             BuildPlan.Status stuck = plan.update(level, u.stuck());
@@ -1391,16 +1404,16 @@ public final class SchematicBuilder {
                 break;
             }
             if (entry.getKey() == heldY) heldNumber = number;
+            if (skipFloorY != Integer.MIN_VALUE && (entry.getKey() < skipFloorY || entry.getKey() > skipTopY)) continue;
             int first = firstReady(player, entry.getValue(), lift, started);
             if (first == -1 && !lift) {
                 // Only blocks that would shut in a neighbor are left: one of them goes in after all.
                 first = firstReady(player, entry.getValue(), true, started);
-                if (first >= 0) {
-                    lift = true;
-                    // A lift too: blocks waiting for an up-facing neighbour still get their few minutes.
-                    if (sealsLiftedAt == UNLIFTED) sealsLiftedAt = tick;
-                }
+                if (first >= 0) lift = true;
             }
+            // Nothing but blocks held back, even lifted: the lowest such layer is the one whose minutes run when no layer
+            // has a block to go in at all.
+            if (first == -1 && heldOnlyY == Integer.MIN_VALUE && hasLeft(entry.getValue())) heldOnlyY = entry.getKey();
             if (first == -2) { show("Working out the build order", false); return; }
             if (first == -1 && unblock(client, player, entry.getValue(), started)) return;
             if (first < 0) continue;
@@ -1429,6 +1442,26 @@ public final class SchematicBuilder {
             layerNumber = number;
             break;
         }
+        if (layer == null && skipFloorY != Integer.MIN_VALUE) {
+            // Nothing ready in the layers lifted to: the lowest ready layer again, as before the lift.
+            if (debug()) LOGGER.info("Nothing ready in the layers from y {} to y {}: back to the lowest layer", skipFloorY, skipTopY);
+            endLayerSkip();
+            skipFailed(player);
+            nextAction = System.nanoTime();
+            return;
+        }
+        if (layer == null && heldOnlyY != Integer.MIN_VALUE && upWaitLifted.getOrDefault(heldOnlyY, 0L) < UP_WAIT_TICKS
+                && waitsForUpFacingIn(level, plan.layers().get(heldOnlyY))) {
+            // Only blocks held back are left, those waiting for an up-facing neighbour not timed out yet: the lowest such
+            // layer's minutes run, no layer else having a block to go in, and the build is not done yet.
+            countUpWait(heldOnlyY);
+            show("Waiting for blocks held back for an up-facing block, layer y " + heldOnlyY, false);
+            nextAction = System.nanoTime() + 250_000_000L;
+            return;
+        }
+        // The minutes of blocks waiting for an up-facing neighbour run only while their own layer is built with the seals
+        // lifted (see upWaitHolds).
+        if (layer != null && lift) countUpWait(layerY);
         if (layer == null) {
             // Only blocks broken to get out of a pocket are left: out first, then they go in again.
             if (!brokeOut.isEmpty()) {
@@ -1473,8 +1506,8 @@ public final class SchematicBuilder {
             // Broken to get out of where the player was shut in: back in once they are out, not to shut them in again.
             // Broken to open a look at a block beside: back in once that one is.
             if (brokeOut.contains(i) || unblocking.containsKey(i)) continue;
-            // Water, lava and kelp wait until every other block of their layer, and of those below, is in.
-            if (plan.wetWaits(i)) continue;
+            // Water, lava and kelp wait until the other blocks of their layer, and of those below, that hold them in are.
+            if (wetHeld(level, i)) continue;
             if (byGroup && !inOrder(player, i, group, lift, started)) continue;
             candidates.add(i);
         }
@@ -2007,6 +2040,7 @@ public final class SchematicBuilder {
             if (debug()) LOGGER.info("No place reached has a block in reach or a look, {} searches in a row: climbing out", noneInReach);
             noneInReach = 0;
             if (climbOut(client, player, candidates, materials, layerNumber, lift)) return;
+            if (skipLayer(player, layerY, layerNumber)) return;
         }
         if (settings().walk && planPit(client, player, candidates, materials, layerNumber, lift)) return;
         if (settings().walk && walkToSpareHelper(client, player)) return;
@@ -2016,7 +2050,6 @@ public final class SchematicBuilder {
         if (sealing && !lift) {
             // Every block left in reach of a walk would shut in another: let them go in after all.
             sealsLifted = true;
-            if (sealsLiftedAt == UNLIFTED) sealsLiftedAt = tick;
             nextAction = System.nanoTime();
             return;
         }
@@ -2101,7 +2134,7 @@ public final class SchematicBuilder {
     private int firstReady(LocalPlayer player, int[] layer, boolean lift, long started) {
         for (int i : layer) {
             // Broken to get out of a pocket: its layer is done for now, and the build goes on with the next.
-            if (plan.wetWaits(i) || brokeOut.contains(i) || unblocking.containsKey(i)) continue;
+            if (wetHeld(player.level(), i) || brokeOut.contains(i) || unblocking.containsKey(i)) continue;
             BuildPlan.Status st = plan.status(i);
             if (st == BuildPlan.Status.PENDING) st = plan.update(player.level(), i);
             if (st == BuildPlan.Status.PENDING) {
@@ -2155,6 +2188,10 @@ public final class SchematicBuilder {
                 int j = plan.indexOf(at);
                 if (j < 0 || plan.status(j) != BuildPlan.Status.PENDING || !BlockRules.placedLookingUp(plan.target(j))) continue;
                 if (!level.getBlockState(at).canBeReplaced()) continue;
+                // The face the one beside is clicked onto, with no other to be had: it goes in first (see chooseUpFaces),
+                // and those stacked over that one, which can't go in before it, don't hold it either.
+                int beside = plan.indexOf(pos.relative(side));
+                if (upFaceOf(beside) == i || upFaceFailed.getOrDefault(beside, Set.of()).contains(i)) continue;
                 if (debug() && tick - upWaitLogged.getOrDefault(i, -UP_WAIT_TICKS) > 200) {
                     upWaitLogged.put(i, tick);
                     LOGGER.info("{} at {} waits: it would take the look up at {} at {}", plan.target(i).getBlock().getName().getString(),
@@ -2211,28 +2248,527 @@ public final class SchematicBuilder {
      * (see {@link #feedsPendingPlant}) until the seals are lifted for good, after the walks found nothing.
      */
     private boolean liftHolds(LocalPlayer player, int i) {
+        chooseUpFaces(player, i, System.nanoTime());
         return upWaitHolds(player.level(), i)
-                || !sealsLifted && plan.kind(i) == BlockRules.Kind.FLUID && floodsLevelLook(player, i, false);
+                || !sealsLifted && plan.kind(i) == BlockRules.Kind.FLUID && floodsLevelLook(player, i, false)
+                || fillsLookUpStand(player, i);
     }
 
-    /** With the seals lifted, block {@code i} still waits for an up-facing neighbour, for {@link #UP_WAIT_TICKS} after. */
+    /**
+     * With the seals lifted, block {@code i} still waits for an up-facing neighbour, until its layer has been built with the
+     * seals lifted for {@link #UP_WAIT_TICKS}.
+     */
     private boolean upWaitHolds(Level level, int i) {
         int wait = upWait(level, i);
         // One a layer or two up isn't timed out: it can't even be tried before the build reaches its layer, and once this
         // block is in it never can (v4-g let the ice in after five minutes, before the observers a layer up).
-        return wait == 2 || wait == 1 && (sealsLiftedAt == UNLIFTED || tick - sealsLiftedAt < UP_WAIT_TICKS);
+        return wait == 2 || wait == 1 && upWaitLifted.getOrDefault(plan.pos(i).getY(), 0L) < UP_WAIT_TICKS;
     }
 
-    /** How long, after the seals are lifted, a block still waits for an up-facing neighbour: the walks get a few more tries. */
+    /** How long, with the seals lifted, a block still waits for an up-facing neighbour: the walks get a few more tries. */
     private static final long UP_WAIT_TICKS = 6000;
-    private static final long UNLIFTED = Long.MIN_VALUE / 2;
     /**
-     * When the seals were first lifted, by either way, since the build began or an up-facing block last went in; UNLIFTED
-     * until then. Not cleared when the layer changes: a layer below that waits sends the build up and back, and the
-     * minutes would start again each time.
+     * Ticks each layer, by its y, was built with the seals lifted since the build began or an up-facing block last went
+     * in. Kept when the layer changes: a layer below that waits sends the build up and back, and the minutes would start
+     * again each time. Only its own: five minutes in a layer above let layer 4's glass round the observer 2,68,27 go in
+     * out of turn, shutting in the glass between (v4-da53, 05:20).
      */
-    private long sealsLiftedAt = UNLIFTED;
+    private final Map<Integer, Long> upWaitLifted = new HashMap<>();
+    private long upWaitCountedAt = -1;
+
+    /** Counts the ticks since the last count, a second at most, to layer {@code y}'s time with the seals lifted. */
+    private void countUpWait(int y) {
+        long since = upWaitCountedAt < 0 ? 1 : Math.clamp(tick - upWaitCountedAt, 0, 20);
+        upWaitCountedAt = tick;
+        upWaitLifted.merge(y, since, Long::sum);
+    }
+
+    /**
+     * For an up-facing block still to go in, the neighbour beside it chosen to go in first as the face it is clicked onto,
+     * or -1; with the stamp of the cells round it it was worked out for.
+     */
+    private record UpFace(int face, long stamp, long since) { }
+
+    private final Map<Integer, UpFace> upFace = new HashMap<>();
+    /** Faces chosen that didn't go in in time, by up-facing block: passed over when it is worked out again. */
+    private final Map<Integer, Set<Integer>> upFaceFailed = new HashMap<>();
+    /** Up-facing blocks "no face" was logged for: once each. */
+    private final Set<Integer> noFaceLogged = new HashSet<>();
+    private long upFaceTick = -1;
+    /** How many places to stand {@link #faceFor} tries at most for one up-facing block. */
+    private static final int UP_FACE_LOOKS = 150;
+    /** How long a face chosen has to go in before the next is tried. */
+    private static final long UP_FACE_TICKS = 2400;
+
+    private int upFaceOf(int j) {
+        if (j < 0) return -1;
+        UpFace known = upFace.get(j);
+        if (known == null || known.face() < 0) return -1;
+        if (plan.status(known.face()) == BuildPlan.Status.PENDING && tick - known.since() > UP_FACE_TICKS) {
+            // Chosen and still not in: the next face gets its turn, this one still waiting for nothing (see upWait).
+            upFaceFailed.computeIfAbsent(j, x -> new HashSet<>()).add(known.face());
+            upFace.remove(j);
+            if (debug()) LOGGER.info("{} at {} didn't go in as the face for {} at {} in time: another is tried",
+                    plan.target(known.face()).getBlock().getName().getString(), plan.pos(known.face()).toShortString(),
+                    plan.target(j).getBlock().getName().getString(), plan.pos(j).toShortString());
+            return -1;
+        }
+        return known.face();
+    }
+
+    /** The stamp of the cells round {@code pos} and round each cell beside it, what a face beside it rests on too. */
+    private static long aroundStamp(Level level, BlockPos pos) {
+        long stamp = BuildPlan.stamp(level, pos);
+        for (Direction side : Direction.Plane.HORIZONTAL) stamp = stamp * 31 + BuildPlan.stamp(level, pos.relative(side));
+        return stamp;
+    }
+
+    /**
+     * Works out, for each up-facing block beside block {@code i} that is still to go in and has no face to be clicked
+     * onto, which neighbour goes in first as that face (see {@link #faceFor}): one such block a tick, kept until the cells
+     * round it change. Every neighbour of such a block waits for it (see {@link #upWait}), the faces it could take
+     * among them, and none ever goes in: ikea_v4's observers 2,68,3..33, each between glass and an observer facing down,
+     * both waiting for it (v4-da53).
+     */
+    private void chooseUpFaces(LocalPlayer player, int i, long started) {
+        if (plan.kind(i) != BlockRules.Kind.PLACE) return;
+        Level level = player.level();
+        BlockPos pos = plan.pos(i);
+        for (Direction side : Direction.Plane.HORIZONTAL) {
+            BlockPos at = pos.relative(side);
+            int j = plan.indexOf(at);
+            if (j < 0 || plan.status(j) != BuildPlan.Status.PENDING || !BlockRules.placedLookingUp(plan.target(j))) continue;
+            if (!level.getBlockState(at).canBeReplaced()) continue;
+            long stamp = aroundStamp(level, at);
+            UpFace known = upFace.get(j);
+            // A face chosen stays chosen while it goes in, whatever changes round it.
+            if (known != null && (known.stamp() == stamp || known.face() >= 0)) continue;
+            byte support = support(player, j, started);
+            if (support == 0) return;
+            if (support == 1) {
+                upFace.put(j, new UpFace(-1, stamp, tick));
+                continue;
+            }
+            if (upFaceTick == tick) return;
+            upFaceTick = tick;
+            upFace.put(j, new UpFace(faceFor(player, j, started), stamp, tick));
+        }
+    }
+
+    /**
+     * The neighbour beside up-facing block {@code j}, still to go in, with which in a place to stand near enough under j
+     * has a look at it, or -1: places with ground under them and room for the body, up to three under it and two off.
+     * ikea_v4's 2,68,27 is clicked onto the west face of the observer 3,68,27 from the ground at 2,65,26, the look up
+     * past the concrete under it; the glass 2,68,28 south of it gives no look, every steep one coming through that
+     * concrete. Only a neighbour that can go in itself now: 3,68,27 is clicked onto the wire under it, which goes in
+     * first; the stamp {@link #chooseUpFaces} keeps takes in the cells round each neighbour, so the face is worked out
+     * again once the wire is in.
+     */
+    private int faceFor(LocalPlayer player, int j, long started) {
+        Level level = player.level();
+        BlockPos other = plan.pos(j);
+        BlockState target = plan.target(j);
+        Item item = BlockRules.item(target);
+        if (item == null) return -1;
+        ItemStack stack = new ItemStack(item);
+        double reach = player.blockInteractionRange() - 0.2;
+        LongPredicate notThere = at -> unclickable(at, j);
+        long began = System.nanoTime();
+        int looks = 0;
+        // First the faces whose own state takes no look, glass say, which go in from anywhere: a face that takes one from a
+        // place of its own, as the observer 3,68,3 facing down from above, was passed over by the walks for two minutes
+        // (v4-da55).
+        List<Direction> sides = new ArrayList<>();
+        for (boolean free : new boolean[] {true, false}) {
+            for (Direction side : Direction.Plane.HORIZONTAL) {
+                int k = plan.indexOf(other.relative(side));
+                if (k >= 0 && (BlockRules.eyeSide(plan.target(k)) == null) == free) sides.add(side);
+            }
+        }
+        for (Direction side : sides) {
+            BlockPos face = other.relative(side);
+            int k = plan.indexOf(face);
+            if (k < 0 || plan.kind(k) != BlockRules.Kind.PLACE || plan.status(k) != BuildPlan.Status.PENDING) continue;
+            if (!level.getBlockState(face).canBeReplaced() || plan.target(k).getCollisionShape(level, face).isEmpty()) continue;
+            // Only a face that can go in itself now, and not one that was chosen and didn't.
+            if (upFaceFailed.getOrDefault(j, Set.of()).contains(k) || support(player, k, started) != 1) continue;
+            Overlay view = new Overlay(level, Map.of(face.asLong(), plan.target(k)));
+            for (BlockPos feet : BlockPos.betweenClosed(other.offset(-2, -3, -2), other.offset(2, -1, 2))) {
+                if (looks >= UP_FACE_LOOKS) break;
+                BlockPos floor = feet.below();
+                double top = Navigator.topUnderFeet(view.getBlockState(floor).getCollisionShape(view, floor));
+                if (Double.isNaN(top) || top <= 0 || top > 1.5) continue;
+                if (!view.getBlockState(feet).getCollisionShape(view, feet).isEmpty()
+                        || !view.getBlockState(feet.above()).getCollisionShape(view, feet.above()).isEmpty()) continue;
+                looks++;
+                Vec3 standing = new Vec3(feet.getX() + 0.5, floor.getY() + top, feet.getZ() + 0.5);
+                if (PlacementSolver.fromSpot(player, view, standing, other, target, stack, reach, notThere) == null) continue;
+                if (debug()) LOGGER.info("{} at {} goes in first as the face for the look up at {} at {} (from {}, {} looks, {} ms)",
+                        plan.target(k).getBlock().getName().getString(), face.toShortString(), target.getBlock().getName().getString(),
+                        other.toShortString(), feet.toShortString(), looks, (System.nanoTime() - began) / 1_000_000);
+                return k;
+            }
+        }
+        if (debug() && noFaceLogged.add(j)) LOGGER.info("No face round {} at {} gives a look up at it ({} looks, {} ms)", target.getBlock().getName().getString(),
+                other.toShortString(), looks, (System.nanoTime() - began) / 1_000_000);
+        return -1;
+    }
+
+    /** Whether a block of the layer waits for an up-facing neighbour beside it, the wait that times out. */
+    private boolean waitsForUpFacingIn(Level level, int[] layer) {
+        for (int i : layer) if (plan.status(i) == BuildPlan.Status.PENDING && upWait(level, i) == 1) return true;
+        return false;
+    }
+
+    /**
+     * The layers the build is lifted to (see {@link #skipLayer}), from y to y; MIN_VALUE when it builds the lowest ready
+     * layer, as it does but for that lift. {@code skipBaseY} is the layer the lift was made from.
+     */
+    private int skipFloorY = Integer.MIN_VALUE, skipTopY = Integer.MIN_VALUE, skipBaseY = Integer.MIN_VALUE;
+    /** How many layers up from the one it was made from a lift goes at most. */
+    private static final int SKIP_LAYERS = 2;
+
+    /**
+     * After two walk searches in a row with no block of layer {@code y} in reach from any place reached, and no way out
+     * found either, the next layer up with a block ready goes first, until a block goes in: from where the player stands
+     * then, the layer left may be in reach again. ikea_v4's six water sources 17,66,17.. waited in layer 2 for five
+     * minutes, the player in a pocket at 14,67,7 under layers 3 and 4, ready blocks in those within reach (v4-full5,
+     * 06:49). The next layer up, then the one over it, two at most; past that the lift is over, and the stall is the
+     * give-up's (see {@link #GIVE_UP_TICKS}). The layers lifted to are built as any, every hold in them holding.
+     */
+    private boolean skipLayer(LocalPlayer player, int y, int number) {
+        // A lift that found nothing either: none again from the same cell until a block goes in or a while has gone by, the
+        // other ways out getting their turn meanwhile (v1-full7r: down in the channel after a fall, lifted and back every
+        // tick, 758 times).
+        long cell = player.blockPosition().asLong();
+        if (skipFloorY == Integer.MIN_VALUE && cell == skipFailedCell && tick - skipFailedAt < SKIP_PAUSE_TICKS) return false;
+        int base = skipBaseY == Integer.MIN_VALUE ? y : skipBaseY;
+        Integer next = plan.layers().higherKey(y);
+        int up = 0;
+        for (Integer at = plan.layers().higherKey(base); at != null && at <= y; at = plan.layers().higherKey(at)) up++;
+        if (next == null || up >= SKIP_LAYERS) {
+            if (skipFloorY != Integer.MIN_VALUE) {
+                if (debug()) LOGGER.info("Nothing in reach in the layers up to y {} either: back to the lowest layer", y);
+                endLayerSkip();
+                skipFailed(player);
+            }
+            return false;
+        }
+        Integer top = next;
+        for (int k = up + 1; k < SKIP_LAYERS && plan.layers().higherKey(top) != null; k++) top = plan.layers().higherKey(top);
+        skipBaseY = base;
+        skipFloorY = next;
+        skipTopY = top;
+        if (debug()) LOGGER.info("No block of layer {} (y {}) in reach and no way out: the layers from y {} to y {} go first, until a block goes in",
+                number, y, next, top);
+        nextAction = System.nanoTime();
+        return true;
+    }
+
+    /** Where and when a lift last found nothing, and how long none is made again from there. */
+    private long skipFailedCell = Long.MIN_VALUE, skipFailedAt;
+    private static final long SKIP_PAUSE_TICKS = 600;
+
+    private void skipFailed(LocalPlayer player) {
+        skipFailedCell = player.blockPosition().asLong();
+        skipFailedAt = tick;
+    }
+
+    private void endLayerSkip() {
+        skipFloorY = skipTopY = skipBaseY = Integer.MIN_VALUE;
+    }
+
+    /**
+     * Whether wet block {@code i} still waits for the blocks that hold its water in (see {@link BuildPlan#wetWaits}): only
+     * for those its water would run into, worked out by running it out from its cell as water runs, down where it can,
+     * sideways a few cells, again at the bottom of a fall. It waits when that reaches a block still to go in, or an open
+     * cell the build has no water in, that the water would fill instead; or when the run isn't worked out to its end.
+     * Others still to go in elsewhere in the layer hold it no more: the few glass blocks waiting round ikea_v4's
+     * observers 2,68,N held every source of layer 2 till layer 4 had roofed the channel at x 10..17 over, 14 blocks off
+     * (v4-full5). Kept until the next block goes in.
+     */
+    private boolean wetHeld(Level level, int i) {
+        if (!plan.wetWaits(i)) return false;
+        long version = (long) plan.count(BuildPlan.Status.PENDING) * 1_000_003L + plan.count(BuildPlan.Status.UNLOADED);
+        if (wetHeldVersion != version) {
+            wetHeldVersion = version;
+            wetHeldKnown.clear();
+        }
+        Boolean known = wetHeldKnown.get(i);
+        if (known != null) return known;
+        if (wetRunsTick != tick) {
+            wetRunsTick = tick;
+            wetRunsNow = 0;
+        }
+        if (wetRunsNow >= WET_RUNS) return true;
+        wetRunsNow++;
+        boolean held = runsOut(level, i);
+        wetHeldKnown.put(i, held);
+        return held;
+    }
+
+    private final Map<Integer, Boolean> wetHeldKnown = new HashMap<>();
+    private long wetHeldVersion = -1, wetRunsTick = -1;
+    private int wetRunsNow;
+    /** Runs out for {@link #wetHeld} worked out at most in one tick; a wet block whose run isn't waits a tick. */
+    private static final int WET_RUNS = 30;
+    /** How many cells a run goes over at most; one that would go further waits, as not worked out. */
+    private static final int RUN_LIMIT = 200;
+    /** How far water runs sideways on flat ground. */
+    private static final int RUN_SIDEWAYS = 7;
+
+    /**
+     * Whether the water of wet block {@code i}, in now, would run into a cell it mustn't: one where a dry block of the
+     * build is still to go in, or an open one inside the build the build has no water or plant in. The cells outside the
+     * build don't count, as before. True as well when the run goes past {@link #RUN_LIMIT} cells, or into a chunk not
+     * loaded.
+     */
+    private boolean runsOut(Level level, int i) {
+        BlockPos start = plan.pos(i);
+        ArrayDeque<BlockPos> cells = new ArrayDeque<>();
+        Map<Long, Integer> steps = new HashMap<>();
+        cells.add(start);
+        steps.put(start.asLong(), 0);
+        while (!cells.isEmpty()) {
+            BlockPos at = cells.poll();
+            int step = steps.get(at.asLong());
+            BlockPos below = at.below();
+            boolean falls = false;
+            if (inBuild(below)) {
+                int held = runsInto(level, below);
+                if (held == 1) return true;
+                if (held == 0) {
+                    falls = true;
+                    if (!steps.containsKey(below.asLong())) {
+                        if (steps.size() >= RUN_LIMIT) return true;
+                        steps.put(below.asLong(), 0);
+                        cells.add(below);
+                    }
+                }
+            }
+            // As vanilla water: a source runs sideways too over a fall, running water only where it can't fall.
+            if (falls && !at.equals(start) || step >= RUN_SIDEWAYS) continue;
+            for (Direction side : Direction.Plane.HORIZONTAL) {
+                BlockPos next = at.relative(side);
+                if (steps.containsKey(next.asLong()) || !inBuild(next)) continue;
+                int held = runsInto(level, next);
+                if (held == 1) return true;
+                if (held != 0) continue;
+                if (steps.size() >= RUN_LIMIT) return true;
+                steps.put(next.asLong(), step + 1);
+                cells.add(next.immutable());
+            }
+        }
+        return false;
+    }
+
+    private boolean inBuild(BlockPos pos) {
+        return plan.bounds.contains(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
+    }
+
+    /**
+     * What water running into {@code cell} of the build meets: 1 a cell it mustn't fill (a dry block still to go in there,
+     * an open cell the build has no water in, or one not loaded), 0 an open cell the build has water or a plant in, which
+     * it runs on through, 2 a block that stops it.
+     */
+    private int runsInto(Level level, BlockPos cell) {
+        if (!LoadedChunks.has(level, cell)) return 1;
+        int j = plan.indexOf(cell);
+        BuildPlan.Status st = j < 0 ? null : plan.status(j);
+        boolean left = st == BuildPlan.Status.PENDING || st == BuildPlan.Status.UNLOADED;
+        if (j >= 0 && left && !plan.wet(j) && plan.kind(j) == BlockRules.Kind.PLACE) return 1;
+        if (!level.getBlockState(cell).canBeReplaced()) return 2;
+        return j >= 0 && plan.wet(j) ? 0 : 1;
+    }
+
+    /** Whether a block of the layer is still to go in. */
+    private boolean hasLeft(int[] layer) {
+        for (int i : layer) if (plan.status(i) == BuildPlan.Status.PENDING || plan.status(i) == BuildPlan.Status.UNLOADED) return true;
+        return false;
+    }
     private final Map<Integer, Long> upWaitLogged = new HashMap<>();
+
+    /**
+     * The block placed looking up that block {@code i} waits for under {@link #fillsLookUpStand}, by block; -1 when worked
+     * out and not waiting. The look checks are dear, and what they read, the build's own blocks round the one waited for,
+     * comes from the plan: kept until the block waited for is in or given up.
+     */
+    private final Map<Integer, Integer> lookUpStandFor = new HashMap<>();
+    /** Look checks for {@link #fillsLookUpStand} at most in one tick; a block with checks still to make waits a tick. */
+    private static final int LOOK_UP_CHECKS = 6;
+    /** How many cells of the water a source runs into {@link #fillsLookUpStand} follows. */
+    private static final int RUN_CELLS = 48;
+    private long lookUpChecksTick = -1, lookUpChecks, lookUpNanos;
+    private int lookUpChecksNow;
+
+    /**
+     * Whether block {@code i} waits, across layers, for a block placed looking up (see {@link BlockRules#placedLookingUp})
+     * one or two layers over the cell it fills: the place to stand in that cell, on the block under it, gives a look up at
+     * the other, and on top of this block, once in, none does. A water source waits so for the cells its water runs into.
+     * ikea_v4's up-facing observers 3..17,73,3 have one place to stand with that look, the corridor 2..18,71,2 over the
+     * hoppers, the eye low in the hopper's bowl; the corridor's iron bars and the stream from 9,71,2 go in two layers
+     * before them, and from the bars no look is steep enough (v4 layer 9). Only where the plan leaves the cells over it
+     * open up to the other block, the way the look comes up, so blocks over or beside built cells never wait. Not timed
+     * out, as a wait for one a layer or two up (see {@link #upWaitHolds}); over once the other block is in or given up.
+     */
+    private boolean fillsLookUpStand(LocalPlayer player, int i) {
+        Level level = player.level();
+        BlockPos pos = plan.pos(i);
+        if (!level.getBlockState(pos).canBeReplaced()) return false;
+        Integer known = lookUpStandFor.get(i);
+        if (known != null) {
+            if (known < 0) return false;
+            boolean open = level.getBlockState(plan.pos(known)).canBeReplaced();
+            if (stillToGo(plan, known) && open) return true;
+            lookUpStandFor.remove(i);
+            if (debug()) LOGGER.info("{} at {} waits no more for the look up at {} at {}: {}", plan.target(i).getBlock().getName().getString(),
+                    pos.toShortString(), plan.target(known).getBlock().getName().getString(), plan.pos(known).toShortString(),
+                    open ? "given up" : "in");
+        }
+        BlockState fill;
+        List<BlockPos> cells;
+        if (plan.kind(i) == BlockRules.Kind.PLACE) {
+            fill = plan.target(i);
+            cells = List.of(pos);
+        } else if (plan.kind(i) == BlockRules.Kind.FLUID && plan.target(i).getFluidState().isSource()) {
+            fill = null;
+            cells = waterRun(plan, i);
+        } else {
+            return false;
+        }
+        // The cheap part: a place to stand in the cell, and a block to wait for over it.
+        List<int[]> tries = new ArrayList<>();
+        for (int c = 0; c < cells.size(); c++) {
+            for (int j : lookUpCandidates(plan, level, cells.get(c))) tries.add(new int[] {c, j});
+        }
+        if (tries.isEmpty()) return false;
+        if (lookUpChecksTick != tick) {
+            lookUpChecksTick = tick;
+            lookUpChecksNow = 0;
+        }
+        if (lookUpChecksNow >= LOOK_UP_CHECKS) return true;
+        long began = System.nanoTime();
+        int found = -1;
+        BlockPos at = null;
+        for (int[] t : tries) {
+            BlockPos cell = cells.get(t[0]);
+            lookUpChecksNow++;
+            lookUpChecks++;
+            if (looksUpFrom(player, cell, fill, t[1])) {
+                found = t[1];
+                at = cell;
+                break;
+            }
+        }
+        lookUpNanos += System.nanoTime() - began;
+        lookUpStandFor.put(i, found);
+        if (found < 0) return false;
+        if (debug()) LOGGER.info("{} at {} waits: it would fill the place to stand at {} for the look up at {} at {} ({} look checks, {} ms in all)",
+                plan.target(i).getBlock().getName().getString(), pos.toShortString(), at.toShortString(),
+                plan.target(found).getBlock().getName().getString(), plan.pos(found).toShortString(), lookUpChecks, lookUpNanos / 1_000_000);
+        return true;
+    }
+
+    /**
+     * Blocks placed looking up, still to go in, one or two over {@code cell} or beside those cells, with a place to stand in
+     * {@code cell}: on a block in already under it, the cell open, and every cell between it and the other block open in
+     * the plan, and now.
+     */
+    static List<Integer> lookUpCandidates(BuildPlan plan, BlockGetter level, BlockPos cell) {
+        BlockPos floor = cell.below();
+        BlockState under = level.getBlockState(floor);
+        if (Navigator.hurts(under)) return List.of();
+        double top = Navigator.topUnderFeet(under.getCollisionShape(level, floor));
+        if (Double.isNaN(top) || top <= 0 || top > 1.5) return List.of();
+        if (!level.getBlockState(cell).getCollisionShape(level, cell).isEmpty()) return List.of();
+        List<Integer> out = new ArrayList<>();
+        for (int up = 1; up <= 2; up++) {
+            BlockPos over = cell.above(up);
+            for (Direction side : new Direction[] {null, Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST}) {
+                // Straight over, the other block is the cell itself, and the one under it the look passes; beside, the
+                // look comes up past every cell over this one to its height.
+                if (side == null && up == 1) continue;
+                BlockPos other = side == null ? over : over.relative(side);
+                int j = plan.indexOf(other);
+                if (j < 0 || !stillToGo(plan, j) || !BlockRules.placedLookingUp(plan.target(j))) continue;
+                if (!level.getBlockState(other).canBeReplaced()) continue;
+                if (openForLookUp(plan, level, cell, side == null ? up - 1 : up)) out.add(j);
+            }
+        }
+        return out;
+    }
+
+    /** Whether block {@code i} is still to go in: a layer or two up, not looked at yet, it may still be UNLOADED. */
+    private static boolean stillToGo(BuildPlan plan, int i) {
+        return plan.status(i) == BuildPlan.Status.PENDING || plan.status(i) == BuildPlan.Status.UNLOADED;
+    }
+
+    /** Whether the cells 1..{@code up} over {@code cell} are open now and stay so in the plan. */
+    private static boolean openForLookUp(BuildPlan plan, BlockGetter level, BlockPos cell, int up) {
+        for (int k = 1; k <= up; k++) {
+            BlockPos c = cell.above(k);
+            if (!level.getBlockState(c).getCollisionShape(level, c).isEmpty()) return false;
+            int j = plan.indexOf(c);
+            if (j >= 0 && !plan.target(j).getCollisionShape(level, c).isEmpty()) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Whether, the build's own blocks round block {@code j} in as the plan has them, a place to stand in {@code cell} gives
+     * a look at {@code j}, and with {@code fill} in the cell, a place to stand on top of it gives none. Without a fill, as
+     * water's, only the first.
+     */
+    private boolean looksUpFrom(LocalPlayer player, BlockPos cell, BlockState fill, int j) {
+        Level level = player.level();
+        BlockPos other = plan.pos(j);
+        BlockState target = plan.target(j);
+        Item item = BlockRules.item(target);
+        if (item == null) return false;
+        ItemStack stack = new ItemStack(item);
+        Map<Long, BlockState> around = new HashMap<>();
+        for (Direction side : Direction.values()) {
+            BlockPos n = other.relative(side);
+            int k = plan.indexOf(n);
+            if (k >= 0 && plan.kind(k) == BlockRules.Kind.PLACE && level.getBlockState(n).canBeReplaced()) around.put(n.asLong(), plan.target(k));
+        }
+        around.put(cell.asLong(), Blocks.AIR.defaultBlockState());
+        double reach = player.blockInteractionRange() - 0.2;
+        LongPredicate notThere = at -> unclickable(at, j);
+        BlockPos floor = cell.below();
+        double feet = floor.getY() + Navigator.topUnderFeet(level.getBlockState(floor).getCollisionShape(level, floor));
+        Vec3 inCell = new Vec3(cell.getX() + 0.5, feet, cell.getZ() + 0.5);
+        if (PlacementSolver.fromSpot(player, new Overlay(level, around), inCell, other, target, stack, reach, notThere) == null) return false;
+        if (fill == null) return true;
+        around.put(cell.asLong(), fill);
+        Overlay filled = new Overlay(level, around);
+        VoxelShape shape = fill.getCollisionShape(filled, cell);
+        double top = Navigator.topUnderFeet(shape);
+        if (Double.isNaN(top) || top <= 0) return true;
+        Vec3 onTop = new Vec3(cell.getX() + 0.5, cell.getY() + top, cell.getZ() + 0.5);
+        return PlacementSolver.fromSpot(player, filled, onTop, other, target, stack, reach, notThere) == null;
+    }
+
+    /** The cells of running water the build has joined to water source {@code i}, beside it and down, a few dozen at most. */
+    static List<BlockPos> waterRun(BuildPlan plan, int i) {
+        BlockPos source = plan.pos(i);
+        List<BlockPos> run = new ArrayList<>(List.of(source));
+        Set<Long> seen = new HashSet<>(Set.of(source.asLong()));
+        for (int k = 0; k < run.size() && run.size() < RUN_CELLS; k++) {
+            for (Direction side : Direction.values()) {
+                if (side == Direction.UP) continue;
+                BlockPos next = run.get(k).relative(side);
+                if (!seen.add(next.asLong())) continue;
+                int j = plan.indexOf(next);
+                if (j < 0 || plan.kind(j) != BlockRules.Kind.AUTO) continue;
+                FluidState fluid = plan.target(j).getFluidState();
+                if (fluid.isEmpty() || fluid.isSource() || !fluid.getType().isSame(plan.target(i).getFluidState().getType())) continue;
+                run.add(next.immutable());
+                if (run.size() >= RUN_CELLS) break;
+            }
+        }
+        return run;
+    }
 
     /**
      * Whether placing block {@code i} now would shut in a block beside it that is still to go in: one that can go in
@@ -2241,7 +2777,8 @@ public final class SchematicBuilder {
      */
     private byte seals(LocalPlayer player, int i, long started) {
         if (plan.kind(i) == BlockRules.Kind.FLUID) {
-            return feedsPendingPlant(player.level(), i, true) || floodsLevelLook(player, i, true) ? (byte) 1 : 2;
+            return feedsPendingPlant(player.level(), i, true) || floodsLevelLook(player, i, true) || fillsLookUpStand(player, i)
+                    ? (byte) 1 : 2;
         }
         if (plan.kind(i) != BlockRules.Kind.PLACE) return 2;
         Level level = player.level();
@@ -2250,7 +2787,8 @@ public final class SchematicBuilder {
         // Worked out afresh each time, never kept with the stamp: the block waited for is two cells off, or a layer or two
         // up, outside the cells the stamp reads, and once it went in the wait stayed as kept. A chest waiting on the level
         // look at an observer two cells off waited for good, and the lone half beside it with it (slab farm west cut).
-        if (waitsForUpFacing(level, i) || waitsForChannel(level, i)) return 1;
+        chooseUpFaces(player, i, started);
+        if (waitsForUpFacing(level, i) || waitsForChannel(level, i) || fillsLookUpStand(player, i)) return 1;
         long stamp = BuildPlan.stamp(level, pos);
         if (sealStamp[i] == stamp) return seal[i];
         if (System.nanoTime() - started > PLAN_NANOS) return 0;
@@ -3771,7 +4309,13 @@ public final class SchematicBuilder {
                 restockSwaps = 0;
                 if (planned.act() == Act.PLACE) placedAt.put(i, tick);
                 // An up-facing block in: what waited for one gets its minutes again, should another stall the build.
-                if (planned.act() == Act.PLACE && BlockRules.placedLookingUp(plan.target(i))) sealsLiftedAt = UNLIFTED;
+                if (planned.act() == Act.PLACE && BlockRules.placedLookingUp(plan.target(i))) upWaitLifted.clear();
+                // From where this block went in from, the layers below may be in reach again.
+                if (skipFloorY != Integer.MIN_VALUE) {
+                    if (debug()) LOGGER.info("A block in with the layers under y {} passed over: back to the lowest ready layer", skipFloorY);
+                    endLayerSkip();
+                }
+                skipFailedCell = Long.MIN_VALUE;
                 sealsLifted = false;
                 orderLifted = false;
                 shutIn.remove(i);
@@ -7937,7 +8481,7 @@ public final class SchematicBuilder {
             // no room for a box there, climbed out and walked back down, every 25 s.
             BlockRules.Kind kind = plan.kind(i);
             if (plan.status(i) != BuildPlan.Status.PENDING || kind != BlockRules.Kind.PLACE && kind != BlockRules.Kind.FLUID) continue;
-            if (kind == BlockRules.Kind.FLUID && plan.wetWaits(i)) continue;
+            if (kind == BlockRules.Kind.FLUID && wetHeld(player.level(), i)) continue;
             if (++tried > 24 || System.nanoTime() - started > 5_000_000L) break;
             Item item = plan.item(i);
             if (item == null || materials.loose(item) > 0 || materials.total(item) == 0) continue;
@@ -8016,7 +8560,7 @@ public final class SchematicBuilder {
                 BuildPlan.Status st = plan.status(i);
                 if (st != BuildPlan.Status.PENDING && st != BuildPlan.Status.UNLOADED) continue;
                 // Water and kelp wait for the solid blocks of their layer: their buckets, a slot each, stay in the box till then.
-                if (plan.wetWaits(i)) {
+                if (wetHeld(level, i)) {
                     if (!high || buckets <= 0 || plan.item(i) != Items.WATER_BUCKET) continue;
                     buckets--;
                 }
@@ -8050,7 +8594,7 @@ public final class SchematicBuilder {
         for (int[] layer : plan.layers().headMap(top, true).values()) {
             for (int i : layer) {
                 BuildPlan.Status st = plan.status(i);
-                if (st != BuildPlan.Status.PENDING && st != BuildPlan.Status.UNLOADED || plan.wetWaits(i)) continue;
+                if (st != BuildPlan.Status.PENDING && st != BuildPlan.Status.UNLOADED || wetHeld(level, i)) continue;
                 Item item = plan.item(i);
                 if (item == null || item == Items.WATER_BUCKET) continue;
                 solid.merge(item, BlockRules.itemsNeeded(level.getBlockState(plan.pos(i)), plan.target(i)), Integer::sum);
