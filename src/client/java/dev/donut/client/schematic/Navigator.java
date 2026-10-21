@@ -553,7 +553,9 @@ public final class Navigator {
     static final double SWIM_DEPTH = 0.4;
     /** The most blocks a swim up a column of water rises, and how far over the water's top a block beside is climbed onto. */
     private static final int SWIM_RISE = 4;
-    private static final double SWIM_OUT = 1.2;
+    // Swimming against a block's side lifts the body only while it is still in the water: v4-full20 (23:44:48) came up to
+    // 68.78 beside glass topped at 69 over water whose top was at 67.89, and fell back in.
+    private static final double SWIM_OUT = 0.8;
 
     /** Whether the cell holds a bubble column that pulls down, over magma: nobody swims up that. */
     private boolean dragsDown(BlockPos pos) {
