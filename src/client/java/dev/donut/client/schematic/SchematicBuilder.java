@@ -6573,6 +6573,10 @@ public final class SchematicBuilder {
                 }
             }
         }
+        if (path == null && seen[2] == 0 && seen[0] >= Navigator.MAX_NODES && debug() && (nearest[0] == null || approached.contains(nearest[0].key()))) {
+            LOGGER.info("The search ran out of places with no look: {}", nearest[0] == null ? "no place had a block in reach"
+                    : "walked over to " + nearest[0].x() + " " + nearest[0].feet() + " " + nearest[0].z() + " for it already");
+        }
         if (path == null && seen[2] == 0 && seen[0] >= Navigator.MAX_NODES && nearest[0] != null && approached.add(nearest[0].key())
                 && approach(client, player, start, nearest[0], ceiling, leaning)) {
             // The search ran out of places before it got to one with a look: from far off, the open ground beside the
@@ -6750,7 +6754,11 @@ public final class SchematicBuilder {
         Navigator.Path path = navigator(player, true).climbUpTo(ceiling).vary(leaning).find(start, there);
         double down = farDrop(player);
         if (path == null && down > 0) path = navigator(player, true).climbUpTo(ceiling).vary(leaning).dropsOff(down, plan.bounds).find(start, there);
-        if (path == null || path.nodes().size() < 2 || dropsIntoTrap(player, path)) return false;
+        if (path == null || path.nodes().size() < 2 || dropsIntoTrap(player, path)) {
+            if (debug()) LOGGER.info("No walk over to {} {} {} nearer the blocks: {}", to.x(), to.feet(), to.z(),
+                    path == null ? "no way there" : path.nodes().size() < 2 ? "standing there already" : "it drops into a place with no way back");
+            return false;
+        }
         if (!climbReady(client, player, path)) {
             // Tried again once they are there.
             approached.remove(to.key());
