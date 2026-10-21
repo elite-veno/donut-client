@@ -4568,13 +4568,20 @@ public final class SchematicBuilder {
                     if (j >= 0 && (plan.status(j) == BuildPlan.Status.PENDING || plan.status(j) == BuildPlan.Status.UNLOADED)) continue;
                     int sources = 0;
                     for (Direction side : Direction.Plane.HORIZONTAL) {
-                        FluidState beside = level.getFluidState(at.relative(side));
-                        if (beside.isSource() && beside.is(FluidTags.WATER)) sources++;
+                        BlockPos next = at.relative(side);
+                        FluidState beside = level.getFluidState(next);
+                        // A source behind a side of its block water doesn't pass, a waterlogged stair's back say, feeds none.
+                        if (beside.isSource() && beside.is(FluidTags.WATER)
+                                && !level.getBlockState(next).isFaceSturdy(level, next, side.getOpposite())) sources++;
                     }
                     if (sources < 2) continue;
+                    // Over a full top, or water: vanilla's isSolid() takes in an iron trapdoor's thin top too, and the water
+                    // at 9,67,30 of ikea_v4, filled from over the trapdoor 9,66,30, didn't come back and was poured in again
+                    // (v4-full8r). Only what certainly brings it back counts.
                     BlockPos below = at.below();
                     FluidState under = level.getFluidState(below);
-                    if (!level.getBlockState(below).isSolid() && !(under.isSource() && under.is(FluidTags.WATER))) continue;
+                    if (!level.getBlockState(below).isFaceSturdy(level, below, Direction.UP)
+                            && !(under.isSource() && under.is(FluidTags.WATER))) continue;
                     found.add(at.immutable());
                 }
             }
