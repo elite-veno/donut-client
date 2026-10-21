@@ -3555,7 +3555,12 @@ public final class SchematicBuilder {
         breakOutChecked = tick;
         Level level = player.level();
         Navigator.Node start = Navigator.standingAt(level, player);
-        if (escapeFrom(player, level, start, null) != null) return false;
+        Navigator.Path escape = escapeFrom(player, level, start, null);
+        if (escape != null) {
+            if (debug()) LOGGER.info("Shut in at {}, but a climb out over cells the build fills later reaches open ground, {} steps to {}: no block broken",
+                    start, escape.nodes().size() - 1, escape.end());
+            return false;
+        }
         Set<Long> inside = new HashSet<>();
         exitFrom(player, level, start, inside);
         double reach = player.blockInteractionRange() - 0.25;
@@ -3607,6 +3612,8 @@ public final class SchematicBuilder {
             repairing = i;
             return true;
         }
+        if (debug()) LOGGER.info("Shut in for good at {}, {} places inside: none of {} blocks of the build in reach that could be broken opens a way out",
+                start, inside.size(), candidates.size());
         return false;
     }
 
