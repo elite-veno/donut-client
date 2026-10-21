@@ -1676,6 +1676,13 @@ public final class SchematicBuilder {
                     continue;
                 }
                 if (!creative && materials.loose(bucket) == 0) {
+                    // An empty bucket carried is filled at water that comes back close by, rather than a walk to a box for
+                    // one full one: v4-full7 opened 118 boxes for water in layers 6 and 7, each a 60-step walk down and back
+                    // up for a single kelp spot, the inventory full, and filled none.
+                    if (bucket == Items.WATER_BUCKET && !fetchTried && materials.loose(Items.BUCKET) > 0) {
+                        fetchTried = true;
+                        if (fetchWater(client, player, materials, layerNumber, NEAR_WATER_STEPS)) return;
+                    }
                     if (noBoxHere(bucket)) {
                         if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
                         continue;
@@ -1783,6 +1790,13 @@ public final class SchematicBuilder {
                     continue;
                 }
                 if (!creative && materials.loose(bucket) == 0) {
+                    // An empty bucket carried is filled at water that comes back close by, rather than a walk to a box for
+                    // one full one: v4-full7 opened 118 boxes for water in layers 6 and 7, each a 60-step walk down and back
+                    // up for a single kelp spot, the inventory full, and filled none.
+                    if (bucket == Items.WATER_BUCKET && !fetchTried && materials.loose(Items.BUCKET) > 0) {
+                        fetchTried = true;
+                        if (fetchWater(client, player, materials, layerNumber, NEAR_WATER_STEPS)) return;
+                    }
                     if (noBoxHere(bucket)) {
                         if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
                         continue;
@@ -3837,6 +3851,16 @@ public final class SchematicBuilder {
 
     // Water ------------------------------------------------------------------------------------------------------
 
+    /** Whether water that comes back when a bucket is filled from it (see renewingWater) lies within a few blocks of {@code pos}. */
+    private boolean waterAbout(LocalPlayer player, BlockPos pos) {
+        if (tick - waterTick > 40) {
+            renewing = renewingWater(player);
+            waterTick = tick;
+        }
+        for (BlockPos cell : renewing) if (cell.distSqr(pos) <= NEAR_WATER_STEPS * NEAR_WATER_STEPS / 4) return true;
+        return false;
+    }
+
     /** Whether the water buckets carried are few and no water about comes back to fill more from (see renewingWater). */
     private boolean lowOnWater(LocalPlayer player, Materials materials) {
         if (materials.total(Items.WATER_BUCKET) > 3) return false;
@@ -3873,6 +3897,14 @@ public final class SchematicBuilder {
      * bucket out of a shulker box first if none is loose. False when there is no such water to get to.
      */
     private boolean fetchWater(Minecraft client, LocalPlayer player, Materials materials, int layerNumber) {
+        return fetchWater(client, player, materials, layerNumber, Integer.MAX_VALUE);
+    }
+
+    /** The most steps a walk to fill an empty bucket goes, where a box would give a full one instead. */
+    private static final int NEAR_WATER_STEPS = 12;
+
+    /** As {@link #fetchWater}, walking no more than {@code maxSteps} to the water. */
+    private boolean fetchWater(Minecraft client, LocalPlayer player, Materials materials, int layerNumber, int maxSteps) {
         if (materials.loose(Items.BUCKET) == 0) {
             startRestock(client, player, Items.BUCKET, materials);
             return true;
@@ -3906,7 +3938,7 @@ public final class SchematicBuilder {
             }
             return 0;
         });
-        if (path == null || path.nodes().size() < 2 || dropsIntoTrap(player, path)) return false;
+        if (path == null || path.nodes().size() < 2 || path.nodes().size() - 1 > maxSteps || dropsIntoTrap(player, path)) return false;
         releaseKeys(client);
         walker.start(path.nodes());
         show("Walking to water to fill a bucket", false);
@@ -7905,6 +7937,8 @@ public final class SchematicBuilder {
             Item item = plan.item(i);
             if (item == null || materials.loose(item) > 0 || materials.total(item) == 0) continue;
             if (noBoxHere(item) || waitsForRoom(item, materials)) continue;
+            // An empty bucket carried is filled at water that comes back once there (see decide's pours), not a box opened.
+            if (item == Items.WATER_BUCKET && materials.loose(Items.BUCKET) > 0 && waterAbout(player, plan.pos(i))) continue;
             if (tick - fetchedBeforeWalk.getOrDefault(item, -FETCH_BEFORE_WALK_TICKS) < FETCH_BEFORE_WALK_TICKS) continue;
             if (support(player, i, started) != 1 || !lift && seals(player, i, started) == 1) continue;
             // With no room for a box here, a walk to room first (startRestock's), but only when nothing carried goes in on
@@ -8099,8 +8133,11 @@ public final class SchematicBuilder {
                 if (kept == 1) continue;
                 rank = kept <= HELPER_STACKS ? 5 : 1;
             } else if (stack.is(Items.BUCKET)) {
-                // A few empty ones stay, to fill for the water the next layers still take.
-                if (carried.loose(Items.BUCKET) - stack.getCount() < Math.min(3, soon.getOrDefault(Items.WATER_BUCKET, 0))) continue;
+                // A few empty ones stay, to fill for the water the build still takes, at water that comes back (fetchWater):
+                // not only that of the next layers, whose kelp spots' buckets wait for their solid blocks and count none.
+                int water = Math.max(soon.getOrDefault(Items.WATER_BUCKET, 0), needs.getOrDefault(Items.WATER_BUCKET, 0));
+                // Traded for full ones in a box opened for water, they do go: the fill nearby came first (decide's pours).
+                if (restockItem != Items.WATER_BUCKET && carried.loose(Items.BUCKET) - stack.getCount() < Math.min(3, water)) continue;
                 rank = 0;
             } else if (needs.containsKey(item) && !soon.containsKey(item)) {
                 rank = 0;
@@ -8123,6 +8160,13 @@ public final class SchematicBuilder {
                 rank = in != null && plan.count(BuildPlan.Status.DONE) - in < SWAP_BACK_AFTER ? 7 : 6;
             } else {
                 continue;
+            }
+            // Nor, whatever its rank, one just swapped in: in v4-full7 glass came out for a bucket, the bucket out for the
+            // glass two seconds later, and iron bars for another (08:27:23..28), each a box trip. Last, as rank 7 is.
+            Integer swapped = swappedIn.get(item);
+            if (rank > 0 && rank < 7 && swapped != null && plan.count(BuildPlan.Status.DONE) - swapped < SWAP_BACK_AFTER) {
+                if (!swap) continue;
+                rank = 7;
             }
             if (rank == 6 && nearest == null) nearest = nearestPending(player);
             if (rank < bestRank || rank == 6 && bestRank == 6 && laterThan(nearest, stack, menu.getSlot(best).getItem())
