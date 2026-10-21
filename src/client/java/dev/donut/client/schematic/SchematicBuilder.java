@@ -7862,19 +7862,36 @@ public final class SchematicBuilder {
         long started = System.nanoTime();
         int tried = 0;
         for (int i : candidates) {
-            if (plan.status(i) != BuildPlan.Status.PENDING || plan.kind(i) != BlockRules.Kind.PLACE) continue;
+            // Water too: v4-full3 walked down among the layer's last sources at 17,66,29..31 with no bucket carried, found
+            // no room for a box there, climbed out and walked back down, every 25 s.
+            BlockRules.Kind kind = plan.kind(i);
+            if (plan.status(i) != BuildPlan.Status.PENDING || kind != BlockRules.Kind.PLACE && kind != BlockRules.Kind.FLUID) continue;
+            if (kind == BlockRules.Kind.FLUID && plan.wetWaits(i)) continue;
             if (++tried > 24 || System.nanoTime() - started > 5_000_000L) break;
             Item item = plan.item(i);
             if (item == null || materials.loose(item) > 0 || materials.total(item) == 0) continue;
             if (noBoxHere(item) || waitsForRoom(item, materials)) continue;
             if (tick - fetchedBeforeWalk.getOrDefault(item, -FETCH_BEFORE_WALK_TICKS) < FETCH_BEFORE_WALK_TICKS) continue;
             if (support(player, i, started) != 1 || !lift && seals(player, i, started) == 1) continue;
-            if (boxSpots(player, Navigator.standingAt(player.level(), player).floor().above(), player.position()).isEmpty()) return false;
+            // With no room for a box here, a walk to room first (startRestock's), but only when nothing carried goes in on
+            // the way: else those blocks go in first, and the fetch comes where a box goes in.
+            if (boxSpots(player, Navigator.standingAt(player.level(), player).floor().above(), player.position()).isEmpty()
+                    && carriesAny(player, candidates, materials, started)) return false;
             fetchedBeforeWalk.put(item, tick);
             if (debug()) LOGGER.info("Taking {} out of a shulker box before the walk for {} at {}", name(item), plan.target(i),
                     plan.pos(i).toShortString());
             startRestock(client, player, item, materials);
             return restock != Restock.NONE || swapFrom >= 0 || walker.active();
+        }
+        return false;
+    }
+
+    /** Whether a block of {@code candidates} that can go in now is one the player carries loose; yes when out of time. */
+    private boolean carriesAny(LocalPlayer player, List<Integer> candidates, Materials materials, long started) {
+        for (int i : candidates) {
+            if (plan.status(i) != BuildPlan.Status.PENDING) continue;
+            Item item = plan.item(i);
+            if (item != null && materials.loose(item) > 0 && support(player, i, started) != 2) return true;
         }
         return false;
     }
@@ -7995,19 +8012,23 @@ public final class SchematicBuilder {
      * With no room in the inventory for what the box was opened for, and none in the box to put something back into, a
      * stack that can go back is swapped for a stack of it: picked up, put down on the box's, and that one put where the
      * first was, as a player does. False when there is nothing to swap.
+     * An item that doesn't stack, a water bucket, is swapped again while the next layers want more of it, for stacks they
+     * don't need now only: one a box trip, v4-full3 walked back to a box for each source of layer 2, the inventory full.
      */
     private boolean swapForRoom(ShulkerBoxMenu menu, LocalPlayer player) {
         Materials carried = Materials.of(player.getInventory());
-        if (player.hasInfiniteMaterials() || carried.freeSlots() > 2 || carried.loose(restockItem) > 0) return false;
+        int have = carried.loose(restockItem);
+        boolean more = have > 0 && restockItem.getDefaultMaxStackSize() == 1 && have < soon.getOrDefault(restockItem, 0);
+        if (player.hasInfiniteMaterials() || carried.freeSlots() > 2 || have > 0 && !more) return false;
         int wanted = -1;
         for (int slot = 0; slot < 27 && wanted < 0; slot++) if (menu.getSlot(slot).getItem().is(restockItem)) wanted = slot;
         if (wanted < 0) {
-            if (debug()) LOGGER.info("No swap for {} in the full inventory: the open box holds none", name(restockItem));
+            if (debug() && !more) LOGGER.info("No swap for {} in the full inventory: the open box holds none", name(restockItem));
             return false;
         }
-        int back = toPutBack(menu, player, carried, true);
+        int back = toPutBack(menu, player, carried, !more);
         if (back < 0) {
-            if (debug()) LOGGER.info("No swap for {} in the full inventory: nothing carried can go back into the box", name(restockItem));
+            if (debug() && !more) LOGGER.info("No swap for {} in the full inventory: nothing carried can go back into the box", name(restockItem));
             return false;
         }
         if (debug()) LOGGER.info("Swapping {} for {} in the full shulker box", menu.getSlot(back).getItem(), menu.getSlot(wanted).getItem());
