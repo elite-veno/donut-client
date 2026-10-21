@@ -7886,12 +7886,22 @@ public final class SchematicBuilder {
                 // Somewhere else, where a box goes in with a real look: here none did, though there may be room.
                 Navigator.Node start = Navigator.standingAt(player.level(), player);
                 double reach = player.blockInteractionRange() - 0.2;
+                // For the debug line when no walk is found: places reached, off the build, with a spot beside, lowest feet.
+                Set<Long> seenNodes = new HashSet<>();
+                int[] tally = new int[3];
+                double[] lowest = {Double.MAX_VALUE};
                 Navigator.Goal roomy = node -> {
+                    if (seenNodes.add(node.key())) {
+                        if (offBuild(node.standing())) tally[0]++;
+                        lowest[0] = Math.min(lowest[0], node.feet());
+                    }
                     if (node.key() == start.key()) return 0;
                     List<BlockPos> spots = boxSpots(player, node.floor().above(), node.standing());
+                    if (!spots.isEmpty()) tally[1]++;
                     for (BlockPos at : spots.subList(0, Math.min(3, spots.size()))) {
                         if (PlacementSolver.fromSpot(player, node.standing(), at, boxState, shulker, reach, helpers::containsKey) != null
                                 && boxSeenFrom(player, node.eye(), at) && walksInto(player, node, at)) return 1;
+                        tally[2]++;
                     }
                     return 0;
                 };
@@ -7924,8 +7934,9 @@ public final class SchematicBuilder {
                     if (escape && debug()) LOGGER.info("No room for a shulker box down here: climbing out over cells the build fills later to {} {} {}",
                             path.end().x(), path.end().feet(), path.end().z());
                 }
-                if (path == null && debug()) LOGGER.info("No walk to room for a shulker box from {}: {} helper blocks carried, a drop of {} at most",
-                        start, helpersLoose(player), down);
+                if (path == null && debug()) LOGGER.info("No walk to room for a shulker box from {}: {} helper blocks carried, a drop of {} at most;"
+                        + " {} places reached, {} off the build, lowest feet {}, {} with a box spot beside, {} spots no click or look or way in",
+                        start, helpersLoose(player), down, seenNodes.size(), tally[0], lowest[0] == Double.MAX_VALUE ? "-" : lowest[0], tally[1], tally[2]);
                 if (path != null && dropsIntoTrap(player, path)) path = null;
                 if (path != null && path.nodes().size() > 1 && restockWalks < 3) {
                     if (!climbReady(client, player, path)) return;
