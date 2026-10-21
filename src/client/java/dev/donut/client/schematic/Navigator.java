@@ -322,6 +322,12 @@ public final class Navigator {
         if (leaning != 0) cost += 0.45 * unit(to.key() ^ leaning);
         // A narrow top holds the player, but a little drift drops them off it: wider ground is taken where there is some.
         if (narrow(to.x(), to.y(), to.z())) cost += 3;
+        // In water with a drop beside, water floats the player off the edge a few tenths at a time, and a jump or a drop
+        // there comes down off it: v1-full7 dropped into the kelp water over the dispenser column at 9, 67, 6 and was
+        // carried off its edge into the channel beside. Walked through only where no other way is, never jumped or
+        // dropped into or out of, unless that is the only way at all.
+        boolean wetEdge = wetOverDrop(to) || wetOverDrop(from);
+        if (wetEdge) cost += to.move() == Move.WALK ? WET_EDGE : WET_EDGE_LEAP;
         return cost;
     }
 
@@ -494,6 +500,32 @@ public final class Navigator {
         BlockPos feet = node.feetCell();
         if (level.getFluidState(feet).getFlow(level, feet).lengthSqr() > 1e-6) return true;
         return level.getBlockState(node.floor()).getBlock().getFriction() > SLIPPERY;
+    }
+
+    /** What a walk into or out of water with a drop beside costs more; and a jump or a drop. */
+    private static final double WET_EDGE = 6, WET_EDGE_LEAP = 30;
+    /** {@link #wetOverDrop} worked out in this search, by place. */
+    private final Map<Long, Boolean> wetEdges = new HashMap<>();
+
+    /** Whether the feet at {@code node} are in water with a drop of more than a block and a half beside them. */
+    private boolean wetOverDrop(Node node) {
+        return wetEdges.computeIfAbsent(node.key(), k -> {
+            BlockPos feet = node.feetCell();
+            if (level.getFluidState(feet).isEmpty()) return false;
+            BlockPos floor = node.floor();
+            for (Direction side : Direction.Plane.HORIZONTAL) {
+                BlockPos beside = floor.relative(side);
+                boolean ground = false;
+                // As in narrowOverDrop: something beside at most a block and a half under the feet, or a wall.
+                for (int dy = 1; dy >= -1 && !ground; dy--) {
+                    BlockPos cell = beside.above(dy);
+                    VoxelShape shape = level.getBlockState(cell).getCollisionShape(level, cell);
+                    ground = !shape.isEmpty() && cell.getY() + shape.max(Direction.Axis.Y) >= node.feet() - 1.5;
+                }
+                if (!ground) return true;
+            }
+            return false;
+        });
     }
 
     /** Friction past which a floor is slippery, as ice is: 0.6 is the usual. */
