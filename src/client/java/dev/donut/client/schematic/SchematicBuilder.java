@@ -3909,10 +3909,15 @@ public final class SchematicBuilder {
             startRestock(client, player, Items.BUCKET, materials);
             return true;
         }
-        if (tick - waterTick > 40) {
-            renewing = renewingWater(player);
-            waterTick = tick;
+        // Bucket after bucket: the cell just filled from comes back first (a few ticks), and what comes back is worked out
+        // afresh for each, else the next is filled from its neighbour, left with a single source beside it, and the
+        // channel keeps a hole for good (da, on c6-44).
+        if (filledFrom != null && !player.level().getFluidState(filledFrom).isSource()) {
+            show("Waiting for the water to come back", false);
+            return true;
         }
+        renewing = renewingWater(player);
+        waterTick = tick;
         if (renewing.isEmpty()) return false;
         double reach = player.blockInteractionRange();
         Vec3 eye = player.getEyePosition();
@@ -3965,7 +3970,7 @@ public final class SchematicBuilder {
                     // Not a spot of the build still to go in, as kelp poured into first (da-45): the bucket would take the
                     // water it waits for, to be poured back (v1-clean6, 9,69,16, twice).
                     int j = plan.indexOf(at);
-                    if (j >= 0 && plan.status(j) == BuildPlan.Status.PENDING) continue;
+                    if (j >= 0 && (plan.status(j) == BuildPlan.Status.PENDING || plan.status(j) == BuildPlan.Status.UNLOADED)) continue;
                     int sources = 0;
                     for (Direction side : Direction.Plane.HORIZONTAL) {
                         FluidState beside = level.getFluidState(at.relative(side));
