@@ -3243,6 +3243,20 @@ public final class SchematicBuilder {
         return player.onGround() && Navigator.narrowOverDrop(player.level(), Navigator.standingAt(player.level(), player));
     }
 
+    /**
+     * Whether a block of the build beside {@code pos} is still to go in and can go in now, without a helper block: one a
+     * block may be placed against once it is. Two side by side over air that each wait for the other would wait for good.
+     */
+    private boolean neighbourToCome(LocalPlayer player, BlockPos pos) {
+        for (Direction side : Direction.values()) {
+            int j = plan.indexOf(pos.relative(side));
+            if (j < 0 || plan.status(j) != BuildPlan.Status.PENDING || plan.kind(j) != BlockRules.Kind.PLACE || plan.target(j).isAir()) continue;
+            Item item = BlockRules.item(plan.target(j));
+            if (item != null && PlacementSolver.supported(player, plan.pos(j), plan.target(j), new ItemStack(item), at -> unclickable(at, j))) return true;
+        }
+        return false;
+    }
+
     /** Whether block {@code i} can go in yet, worked out once for the blocks around it as they are: 1 yes, 2 no, 0 out of time. */
     private byte support(LocalPlayer player, int i, long started) {
         BlockPos pos = plan.pos(i);
@@ -3277,8 +3291,16 @@ public final class SchematicBuilder {
                 // Nothing to click that gives it the right facing: a helper block put down and taken away again can.
                 // Against a block that isn't a helper itself: a helper spot held up by another helper, a walk's say, never
                 // goes in, as helpers aren't clicked to put one down (see placeHelper), and the block waits for it for good.
-                BlockPos helper = PlacementSolver.helperFor(player, pos, target, new ItemStack(item), cell -> helperAllowed(player, cell),
-                        helpers::containsKey);
+                // Not in a spot the build shuts in, where nothing reaches it to take it away again (see BuildPlan.enclosed),
+                // while a block of the build beside it is still to go in and may hold it up instead: the glass at
+                // 31, 78, 33 in the bone-meal crafter took one in the closed-off cell under it, with the glass beside it
+                // going in a moment later, and it was left standing at the end.
+                BlockPos helper = PlacementSolver.helperFor(player, pos, target, new ItemStack(item),
+                        cell -> helperAllowed(player, cell) && !plan.enclosed(cell), helpers::containsKey);
+                if (helper == null && !neighbourToCome(player, pos)) {
+                    helper = PlacementSolver.helperFor(player, pos, target, new ItemStack(item), cell -> helperAllowed(player, cell),
+                            helpers::containsKey);
+                }
                 if (helper != null) {
                     helperSpot.put(i, helper);
                     supported = true;
@@ -4751,7 +4773,15 @@ public final class SchematicBuilder {
     /** Whether water stands or runs beside or over the block at {@code pos}, to run into its cell once it is gone. */
     private static boolean holdsBackWater(BlockGetter level, BlockPos pos) {
         for (Direction side : Direction.values()) {
-            if (side != Direction.DOWN && !level.getFluidState(pos.relative(side)).isEmpty()) return true;
+            if (side == Direction.DOWN) continue;
+            BlockPos next = pos.relative(side);
+            if (level.getFluidState(next).isEmpty()) continue;
+            // Water in a block whose face toward the spot is whole stays in it, as vanilla lets it out only through a face
+            // the block's shape leaves open: waterlogged leaves beside a helper block (the bone-meal crafter's 5, 66, 31 by
+            // 5, 66, 32, left standing at the end, every place in reach of it called flooded).
+            BlockState there = level.getBlockState(next);
+            if (!(there.getBlock() instanceof LiquidBlock) && Block.isFaceFull(there.getCollisionShape(level, next), side.getOpposite())) continue;
+            return true;
         }
         return false;
     }
