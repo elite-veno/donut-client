@@ -97,6 +97,23 @@ class NavigatorTest {
     }
 
     @Test
+    void aFarDropGoesDownAnAisleOpenOnTheGround() {
+        // Two blocks of stone y 65..69, x 0..1 and 3..4, with an aisle a block wide at x 2 between them, open at both ends,
+        // in the middle of a build wider than they are: no edge of it to jump off near by.
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        for (int x : new int[] {0, 1, 3, 4}) {
+            for (int z = 0; z <= 2; z++) {
+                for (int y = 65; y <= 69; y++) blocks.put(new BlockPos(x, y, z), Blocks.STONE.defaultBlockState());
+            }
+        }
+        AABB build = new AABB(-8, 65, -8, 13, 70, 11);
+        Navigator.Node start = new Navigator.Node(1, 69, 1, 70, Navigator.Move.START);
+        Navigator.Path path = navigator(world(blocks)).dropsOff(6, build).find(start, node -> node.x() == 2 && node.feet() < 66 ? 1 : 0);
+        assertNotNull(path);
+        assertEquals(65, path.end().feet(), 1e-6);
+    }
+
+    @Test
     void walkingOnFlatGroundIsAWalk() {
         Navigator.Node start = new Navigator.Node(0, 64, 0, 65, Navigator.Move.START);
         Navigator.Path path = navigator(world(Map.of())).find(start, node -> node.x() == 1 && node.z() == 0 ? 1 : 0);

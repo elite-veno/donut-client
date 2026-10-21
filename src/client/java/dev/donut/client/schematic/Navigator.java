@@ -174,7 +174,10 @@ public final class Navigator {
     /**
      * Lets a drop go down as far as {@code feet}, past the usual {@link #DROP}, where it lands outside {@code off} seen from
      * above: off the top of a build onto the open ground round it, as a player jumps down a few blocks when there is no
-     * other way, never into a gap within the build.
+     * other way, never into a gap within the build. Or onto the ground under the build's lowest layer in an aisle between
+     * its parts, open on the ground to a side: v4-full8r climbed a pillar of helper blocks at 7,65..68,25 into the kelp
+     * section between two hopper rows, and found no way back down for good, 40 helper blocks carried, with nothing
+     * standing at the build's edge to bridge out from. A shaft down to the ground, with walls round its foot, stays shut.
      */
     public Navigator dropsOff(double feet, AABB off) {
         farDrop = feet;
@@ -359,13 +362,15 @@ public final class Navigator {
             int nx = from.x() + d[0], nz = from.z() + d[1];
             if (nx < area.minX || nx >= area.maxX || nz < area.minZ || nz >= area.maxZ) continue;
             boolean diagonal = d[0] != 0 && d[1] != 0;
-            boolean farOff = farDrop > DROP && (nx + 1 <= farDropOff.minX || nx >= farDropOff.maxX || nz + 1 <= farDropOff.minZ || nz >= farDropOff.maxZ);
-            int lowest = from.y() - 4 - (farOff ? (int) Math.ceil(farDrop - DROP) : 0);
+            boolean far = farDrop > DROP;
+            boolean offSide = far && (nx + 1 <= farDropOff.minX || nx >= farDropOff.maxX || nz + 1 <= farDropOff.minZ || nz >= farDropOff.maxZ);
+            int lowest = from.y() - 4 - (far ? (int) Math.ceil(farDrop - DROP) : 0);
             for (int ny = from.y() + 2; ny >= lowest; ny--) {
                 if (ny < area.minY || ny >= area.maxY) continue;
                 Double feet = standable(nx, ny, nz);
                 if (feet == null) continue;
                 double rise = feet - from.feet();
+                boolean farOff = offSide || far && feet <= farDropOff.minY + 1e-3 && openFoot(nx, ny, nz, feet);
                 if (rise > JUMP || rise < -(farOff ? farDrop : DROP)) continue;
                 // Into or out of a bowl, as a hopper's or a composter's, the feet get over its rim on the way, higher
                 // than where they rest: a step that looks small can take a jump.
@@ -466,6 +471,16 @@ public final class Navigator {
             }
         }
         return out;
+    }
+
+    /** Whether a place to stand at {@code feet} on the floor at x, y, z leads on, on foot, to one beside it. */
+    private boolean openFoot(int x, int y, int z, double feet) {
+        for (int[] d : DIRECTIONS) {
+            if (d[0] != 0 && d[1] != 0) continue;
+            Double next = standable(x + d[0], y, z + d[1]);
+            if (next != null && Math.abs(next - feet) <= STEP && clear(x + d[0], z + d[1], next, Math.max(next, feet) + BODY, y)) return true;
+        }
+        return false;
     }
 
     /** Whether the column at x, z has ground on one of the two floors given, within a step of the feet heights a and b. */
