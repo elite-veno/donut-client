@@ -4050,6 +4050,18 @@ public final class SchematicBuilder {
      * Whether the player stands on a narrow top, a closed gate's or a fence's, with a drop of two blocks or more right
      * beside it: a few centimetres of drift off it and they are down there.
      */
+    /**
+     * Whether the middle of the body is out over a drop of more than a block, the player held up only by the edge of a
+     * block beside: crouching is what keeps them there.
+     */
+    private static boolean overDrop(LocalPlayer player) {
+        if (!player.onGround()) return false;
+        Level level = player.level();
+        BlockPos under = BlockPos.containing(player.getX(), player.getY() - 0.05, player.getZ());
+        return level.getBlockState(under).getCollisionShape(level, under).isEmpty()
+                && level.getBlockState(under.below()).getCollisionShape(level, under.below()).isEmpty();
+    }
+
     private static boolean onNarrowEdge(LocalPlayer player) {
         return player.onGround() && Navigator.narrowOverDrop(player.level(), Navigator.standingAt(player.level(), player));
     }
@@ -6934,7 +6946,7 @@ public final class SchematicBuilder {
 
     private void walk(Minecraft client, LocalPlayer player) {
         walker.careful(carefulSteps);
-        if (player.isShiftKeyDown() && !walker.holdsCrouch() && !climbCrouch) setCrouch(client, false);
+        if (player.isShiftKeyDown() && !walker.holdsCrouch() && !climbCrouch && !overDrop(player)) setCrouch(client, false);
         Walker.State state = walker.tick(client, player, new Walker.Climb() {
             @Override
             public boolean ready(BlockPos cell) {
@@ -6977,7 +6989,10 @@ public final class SchematicBuilder {
             if (debug()) LOGGER.info("Walk failed at {}: {}", player.position(), walker.failure());
             // Crouched for a bridge or an edge when it failed: up again, so what comes next isn't done from a lower eye. Not
             // on a narrow top over a drop, where crouching is what holds the player.
-            if (crouchHeld && !onNarrowEdge(player)) setCrouch(client, false);
+            // Nor with the middle of the body out over a drop, held only by the edge of the block beside, as a bridge leans
+            // out: v4-full14r stood up so at 12.30 74 19.7 over the shaft at 12 73 19, slid off with what was left of the
+            // lean and fell eight blocks into the space under the channels, shut in there.
+            if (crouchHeld && !onNarrowEdge(player) && !overDrop(player)) setCrouch(client, false);
             // The same step would fail the same way: the next walk goes around it.
             Navigator.Node[] step = walker.failedStep();
             if (step != null) {
