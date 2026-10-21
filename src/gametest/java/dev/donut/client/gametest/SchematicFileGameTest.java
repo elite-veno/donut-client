@@ -35,7 +35,10 @@ import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BedPart;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.ChestType;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -320,6 +323,21 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                 BlockPos cell = BlockPos.of(pos);
                 // Not "{{{}}}": slf4j has no escape for a brace, and printed both.
                 LOGGER.info("Resumed Block" + "{" + id + "} at {}, {}, {}:", cell.getX(), cell.getY(), cell.getZ());
+            }
+        }
+        // A door's upper half, a tall plant's, a bed's head: placed with the half clicked, never logged on its own. Left out,
+        // the half logged was set in place alone, and crafter-clean13r ended with three doors short of their tops.
+        for (int i = 0; i < schematic.size(); i++) {
+            BlockState target = Schematic.place(schematic.state(i), Mirror.NONE, Rotation.NONE);
+            BlockPos pos = Schematic.place(schematic.pos(i), ORIGIN, Mirror.NONE, Rotation.NONE);
+            BlockPos clicked = null;
+            if (target.hasProperty(BlockStateProperties.DOUBLE_BLOCK_HALF) && target.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF) == DoubleBlockHalf.UPPER) {
+                clicked = pos.below();
+            } else if (target.hasProperty(BlockStateProperties.BED_PART) && target.getValue(BlockStateProperties.BED_PART) == BedPart.HEAD) {
+                clicked = pos.relative(target.getValue(BlockStateProperties.HORIZONTAL_FACING).getOpposite());
+            }
+            if (clicked != null && placed.contains(clicked.asLong()) && placed.add(pos.asLong())) {
+                LOGGER.info("Resumed Block" + "{" + BuiltInRegistries.BLOCK.getKey(target.getBlock()) + "} at {}, {}, {}:", pos.getX(), pos.getY(), pos.getZ());
             }
         }
         return placed;
