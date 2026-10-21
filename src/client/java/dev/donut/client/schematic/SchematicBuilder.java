@@ -1452,7 +1452,7 @@ public final class SchematicBuilder {
             // Out: on top of the layer or off the build, or anywhere the pocket didn't reach with a way on from there. A way
             // out found from inside, as soon as the block is gone, is no reason yet to put it back.
             Navigator.Node here = Navigator.standingAt(level, player);
-            boolean out = player.getY() >= layerY + 1 - 1e-3 || offBuild(player.position())
+            boolean out = outAt(player.getBlockX(), player.getY(), player.getBlockZ(), player.position())
                     || !pocketPlaces.contains(here.key()) && exitFrom(player, level, here, null) != null;
             if (!out) outSince = -1;
             else if (outSince < 0) outSince = tick;
@@ -2727,7 +2727,7 @@ public final class SchematicBuilder {
         BlockPos pos = plan.pos(i);
         if (plan.target(i).getCollisionShape(player.level(), pos).isEmpty()) return true;
         // Out already: on top of the layer, or off the build.
-        if (player.getY() >= layerY + 1 - 1e-3 || offBuild(player.position())) return true;
+        if (outAt(player.getBlockX(), player.getY(), player.getBlockZ(), player.position())) return true;
         // The way out there is now, worked out once a tick. A block anywhere off it, near or as far as reach goes,
         // leaves it open; one on it may close the last way out, and the search is made again with it in place.
         if (exitTick != tick) {
@@ -2796,7 +2796,7 @@ public final class SchematicBuilder {
     private Navigator.Path exitFrom(LocalPlayer player, BlockGetter view, Navigator.Node start, Set<Long> reached) {
         return navigator(player, view, true).limit(3000).find(start, node -> {
             if (reached != null) reached.add(node.key());
-            return node.feet() >= layerY + 1 - 1e-3 || offBuild(node.standing()) ? 1 : 0;
+            return outAt(node.x(), node.feet(), node.z(), node.standing()) ? 1 : 0;
         });
     }
 
@@ -2839,7 +2839,7 @@ public final class SchematicBuilder {
         climbUpChecked = tick;
         Level level = player.level();
         Navigator.Node start = Navigator.standingAt(level, player);
-        if (start.feet() >= layerY + 1 - 1e-3 || offBuild(start.standing())) return false;
+        if (outAt(start.x(), start.feet(), start.z(), start.standing())) return false;
         Navigator.Path path = escapeFrom(player, level, start, null);
         if (path == null || path.nodes().size() < 2) return false;
         if (!climbReady(client, player, path)) {
@@ -2965,9 +2965,8 @@ public final class SchematicBuilder {
             // Nor from down in the build, under its layer: climbUpOut takes the player back up from there before the helper
             // comes away, onto the very helper, and the two walks went to and fro until escapeWalks gave up on it (v4-fresh3
             // 05:42:56, 4, 69, 28 in the kelp channel, walked to from 5 69 28 three times).
-            double out = layerY + 1 - 1e-3;
             Navigator.Path path = navigator(player, true).find(start, node -> node.key() == start.key() || pocketPlaces.contains(node.key())
-                    || node.feet() < out && !offBuild(node.standing())
+                    || !outAt(node.x(), node.feet(), node.z(), node.standing())
                     || node.x() == at.getX() && node.z() == at.getZ() && node.feet() >= at.getY()
                     || holdsWater && floods(level, at, node.standing()) ? 0 : viewScore(player, node.eye(), at, reach));
             if (path == null || dropsIntoTrap(player, path)) {
@@ -3044,6 +3043,23 @@ public final class SchematicBuilder {
     private boolean offBuild(Vec3 at) {
         AABB b = plan.bounds;
         return at.x < b.minX - 1 || at.x >= b.maxX + 1 || at.z < b.minZ - 1 || at.z >= b.maxZ + 1;
+    }
+
+    /**
+     * Whether a place to stand is out of the build, as a way out of a pocket ends: off it, or on top of the layer with
+     * nothing of the build in place over the head. A layer above already in, as when the build goes back down to a lower
+     * layer's water, roofs the top of that one over: v4-full5 went down through an open gate into the water channel
+     * 10..17, 66, 5..7 under the gates at y 68, and a helper block in the channel, a block over its floor, counted as out
+     * of it.
+     */
+    private boolean outAt(int x, double feet, int z, Vec3 standing) {
+        if (offBuild(standing)) return true;
+        if (feet < layerY + 1 - 1e-3) return false;
+        for (int y = (int) Math.floor(feet + 1e-3) + 1; y < plan.bounds.maxY; y++) {
+            int i = plan.indexOf(BlockPos.asLong(x, y, z));
+            if (i >= 0 && !plan.target(i).isAir() && plan.status(i) == BuildPlan.Status.DONE) return false;
+        }
+        return true;
     }
 
     /** Whether a walk drops into a place with no way back out; if so, every place shut in with it goes into {@link #traps}. */
