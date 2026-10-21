@@ -340,13 +340,17 @@ final class Walker {
         // a player walking on past the corner and off the side of a walkway one block wide, as a player who knows ice
         // slows down for the bend.
         boolean onIce = player.onGround() && slippery(player);
-        boolean settle = last || onIce && (turnsAfter(index) || !open(player, to));
+        // So too a corner on a narrow top over a drop: v1-full7r (07:47:12) went west along closed gates' tops at 70.5, their
+        // bars at x 7.375..7.625, turned at 7,9 counted there 0.2 off while the run west still carried on, and the body
+        // went off the bar at x 7.02 and fell. A few ticks a corner, there only.
+        boolean narrowTurn = !last && onTop && narrow && turnsAfter(index);
+        boolean settle = last || onIce && (turnsAfter(index) || !open(player, to)) || narrowTurn;
         // The last step ends standing; one on the way also counts passed over mid-hop, close above where it stands. On a
         // narrow top over a drop, one on the way is passed only close to its middle, so the next step starts on the line.
         boolean there = last ? player.onGround() && Math.abs(at.y - to.feet()) < 0.6
                 : (player.onGround() ? Math.abs(at.y - to.feet()) < 0.6 : at.y >= to.feet() - 0.05 && at.y - to.feet() < 0.45);
-        if (!last && settle && slide(player) > 0.3) there = false;
-        if (there && distance < (last ? (onIce ? 0.4 : precise ? 0.13 : 0.25) : settle ? 0.4 : narrow ? 0.2 : 0.45)) {
+        if (!last && settle && slide(player) > (narrowTurn ? 0.1 : 0.3)) there = false;
+        if (there && distance < (last ? (onIce ? 0.4 : precise ? 0.13 : 0.25) : narrowTurn ? 0.2 : settle ? 0.4 : narrow ? 0.2 : 0.45)) {
             if (bridgeCrouch) {
                 // On the block put down: standing up again.
                 climb.crouch(false);
