@@ -195,6 +195,8 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
             String spareText = System.getenv("DONUT_SCHEMATIC_SPARE");
             int spare = spareText == null || spareText.isBlank() ? 0 : Integer.parseInt(spareText.trim());
             if (spare > 0) bill.replaceAll((item, count) -> item == Items.DIRT ? count : count + Math.max(1, count * spare / 100));
+            int wettestLayer = wettestLayer(schematic, preplace, fromY, resumed);
+            if (!fromOrders) capWater(bill, wettestLayer, 0);
             java.util.UUID player = server.computeOnServer(s -> s.getPlayerList().getPlayers().getFirst().getUUID());
             if (fromOrders) {
                 // The helper dirt stays in hand, as a player brings their own.
@@ -227,7 +229,10 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                 }
                 if (!topUp.isEmpty()) {
                     if (fromOrders) DonutOrders.fill(player, topUp);
-                    else giveInShulkers(server, topUp);
+                    else {
+                        capWater(topUp, wettestLayer, carriedBoxes(server));
+                        giveInShulkers(server, topUp);
+                    }
                     LOGGER.info("Topped up what the plan still needs: {}", topUp);
                 }
             }
@@ -359,16 +364,60 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
      */
     private static void giveInShulkers(TestServerContext server, Map<Item, Integer> bill) {
         List<String> gives = BuildCheck.shulkerGives(bill);
-        int carried = server.computeOnServer(s -> {
-            int n = 0;
-            for (ItemStack stack : s.getPlayerList().getPlayers().getFirst().getInventory()) if (Materials.isShulkerBox(stack)) n++;
-            return n;
-        });
+        int carried = carriedBoxes(server);
         require(carried + gives.size() <= MOST_BOXES, "The materials take " + (carried + gives.size()) + " shulker boxes, "
                 + carried + " of them carried already; at most " + MOST_BOXES + " leave room to take blocks out of one."
                 + " Build fewer layers (DONUT_SCHEMATIC_FROM_Y) or bring less spare (DONUT_SCHEMATIC_SPARE).");
         for (String give : gives) server.runCommand(give);
         LOGGER.info("Gave the materials in {} shulker boxes", gives.size());
+    }
+
+    private static int carriedBoxes(TestServerContext server) {
+        return server.computeOnServer(s -> {
+            int n = 0;
+            for (ItemStack stack : s.getPlayerList().getPlayers().getFirst().getInventory()) if (Materials.isShulkerBox(stack)) n++;
+            return n;
+        });
+    }
+
+    /**
+     * Water buckets don't stack, and the bill counts one for each source, block full of water and kelp or seagrass spot:
+     * ikea_v4 came to 34 boxes so (v4-fresh2), past {@link #MOST_BOXES}. Where they don't all fit with the rest, as many go
+     * in as do, but never fewer than the layer that takes the most, and a stack of empty buckets besides: the builder fills
+     * them where water comes back, as a player does who brings a few.
+     */
+    private static void capWater(Map<Item, Integer> bill, int wettestLayer, int carried) {
+        int water = bill.getOrDefault(Items.WATER_BUCKET, 0);
+        if (water == 0) return;
+        int stacks = 0;
+        for (Map.Entry<Item, Integer> e : bill.entrySet()) {
+            int max = e.getKey().getDefaultMaxStackSize();
+            if (e.getKey() != Items.WATER_BUCKET) stacks += (e.getValue() + max - 1) / max;
+        }
+        int slots = (MOST_BOXES - carried) * 27;
+        if (stacks + water <= slots) return;
+        int kept = Math.max(wettestLayer, slots - stacks - 1);
+        bill.put(Items.WATER_BUCKET, kept);
+        bill.merge(Items.BUCKET, Items.BUCKET.getDefaultMaxStackSize(), Integer::sum);
+        LOGGER.info("Water buckets: {} of the {} the bill counts, the most a layer takes {}, and {} empty ones to fill",
+                kept, water, wettestLayer, Items.BUCKET.getDefaultMaxStackSize());
+    }
+
+    /** The most water buckets one layer still to build takes, counted as the bill counts them. */
+    private static int wettestLayer(Schematic schematic, Set<Block> preplace, int fromY, Set<Long> resumed) {
+        Map<Integer, Integer> byLayer = new HashMap<>();
+        for (int i = 0; i < schematic.size(); i++) {
+            BlockState target = Schematic.place(schematic.state(i), Mirror.NONE, Rotation.NONE);
+            BlockPos pos = Schematic.place(schematic.pos(i), ORIGIN, Mirror.NONE, Rotation.NONE);
+            if (preplace.contains(target.getBlock()) || pos.getY() < fromY || resumed.contains(pos.asLong())) continue;
+            BlockRules.Kind kind = BlockRules.kind(target);
+            boolean bucket = kind == BlockRules.Kind.FLUID && BlockRules.item(target) == Items.WATER_BUCKET
+                    || kind == BlockRules.Kind.PLACE && (BlockRules.soaked(target) || BlockRules.wet(target));
+            if (bucket) byLayer.merge(pos.getY(), 1, Integer::sum);
+        }
+        int most = 0;
+        for (int n : byLayer.values()) most = Math.max(most, n);
+        return most;
     }
 
     /** Every block the builder places that the world doesn't hold as the schematic has it, with a count per kind. */
