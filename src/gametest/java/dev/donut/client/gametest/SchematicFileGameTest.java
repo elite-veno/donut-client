@@ -196,7 +196,7 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
             int spare = spareText == null || spareText.isBlank() ? 0 : Integer.parseInt(spareText.trim());
             if (spare > 0) bill.replaceAll((item, count) -> item == Items.DIRT ? count : count + Math.max(1, count * spare / 100));
             int wettestLayer = wettestLayer(schematic, preplace, fromY, resumed);
-            if (!fromOrders) capWater(bill, wettestLayer, 0);
+            if (!fromOrders) capWater(bill, wettestLayer, 0, false);
             java.util.UUID player = server.computeOnServer(s -> s.getPlayerList().getPlayers().getFirst().getUUID());
             if (fromOrders) {
                 // The helper dirt stays in hand, as a player brings their own.
@@ -230,13 +230,7 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                 if (!topUp.isEmpty()) {
                     if (fromOrders) DonutOrders.fill(player, topUp);
                     else {
-                        // Water capped in the bill stays capped: the plan counts every source short, but the empty
-                        // buckets carried are filled where water comes back.
-                        if (bill.containsKey(Items.BUCKET)) {
-                            topUp.remove(Items.WATER_BUCKET);
-                            topUp.remove(Items.BUCKET);
-                        }
-                        capWater(topUp, wettestLayer, carriedBoxes(server));
+                        capWater(topUp, wettestLayer, carriedBoxes(server), true);
                         giveInShulkers(server, topUp);
                     }
                     LOGGER.info("Topped up what the plan still needs: {}", topUp);
@@ -390,9 +384,11 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
      * Water buckets don't stack, and the bill counts one for each source, block full of water and kelp or seagrass spot:
      * ikea_v4 came to 34 boxes so (v4-fresh2), past {@link #MOST_BOXES}. Where they don't all fit with the rest, as many go
      * in as do, but never fewer than the layer that takes the most, and a stack of empty buckets besides: the builder fills
-     * them where water comes back, as a player does who brings a few.
+     * them where water comes back, as a player does who brings a few. A resume's top-up gets only the water that still
+     * fits beside the boxes carried: v4 resumed at y68 was handed its water in 28 boxes, the plan found 126 more short,
+     * and the wettest layer on top came to 33 boxes. The buckets it empties are filled again where water comes back.
      */
-    private static void capWater(Map<Item, Integer> bill, int wettestLayer, int carried) {
+    private static void capWater(Map<Item, Integer> bill, int wettestLayer, int carried, boolean topUp) {
         int water = bill.getOrDefault(Items.WATER_BUCKET, 0);
         if (water == 0) return;
         int stacks = 0;
@@ -402,9 +398,10 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
         }
         int slots = (MOST_BOXES - carried) * 27;
         if (stacks + water <= slots) return;
-        int kept = Math.max(wettestLayer, slots - stacks - 1);
-        bill.put(Items.WATER_BUCKET, kept);
-        bill.merge(Items.BUCKET, Items.BUCKET.getDefaultMaxStackSize(), Integer::sum);
+        int kept = topUp ? Math.max(0, slots - stacks - 1) : Math.max(wettestLayer, slots - stacks - 1);
+        if (kept > 0) bill.put(Items.WATER_BUCKET, kept);
+        else bill.remove(Items.WATER_BUCKET);
+        if (!topUp) bill.merge(Items.BUCKET, Items.BUCKET.getDefaultMaxStackSize(), Integer::sum);
         LOGGER.info("Water buckets: {} of the {} the bill counts, the most a layer takes {}, and {} empty ones to fill",
                 kept, water, wettestLayer, Items.BUCKET.getDefaultMaxStackSize());
     }
