@@ -1764,6 +1764,12 @@ public final class SchematicBuilder {
                 }
                 if (debug() && plan.plant(i)) LOGGER.info("{} at {} is dry: water poured in first", target.getBlock().getName().getString(),
                         pos.toShortString());
+                if (plan.plant(i) && plan.needsPour(i) && player.getY() < pos.getY() - 0.01) {
+                    // Never from under a kelp spot (see placeableFrom): from somewhere level with it or above.
+                    if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
+                    noClickHere.put(i, PlacementSolver.Problem.OUT_OF_REACH);
+                    continue;
+                }
                 if (floods(level, pos, player.position())
                         && (plan.soaking(i) || !wetPourStand(level, Navigator.standingAt(level, player).feetCell(), pos))) {
                     if (seen == null) seen = PlacementSolver.Problem.OUT_OF_REACH;
@@ -5911,6 +5917,10 @@ public final class SchematicBuilder {
         if (plan.soaking(i) && !BlockRules.fillsInPlace(current)) return inView(player, eye, pos, reach - 0.25) ? 2 : 0;
         if (plan.soaking(i)) return !floods(level, pos, feet) && PlacementSolver.fill(player, eye, pos, reach) != null ? 2 : 0;
         if (plan.needsPour(i)) {
+            // Into a kelp spot never from under it: from below, the look into the spot above the eye goes in, but the
+            // click for the kelp right after misses, and the water runs down to where the player stands (v1-clean3/8, the
+            // corridor x 7 under IKEA v1's machine, feet at 66, for the kelp of y 68).
+            if (plan.plant(i) && feet.y < pos.getY()) return 0;
             if (floods(level, pos, feet) && !wetPourStand(level, BlockPos.containing(feet), pos)) return 0;
             // Kelp goes in right after against the same face, from where the walk comes to rest: a pour that only works
             // from the very middle counts for little, as v1-clean3's walks for the kelp of y 68 placed nothing after each
