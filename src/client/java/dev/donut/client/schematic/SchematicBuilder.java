@@ -1112,6 +1112,7 @@ public final class SchematicBuilder {
         noBoxSpot.clear();
         restock = Restock.NONE;
         restockAfterWalk = null;
+        fillAfterWalk = -1;
         aheadLayer.clear();
         fetchedBeforeWalk.clear();
         swappedIn.clear();
@@ -1309,6 +1310,15 @@ public final class SchematicBuilder {
         if (removeUsedHelper(client, player)) return;
         if (repairMisplaced(client, player)) return;
         if (refill(client, player, false)) return;
+        // At the water a walk went to for a bucket: filled there, now, before the blocks that wanted it send the player
+        // back. Only the pours in reach called fetchWater, and from the water none were: v1-full10r walked between the
+        // spring at 10 71 19 and the pours at 5..9,70,18..20 five times, filling nothing (09:34:13..28).
+        if (fillAfterWalk >= 0) {
+            int number = fillAfterWalk;
+            fillAfterWalk = -1;
+            if (!creative && materials.loose(Items.WATER_BUCKET) == 0 && materials.loose(Items.BUCKET) > 0
+                    && fetchWater(client, player, materials, number, 0)) return;
+        }
         if (restockAfterWalk != null) {
             Item wanted = restockAfterWalk;
             restockAfterWalk = null;
@@ -4465,6 +4475,8 @@ public final class SchematicBuilder {
     }
 
     private long fillTriedFrom = -1, fillTriedLast, fillPausedUntil;
+    /** The layer number of a walk to water to fill a bucket at, the fill made on arriving; -1 without one. */
+    private int fillAfterWalk = -1;
     private static final int FILL_TRIES_TICKS = 300, FILL_PAUSE_TICKS = 1200;
 
     /** The most steps a walk to fill an empty bucket goes, where a box would give a full one instead. */
@@ -4529,6 +4541,7 @@ public final class SchematicBuilder {
         releaseKeys(client);
         walker.start(path.nodes());
         show("Walking to water to fill a bucket", false);
+        fillAfterWalk = layerNumber;
         return true;
     }
 
