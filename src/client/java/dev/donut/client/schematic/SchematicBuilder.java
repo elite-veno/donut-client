@@ -2962,7 +2962,12 @@ public final class SchematicBuilder {
             // Nor from here: from where the player stands it isn't, though it may be from the middle of this place, a few
             // tenths off, as a walk's search sees it. Found here again, no walk was made and it waited out the two minutes
             // (v4-fresh3, 17, 66, 6, under the floor stood on beside it).
+            // Nor from down in the build, under its layer: climbUpOut takes the player back up from there before the helper
+            // comes away, onto the very helper, and the two walks went to and fro until escapeWalks gave up on it (v4-fresh3
+            // 05:42:56, 4, 69, 28 in the kelp channel, walked to from 5 69 28 three times).
+            double out = layerY + 1 - 1e-3;
             Navigator.Path path = navigator(player, true).find(start, node -> node.key() == start.key() || pocketPlaces.contains(node.key())
+                    || node.feet() < out && !offBuild(node.standing())
                     || node.x() == at.getX() && node.z() == at.getZ() && node.feet() >= at.getY()
                     || holdsWater && floods(level, at, node.standing()) ? 0 : viewScore(player, node.eye(), at, reach));
             if (path == null || dropsIntoTrap(player, path)) {
