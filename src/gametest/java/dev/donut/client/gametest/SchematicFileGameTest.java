@@ -230,6 +230,12 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                 if (!topUp.isEmpty()) {
                     if (fromOrders) DonutOrders.fill(player, topUp);
                     else {
+                        // Water capped in the bill stays capped: the plan counts every source short, but the empty
+                        // buckets carried are filled where water comes back.
+                        if (bill.containsKey(Items.BUCKET)) {
+                            topUp.remove(Items.WATER_BUCKET);
+                            topUp.remove(Items.BUCKET);
+                        }
                         capWater(topUp, wettestLayer, carriedBoxes(server));
                         giveInShulkers(server, topUp);
                     }
