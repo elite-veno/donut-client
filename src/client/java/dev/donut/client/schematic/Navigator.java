@@ -319,7 +319,8 @@ public final class Navigator {
             case PILLAR -> 6;
             case BRIDGE -> 8;
             case STEP -> 7;
-            case SWIM -> 5 + Math.max(0, to.feet() - from.feet());
+            // A way out of water there is no other way out of, not a short cut: it can miss, and drop the player back in.
+            case SWIM -> 30 + Math.max(0, to.feet() - from.feet());
             case START -> 0;
         };
         // Standing where a block still has to go blocks it: allowed on the way, avoided as a place to stop.
@@ -479,6 +480,11 @@ public final class Navigator {
                         if (feet == null || feet <= from.feet() + STEP || feet > surface + SWIM_OUT) continue;
                         if (!clear(from.x(), from.z(), from.feet(), feet + BODY, from.y()) || crosses(placed, from.x(), from.z(), from.feet(), feet + BODY)) continue;
                         if (!clear(nx, nz, feet, feet + BODY, ny) || crosses(placed, nx, nz, feet, feet + BODY)) continue;
+                        // Out of the water over a block's whole side only: swimming against a wall is what lifts the body
+                        // over the edge, and a thin side, a fence gate's or a hopper's spout, gives no wall to swim
+                        // against (v4-full19, 23:19: swum up to 68.86 beside 9 68 16 again and again, never onto it).
+                        BlockPos edge = new BlockPos(nx, ny, nz);
+                        if (Math.abs(feet - (ny + 1)) > 0.01 || !level.getBlockState(edge).isFaceSturdy(level, edge, Direction.getApproximateNearest(-d[0], 0, -d[1]))) continue;
                         Node next = new Node(nx, ny, nz, feet, Move.SWIM);
                         if (badSteps.isEmpty() || !badSteps.contains(stepKey(from, next))) out.add(next);
                         break;
