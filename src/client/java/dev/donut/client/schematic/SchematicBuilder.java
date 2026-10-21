@@ -1385,11 +1385,15 @@ public final class SchematicBuilder {
         int layerNumber = 0, number = 0, group = 0;
         boolean lift = sealsLifted;
         int heldY = plan.heldLayerY();
-        if (plan.holding()) {
+        // Counted only once the held layer is the one built: a hold for a block that closes a spot over a helper block (see
+        // noteShutIn) is put on a layer or more ahead, and ran out while the layers under it were still going in, before
+        // any walk went for the helper (crafter-clean11, 14:02:58 and 14:07:57, the aisle at x 4 again).
+        if (plan.holding() && layerY >= heldY) {
             if (holdSince < 0) holdSince = tick;
             if (tick - holdSince > 2400) {
                 // Two minutes and still not taken away: the layers go on, and the helper waits for the cleanup.
-                if (debug()) LOGGER.info("Helper blocks in the build's water not taken away in time: the layers above go on");
+                if (debug()) LOGGER.info("Helper blocks in the build's water or shut in by it not taken away in time, held at {}: the layers above go on",
+                        plan.heldSpots().stream().map(key -> BlockPos.of(key).toShortString()).toList());
                 plan.releaseHolds();
                 shutInHelpers.clear();
                 heldY = Integer.MAX_VALUE;

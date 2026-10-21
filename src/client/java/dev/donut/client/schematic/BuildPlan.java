@@ -8,6 +8,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.item.Item;
@@ -482,6 +483,9 @@ public final class BuildPlan {
             dryLeft[holds.remove(key)]--;
         }
     }
+
+    /** The spots held (see {@link #hold}), by position. */
+    public Set<Long> heldSpots() { return Set.copyOf(holds.keySet()); }
 
     /** Whether some spot is held (see {@link #hold}). */
     public boolean holding() { return !holds.isEmpty(); }
