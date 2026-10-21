@@ -1666,6 +1666,9 @@ public final class SchematicBuilder {
                 continue;
             }
             byte support = support(player, i, started);
+            // Out of time for this tick. With a box trip waiting, it is made now: else each tick works its way to the same
+            // block only in a box, passes it over, and runs out of time before the trip, for good (v4-full17, 21:28).
+            if (support == 0 && boxTrip != null) break;
             if (support == 0) return;
             if (support != 1) {
                 passedOver(i, "nothing to place it against yet");
@@ -1675,6 +1678,7 @@ public final class SchematicBuilder {
             if (far) break;
             if (!lift && !(stayLifted && liftedFor.contains(i))) {
                 byte seals = seals(player, i, started);
+                if (seals == 0 && boxTrip != null) break;
                 if (seals == 0) return;
                 if (seals == 1) {
                     sealing = true;
@@ -1703,6 +1707,7 @@ public final class SchematicBuilder {
                 continue;
             }
             if (System.nanoTime() - started > PLAN_NANOS) {
+                if (held == null && boxTrip != null) break;
                 if (held != null) startAim(client, player, held);
                 return;
             }
