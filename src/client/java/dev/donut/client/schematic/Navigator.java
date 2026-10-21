@@ -46,7 +46,12 @@ public final class Navigator {
          * Out of water too deep to jump from: a helper block set on the ground beside, into the water there, and a step
          * up onto it, as a player climbs out of a pool onto a block put at its edge.
          */
-        STEP;
+        STEP,
+        /**
+         * Up a column of water too deep to jump from, swimming, and out onto a block beside whose top is about a block
+         * over the water, pushing toward it, as a player climbs out of a pool or a farm's water channel.
+         */
+        SWIM;
 
         /** Whether the move puts down a helper block, where the node stands: a climbing step. */
         public boolean placesBlock() { return this == PILLAR || this == BRIDGE || this == STEP; }
@@ -314,6 +319,7 @@ public final class Navigator {
             case PILLAR -> 6;
             case BRIDGE -> 8;
             case STEP -> 7;
+            case SWIM -> 5 + Math.max(0, to.feet() - from.feet());
             case START -> 0;
         };
         // Standing where a block still has to go blocks it: allowed on the way, avoided as a place to stop.
@@ -447,6 +453,39 @@ public final class Navigator {
                 if (badSteps.isEmpty() || !badSteps.contains(stepKey(from, next))) out.add(next);
             }
         }
+        // Swimming up: a column of water over the feet, and at its top a block beside to climb out onto. Wading is what a walk
+        // does everywhere else; this is the way out of a water channel a player fell into, closed over but for the water
+        // (v4-full17r, 22:22, the channel at 9 67 5..7 under open gates, every helper block's spot taken by the build).
+        if (deepWater(cell)) {
+            int top = cell.getY();
+            boolean column = true;
+            while (column && top + 1 < area.maxY && top - cell.getY() < SWIM_RISE) {
+                BlockPos up = new BlockPos(from.x(), top + 1, from.z());
+                FluidState water = level.getFluidState(up);
+                if (!water.getType().isSame(Fluids.WATER)) break;
+                if (!level.getBlockState(up).getCollisionShape(level, up).isEmpty()) column = false;
+                else top++;
+            }
+            for (int y = cell.getY(); column && y <= top; y++) column = !dragsDown(new BlockPos(from.x(), y, from.z()));
+            BlockPos topCell = new BlockPos(from.x(), top, from.z());
+            double surface = top + level.getFluidState(topCell).getHeight(level, topCell);
+            if (column) {
+                for (int[] d : DIRECTIONS) {
+                    if (d[0] != 0 && d[1] != 0) continue;
+                    int nx = from.x() + d[0], nz = from.z() + d[1];
+                    if (nx < area.minX || nx >= area.maxX || nz < area.minZ || nz >= area.maxZ) continue;
+                    for (int ny = top + 1; ny >= cell.getY(); ny--) {
+                        Double feet = standable(nx, ny, nz);
+                        if (feet == null || feet <= from.feet() + STEP || feet > surface + SWIM_OUT) continue;
+                        if (!clear(from.x(), from.z(), from.feet(), feet + BODY, from.y()) || crosses(placed, from.x(), from.z(), from.feet(), feet + BODY)) continue;
+                        if (!clear(nx, nz, feet, feet + BODY, ny) || crosses(placed, nx, nz, feet, feet + BODY)) continue;
+                        Node next = new Node(nx, ny, nz, feet, Move.SWIM);
+                        if (badSteps.isEmpty() || !badSteps.contains(stepKey(from, next))) out.add(next);
+                        break;
+                    }
+                }
+            }
+        }
         // Bridging: crouched at the edge, a block put against the side of the one underfoot, and a step onto it, as a
         // player crosses a gap a block wide, or gets from a pillar onto a build beside it. Only straight out from a full
         // block, over a spot with nothing to stand on at the feet's height.
@@ -506,6 +545,15 @@ public final class Navigator {
      */
     /** How deep water may be, from the bottom of the feet's cell, for a jump from it: deeper, the player swims instead. */
     static final double SWIM_DEPTH = 0.4;
+    /** The most blocks a swim up a column of water rises, and how far over the water's top a block beside is climbed onto. */
+    private static final int SWIM_RISE = 4;
+    private static final double SWIM_OUT = 1.2;
+
+    /** Whether the cell holds a bubble column that pulls down, over magma: nobody swims up that. */
+    private boolean dragsDown(BlockPos pos) {
+        BlockState state = level.getBlockState(pos);
+        return state.is(Blocks.BUBBLE_COLUMN) && state.getValue(net.minecraft.world.level.block.BubbleColumnBlock.DRAG_DOWN);
+    }
 
     /**
      * Whether a player standing still at {@code node} drifts off it: in running water, or on ice, slippery past

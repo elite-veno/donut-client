@@ -114,6 +114,28 @@ class NavigatorTest {
     }
 
     @Test
+    void outOfAWaterChannelBySwimmingUp() {
+        // A shaft of water two deep at 0, 65..66, 0, walled in by stone to y 66: the walls' tops at 67, over the water.
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        for (int x = -1; x <= 1; x++) {
+            for (int z = -1; z <= 1; z++) {
+                for (int y = 65; y <= 66; y++) {
+                    blocks.put(new BlockPos(x, y, z), x == 0 && z == 0 ? Blocks.WATER.defaultBlockState() : Blocks.STONE.defaultBlockState());
+                }
+            }
+        }
+        Navigator.Node start = new Navigator.Node(0, 64, 0, 65, Navigator.Move.START);
+        Navigator.Path path = navigator(world(blocks)).find(start, node -> node.feet() >= 67 ? 1 : 0);
+        assertNotNull(path);
+        assertEquals(Navigator.Move.SWIM, path.nodes().get(1).move());
+        assertEquals(67, path.nodes().get(1).feet(), 1e-6);
+        // A block two over the water's top is past a climb out of it.
+        blocks.put(new BlockPos(1, 67, 0), Blocks.STONE.defaultBlockState());
+        blocks.put(new BlockPos(1, 68, 0), Blocks.STONE.defaultBlockState());
+        assertNull(navigator(world(blocks)).find(start, node -> node.feet() >= 69 ? 1 : 0));
+    }
+
+    @Test
     void walkingOnFlatGroundIsAWalk() {
         Navigator.Node start = new Navigator.Node(0, 64, 0, 65, Navigator.Move.START);
         Navigator.Path path = navigator(world(Map.of())).find(start, node -> node.x() == 1 && node.z() == 0 ? 1 : 0);
