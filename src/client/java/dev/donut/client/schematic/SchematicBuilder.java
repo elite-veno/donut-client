@@ -45,6 +45,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.sounds.SoundEvents;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.tags.TagKey;
 import net.minecraft.util.Mth;
@@ -74,10 +75,12 @@ import net.minecraft.world.level.block.CarpetBlock;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.CrossCollisionBlock;
 import net.minecraft.world.level.block.DiodeBlock;
+import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.FenceGateBlock;
 import net.minecraft.world.level.block.HopperBlock;
 import net.minecraft.world.level.block.LiquidBlock;
+import net.minecraft.world.level.block.LiquidBlockContainer;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.MultifaceBlock;
 import net.minecraft.world.level.block.ObserverBlock;
@@ -2577,8 +2580,25 @@ public final class SchematicBuilder {
         BuildPlan.Status st = j < 0 ? null : plan.status(j);
         boolean left = st == BuildPlan.Status.PENDING || st == BuildPlan.Status.UNLOADED;
         if (j >= 0 && left && !plan.wet(j) && plan.kind(j) == BlockRules.Kind.PLACE) return 1;
-        if (!level.getBlockState(cell).canBeReplaced()) return 2;
-        return j >= 0 && plan.wet(j) ? 0 : 1;
+        BlockState state = level.getBlockState(cell);
+        if (!waterEnters(state)) return 2;
+        // Air or water: on through where the build has water too. Anything else there water runs into washes away.
+        if (state.isAir() || state.getBlock() instanceof LiquidBlock) return j >= 0 && plan.wet(j) ? 0 : 1;
+        return 1;
+    }
+
+    /**
+     * Whether running water goes into a cell holding {@code state}, as vanilla's: not into a block that takes water in
+     * itself, glow lichen or a slab, which running water leaves alone; not into a door, sign, ladder, sugar cane or bubble
+     * column, nor into anything that stops the body. The bone-meal crafter's glow lichen 40,67,24, in place between its
+     * water rows, counted as an open cell, and the rows waited till layer 5 had roofed them over (crafter-clean7).
+     */
+    static boolean waterEnters(BlockState state) {
+        Block block = state.getBlock();
+        if (block instanceof LiquidBlockContainer && !(block instanceof LiquidBlock)) return false;
+        if (block instanceof DoorBlock || state.is(BlockTags.ALL_SIGNS) || state.is(Blocks.LADDER) || state.is(Blocks.SUGAR_CANE)
+                || state.is(Blocks.BUBBLE_COLUMN)) return false;
+        return !state.blocksMotion();
     }
 
     /** Whether a block of the layer is still to go in. */
