@@ -7213,18 +7213,25 @@ public final class SchematicBuilder {
         BlockPos feet = here.floor().above();
         List<BlockPos> candidates = boxSpots(player, feet, player.position());
         if (debug()) LOGGER.info("Shulker box for {}: {} spots beside {}", name(item), candidates.size(), here);
-        for (BlockPos candidate : candidates) {
-            PlacementSolver.Result result = PlacementSolver.find(player, candidate, boxState, shulker, player.blockInteractionRange(),
-                    helpers::containsKey);
-            if (debug()) LOGGER.info("  box spot {}: {} {}, seen {}, walks into {}", candidate.toShortString(), result.click() != null, result.problem(),
-                    boxSeenFrom(player, player.getEyePosition(), candidate), walksInto(player, here, candidate));
-            // A click in the other stance does too: placing the box crouches or stands up for it first.
-            if (result.click() != null && (result.problem() == null || result.problem() == PlacementSolver.Problem.STANCE)
-                    && boxSeenFrom(player, player.getEyePosition(), candidate) && walksInto(player, here, candidate)) {
-                spot = candidate;
-                placeClick = result.click();
-                break;
+        // First a spot the body reaches in a straight line, then any: the walk model reads a cell the player stands in as
+        // open, and a fence gate in it, 3,65,22 in v1-clean11, walled the box dropped at 2,65,22 off from the player, who
+        // walked into the gate for good, 1.6 m from it.
+        for (boolean straight : new boolean[] {true, false}) {
+            for (BlockPos candidate : candidates) {
+                if (straight && !reachStraight(player, candidate)) continue;
+                PlacementSolver.Result result = PlacementSolver.find(player, candidate, boxState, shulker, player.blockInteractionRange(),
+                        helpers::containsKey);
+                if (debug()) LOGGER.info("  box spot {}: {} {}, seen {}, walks into {}, straight {}", candidate.toShortString(), result.click() != null,
+                        result.problem(), boxSeenFrom(player, player.getEyePosition(), candidate), walksInto(player, here, candidate), straight);
+                // A click in the other stance does too: placing the box crouches or stands up for it first.
+                if (result.click() != null && (result.problem() == null || result.problem() == PlacementSolver.Problem.STANCE)
+                        && boxSeenFrom(player, player.getEyePosition(), candidate) && walksInto(player, here, candidate)) {
+                    spot = candidate;
+                    placeClick = result.click();
+                    break;
+                }
             }
+            if (spot != null) break;
         }
         if (spot == null) {
             if (settings().walk) {
@@ -7367,6 +7374,13 @@ public final class SchematicBuilder {
     private boolean walksInto(LocalPlayer player, Navigator.Node from, BlockPos spot) {
         long floor = spot.below().asLong();
         return navigator(player, false).limit(BOX_WALK_NODES).find(from, node -> node.key() == floor ? 1 : 0) != null;
+    }
+
+    /** Whether the body, where it stands, moves into {@code spot} in a straight line with nothing in the way. */
+    private static boolean reachStraight(LocalPlayer player, BlockPos spot) {
+        Vec3 to = Vec3.atBottomCenterOf(spot);
+        AABB swept = player.getBoundingBox().move(0, 0.05, 0).expandTowards(to.x - player.getX(), 0, to.z - player.getZ());
+        return player.level().noCollision(player, swept);
     }
 
     /** The most places the search for a way into a box spot looks at. */
@@ -7680,9 +7694,13 @@ public final class SchematicBuilder {
                         boxWalks++;
                         // Picked up within a block of the body sideways and half a block up or down, as vanilla does:
                         // from beside the block it lies in, when that one has no room to stand.
+                        // Where the player stands, by the body itself: off the middle of its block, it can be out of range from
+                        // where the middle is in range, and the walk would be none.
                         AABB item = dropped.getBoundingBox();
-                        Navigator.Path path = navigator(player, false).find(Navigator.standingAt(level, player), node -> new AABB(node.x() + 0.2,
-                                node.feet(), node.z() + 0.2, node.x() + 0.8, node.feet() + 1.8, node.z() + 0.8).inflate(1, 0.5, 1).intersects(item) ? 1 : 0);
+                        Navigator.Node from = Navigator.standingAt(level, player);
+                        Navigator.Path path = navigator(player, false).find(from, node -> (node.key() == from.key() ? player.getBoundingBox()
+                                : new AABB(node.x() + 0.2, node.feet(), node.z() + 0.2, node.x() + 0.8, node.feet() + 1.8, node.z() + 0.8))
+                                .inflate(1, 0.5, 1).intersects(item) ? 1 : 0);
                         stopWalking(client);
                         // Not into a place with no way back out, for a box either; unless helper blocks climb out of it, over
                         // cells the build fills later, as climbUpOut then does: the box, with what it holds, is worth that.
