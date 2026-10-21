@@ -4464,11 +4464,26 @@ public final class SchematicBuilder {
         return fetchWater(client, player, materials, layerNumber, Integer.MAX_VALUE);
     }
 
+    private long fillTriedFrom = -1, fillTriedLast, fillPausedUntil;
+    private static final int FILL_TRIES_TICKS = 300, FILL_PAUSE_TICKS = 1200;
+
     /** The most steps a walk to fill an empty bucket goes, where a box would give a full one instead. */
     private static final int NEAR_WATER_STEPS = 12;
 
     /** As {@link #fetchWater}, walking no more than {@code maxSteps} to the water. */
     private boolean fetchWater(Minecraft client, LocalPlayer player, Materials materials, int layerNumber, int maxSteps) {
+        // Tried for a while with nothing filled: a box for it rather, and water again later. Whatever else holds it up,
+        // the build goes on.
+        if (tick < fillPausedUntil) return false;
+        // A run of tries, one decision after another (a walk to the water between): it starts again after a fill or a gap.
+        if (fillTriedFrom < 0 || filledAt > fillTriedFrom || tick - fillTriedLast > 100) fillTriedFrom = tick;
+        fillTriedLast = tick;
+        if (tick - fillTriedFrom > FILL_TRIES_TICKS) {
+            if (debug()) LOGGER.info("No bucket filled at water in {} ticks of trying: from a box meanwhile", FILL_TRIES_TICKS);
+            fillTriedFrom = -1;
+            fillPausedUntil = tick + FILL_PAUSE_TICKS;
+            return false;
+        }
         if (materials.loose(Items.BUCKET) == 0) {
             startRestock(client, player, Items.BUCKET, materials);
             return true;
@@ -4488,7 +4503,10 @@ public final class SchematicBuilder {
         for (BlockPos cell : renewing) {
             PlacementSolver.Click click = fillLook(player, eye, cell, reach, player.getViewVector(1.0f));
             if (click == null) continue;
-            if (player.isShiftKeyDown()) {
+            // Upright for it, but not on a narrow top over a drop, where the crouch holds the player on and comes straight
+            // back: v1-full10 stood up and crouched on the gate top 8 70.5 20 three times a second for minutes (09:08:29),
+            // nothing filled. A bucket fills crouched as well.
+            if (player.isShiftKeyDown() && !onNarrowEdge(player)) {
                 stance(client, false);
                 return true;
             }
