@@ -2959,7 +2959,10 @@ public final class SchematicBuilder {
             // Nor from where the water it holds back would run to once it is gone (see safeToBreak), as with one put into the
             // build's own water: from there it is never taken away.
             boolean holdsWater = holdsBackWater(level, at);
-            Navigator.Path path = navigator(player, true).find(start, node -> pocketPlaces.contains(node.key())
+            // Nor from here: from where the player stands it isn't, though it may be from the middle of this place, a few
+            // tenths off, as a walk's search sees it. Found here again, no walk was made and it waited out the two minutes
+            // (v4-fresh3, 17, 66, 6, under the floor stood on beside it).
+            Navigator.Path path = navigator(player, true).find(start, node -> node.key() == start.key() || pocketPlaces.contains(node.key())
                     || node.x() == at.getX() && node.z() == at.getZ() && node.feet() >= at.getY()
                     || holdsWater && floods(level, at, node.standing()) ? 0 : viewScore(player, node.eye(), at, reach));
             if (path == null || dropsIntoTrap(player, path)) {
