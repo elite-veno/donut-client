@@ -27,6 +27,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -344,9 +345,28 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
         return blocks;
     }
 
-    /** Packs everything the build takes into shulker boxes, a stack per slot, and gives them to the player. */
+    /**
+     * Boxes the player may carry at most: the 36 slots less the pickaxe and shovel, two stacks of helper dirt and four
+     * slots free, the room the builder takes a box's blocks out into. v4-fresh, its bill 10% spare, was given 34 boxes:
+     * with the dirt beside them every slot was full, nothing carried could go back into a box, and the build stopped in
+     * its second minute with no room to take blue ice out. A player brings no more than fits, and neither does the test.
+     */
+    private static final int MOST_BOXES = 36 - 2 - 2 - 4;
+
+    /**
+     * Packs everything the build takes into shulker boxes, a stack per slot, and gives them to the player; fails first when
+     * they come to more boxes, with those carried already, than {@link #MOST_BOXES}.
+     */
     private static void giveInShulkers(TestServerContext server, Map<Item, Integer> bill) {
         List<String> gives = BuildCheck.shulkerGives(bill);
+        int carried = server.computeOnServer(s -> {
+            int n = 0;
+            for (ItemStack stack : s.getPlayerList().getPlayers().getFirst().getInventory()) if (Materials.isShulkerBox(stack)) n++;
+            return n;
+        });
+        require(carried + gives.size() <= MOST_BOXES, "The materials take " + (carried + gives.size()) + " shulker boxes, "
+                + carried + " of them carried already; at most " + MOST_BOXES + " leave room to take blocks out of one."
+                + " Build fewer layers (DONUT_SCHEMATIC_FROM_Y) or bring less spare (DONUT_SCHEMATIC_SPARE).");
         for (String give : gives) server.runCommand(give);
         LOGGER.info("Gave the materials in {} shulker boxes", gives.size());
     }
