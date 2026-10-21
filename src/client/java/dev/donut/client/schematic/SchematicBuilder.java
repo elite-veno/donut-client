@@ -8998,8 +8998,12 @@ public final class SchematicBuilder {
     private boolean swapForRoom(ShulkerBoxMenu menu, LocalPlayer player) {
         Materials carried = Materials.of(player.getInventory());
         int have = carried.loose(restockItem);
+        // Helper blocks down to a handful are as good as none: a climb onto the build takes more than that, and a walk up
+        // from the ground found no way at all. v4-full21 (01:27) stood at -2 65 30 after a box trip, every box opened for
+        // dirt closed again without any, and no place on the build within a climb of the few left.
+        boolean fewHelpers = helperItems.contains(restockItem) && have > 0 && have < HELPERS_LOW;
         boolean more = have > 0 && restockItem.getDefaultMaxStackSize() == 1 && have < soon.getOrDefault(restockItem, 0);
-        if (player.hasInfiniteMaterials() || carried.freeSlots() > 2 || have > 0 && !more) return false;
+        if (player.hasInfiniteMaterials() || carried.freeSlots() > 2 || have > 0 && !more && !fewHelpers) return false;
         int wanted = -1;
         for (int slot = 0; slot < 27 && wanted < 0; slot++) if (menu.getSlot(slot).getItem().is(restockItem)) wanted = slot;
         if (wanted < 0) {
