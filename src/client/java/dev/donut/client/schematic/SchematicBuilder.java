@@ -268,6 +268,8 @@ public final class SchematicBuilder {
     private boolean escaping;
     /** When a helper block climbed on in a cell the build fills was last checked for whether it can go. */
     private long escapeChecked = -100_000;
+    /** When the walk under way last looked for a helper block the build shuts in to take back on the way (see {@link #takeBackInPassing}). */
+    private long passingChecked = -100_000;
     /**
      * Blocks with no click from where the player stands, and why, worked out at {@code noClickFrom} in that stance: passed
      * over until the player moves, a block goes in or a couple of seconds go by. A long row of them would otherwise use
@@ -963,6 +965,7 @@ public final class SchematicBuilder {
             return;
         }
         if (walker.active()) {
+            if (takeBackInPassing(client, player)) return;
             walk(client, player);
             return;
         }
@@ -3696,6 +3699,31 @@ public final class SchematicBuilder {
             plan.hold(up, true);
             return;
         }
+    }
+
+    /**
+     * Stops a walk to take back a helper block put down in a spot the build shuts in (see {@link #noteShutIn}) the player
+     * has just stepped off, while it is in reach, and the rest of the walk doesn't stand on it; the next walk is planned
+     * from there. Waited for until the block over it was up next, it had no look left from outside: crafter-clean12 left
+     * 4,67,22 and 4,67,10 in the aisle under the hoppers at x 4, each climbed on to put the hoppers round it in from inside
+     * and walked off along the aisle, and the hoppers then shut the top while the glass over them waited.
+     */
+    private boolean takeBackInPassing(Minecraft client, LocalPlayer player) {
+        if (shutInHelpers.isEmpty() || escapeWalk || walker.holdsCrouch() || !player.onGround() || tick - passingChecked < 5) return false;
+        passingChecked = tick;
+        double reach = player.blockInteractionRange() - 0.25;
+        for (long key : shutInHelpers.keySet()) {
+            BlockPos at = BlockPos.of(key);
+            Helper helper = helpers.get(key);
+            if (helper == null || player.level().getBlockState(at).getBlock() != helper.block() || walker.stepsOn(at)
+                    || !reclaimable(player, at, reach)) continue;
+            walker.stop(client);
+            releaseKeys(client);
+            if (debug()) LOGGER.info("Taking back on the way the helper block at {}, which the build shuts in", at.toShortString());
+            startBreak(at);
+            return true;
+        }
+        return false;
     }
 
     /** Takes the hold off a block that closes a spot over a helper block, once no helper block it closes over is left. */

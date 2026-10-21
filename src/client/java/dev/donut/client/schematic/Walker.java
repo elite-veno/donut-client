@@ -228,6 +228,13 @@ final class Walker {
 
     Navigator.Node target() { return path == null ? null : path.getLast(); }
 
+    /** Whether the rest of the walk, from the step it is on, stands on the block at {@code floor}. */
+    boolean stepsOn(BlockPos floor) {
+        if (path == null) return false;
+        for (int i = Math.max(0, index - 1); i < path.size(); i++) if (path.get(i).floor().equals(floor)) return true;
+        return false;
+    }
+
     State tick(Minecraft client, LocalPlayer player, Climb climb) {
         lastMotion = thisMotion;
         thisMotion = player.getDeltaMovement();
