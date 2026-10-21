@@ -157,6 +157,8 @@ public final class SchematicBuilder {
      * from which a handful go in from one from which a dozen do.
      */
     private static final int VERIFY = 6;
+    /** Ticks a server takes at most to turn down a block clicked in, as the client guessed it; a lagging one too. */
+    private static final int REFILL_ANSWER = 10;
     private static SchematicBuilder instance;
     /** Logs each placement and why blocks can't go in, with -Ddonut.schematic.debug=true. */
     private static boolean debug() { return Boolean.getBoolean("donut.schematic.debug"); }
@@ -543,6 +545,11 @@ public final class SchematicBuilder {
     private final List<BlockPos> dugLeft = new ArrayList<>();
     /** Walks made during the build to fill in dug ground, by spot: one that still can't be filled from there is left for the end. */
     private final Map<Long, Integer> refillWalks = new HashMap<>();
+    /**
+     * Dug ground clicked full again, by spot, with the tick of the click: until the server has had time to answer, the
+     * block in it is only the client's guess (see {@link #refill}).
+     */
+    private final Map<Long, Long> refilledAt = new HashMap<>();
     /** A pit being dug to stand in, and for how long. */
     private Pit pit;
     private int digTicks;
@@ -850,6 +857,7 @@ public final class SchematicBuilder {
         cleanupKeptUp.clear();
         dug.clear();
         refillWalks.clear();
+        refilledAt.clear();
         plan = null;
         planKey = "";
         planLevel = null;
@@ -1196,6 +1204,7 @@ public final class SchematicBuilder {
         cleanupKeptUp.clear();
         dug.clear();
         refillWalks.clear();
+        refilledAt.clear();
         dugLeft.clear();
         filledOther.clear();
         redoWalks.clear();
@@ -4303,6 +4312,7 @@ public final class SchematicBuilder {
             }
             case REFILL -> {
                 BlockState was = dug.remove(planned.at().asLong());
+                refilledAt.put(planned.at().asLong(), tick);
                 if (was != null && !planned.item().equals(was.getBlock().asItem())) filledOther.put(planned.at().asLong(), was);
                 paceAfterClick(quick());
                 show("Filling in the ground dug out at " + planned.at().getX() + " " + planned.at().getY() + " " + planned.at().getZ(), false);
@@ -7291,6 +7301,21 @@ public final class SchematicBuilder {
      */
     private boolean refill(Minecraft client, LocalPlayer player, boolean finish) {
         Level level = player.level();
+        // A block clicked into dug ground shows at once, as the client guesses it; a server that turns the click down, the
+        // player's body still in the spot by its reckoning, a step behind, takes it away again a few ticks later. That spot
+        // is open again. Taken for filled, the spot over it went in next: so, by all signs, v1-full12 filled 12,64,16 over
+        // 12,63,16 from the trench along x 12, on a lagging server, and the ground under stayed dug out for good, roofed by
+        // the hoppers over it, with no click from anywhere.
+        refilledAt.entrySet().removeIf(e -> {
+            if (tick - e.getValue() > REFILL_ANSWER * 4) return true;
+            BlockPos cell = BlockPos.of(e.getKey());
+            BlockState was = groundDug.get(e.getKey());
+            if (was == null || tick == e.getValue() || dug.containsKey(e.getKey()) || !level.getBlockState(cell).canBeReplaced()) return false;
+            dug.put(e.getKey(), was);
+            filledOther.remove(e.getKey());
+            if (debug()) LOGGER.info("Ground filled in at {} is open again: the server didn't keep the block", cell.toShortString());
+            return true;
+        });
         dug.entrySet().removeIf(e -> !level.getBlockState(BlockPos.of(e.getKey())).canBeReplaced());
         if (dug.isEmpty()) return false;
         // Standing in a pit or a trench, what is dug stays open till the player is out, but for the cells right behind
@@ -7307,8 +7332,9 @@ public final class SchematicBuilder {
         for (BlockPos cell : open) {
             if (inPit && (cell.getY() < feetCell.getY() || cell.getY() > feetCell.getY() + 1
                     || Math.abs(cell.getX() - feetCell.getX()) + Math.abs(cell.getZ() - feetCell.getZ()) != 1)) continue;
-            // Bottom first, and never under the player.
-            if (dug.containsKey(cell.below().asLong()) || redoUnder.contains(cell.below().asLong())) continue;
+            // Bottom first, and never under the player; over a spot just filled, once the server has kept its block.
+            if (dug.containsKey(cell.below().asLong()) || redoUnder.contains(cell.below().asLong())
+                    || tick - refilledAt.getOrDefault(cell.below().asLong(), Long.MIN_VALUE / 2) < REFILL_ANSWER) continue;
             if ((finish || cell.equals(pitFill)) && settings().walk && Navigator.standingAt(level, player).feetCell().equals(cell)) {
                 // Got into it to fill it (see below): out again by climbing, a block put under the feet at each jump, which
                 // fills it with what was there (see walk's Climb.ready).
