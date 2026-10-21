@@ -2109,6 +2109,10 @@ public final class SchematicBuilder {
             if (debug()) LOGGER.info("No place reached has a block in reach or a look, {} searches in a row: climbing out", noneInReach);
             noneInReach = 0;
             if (climbOut(client, player, candidates, materials, layerNumber, lift)) return;
+            // Shut in with no climb out, as after a fall into a pocket under finished layers: dug out first. Higher layers
+            // are no nearer from in there, and each skip changed the layer and started the round over before the break out
+            // further down was ever tried (v4-full14r, 22:00, under the channels at 12 66 19 for good).
+            if (breakOutOfBuild(player)) return;
             if (skipLayer(player, layerY, layerNumber)) return;
         }
         if (settings().walk && planPit(client, player, candidates, materials, layerNumber, lift)) return;
@@ -6597,7 +6601,11 @@ public final class SchematicBuilder {
                         plan.target(i).getBlock().getName().getString(), plan.pos(i).toShortString(), guard.toShortString());
             }
         }
-        if (path == null && seen[2] == 0 && seen[0] < Navigator.MAX_NODES && tick - lastProgress > UP_GIVE_UP_TICKS) {
+        // Only from where some place has them in reach: a search from a pit the player fell into reaches a few places with
+        // none in reach, and says nothing of the places round the build. v4-full14r fell off a bridge at 12 74 19 into the
+        // space under the channels and gave up on 54 blocks in a minute, most of them well in reach from the top.
+        boolean searchedRound = seen[1] > 0;
+        if (path == null && searchedRound && seen[2] == 0 && seen[0] < Navigator.MAX_NODES && tick - lastProgress > UP_GIVE_UP_TICKS) {
             // Every place a walk reaches searched, well short of the limit, and not one with a look at any of these: the
             // blocks placed with a look up among them have none anywhere, as a row of up-facing observers over a solid
             // column, with only a water stream beside it (v4-z3, y 73). Given up on together, a row at a time, rather than
@@ -6615,7 +6623,7 @@ public final class SchematicBuilder {
                 lastProgress = tick;
             }
         }
-        if (path == null && tick - lastProgress > GIVE_UP_TICKS) {
+        if (path == null && searchedRound && tick - lastProgress > GIVE_UP_TICKS) {
             // Nothing has gone in for minutes, and still no place to stand with a look at it: given up on, as a player
             // leaves what they can't reach, and counted as failed at the end; the build goes on with the rest.
             int stuck = near.getFirst();

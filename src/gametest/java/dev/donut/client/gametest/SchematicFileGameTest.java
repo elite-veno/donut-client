@@ -215,6 +215,11 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
             server.runCommand("give @a minecraft:dirt " + (dirtText == null || dirtText.isBlank() ? 448 : Integer.parseInt(dirtText.trim())));
             server.runCommand("give @a minecraft:diamond_pickaxe");
             server.runCommand("give @a minecraft:diamond_shovel");
+            // DONUT_SCHEMATIC_START=x,y,z: the player stands there when the build starts, as where a run went wrong. A resume
+            // sets the blocks back but not the player, and a fault that comes of where they were, shut in a pocket under the
+            // build say, needs them there again. Set up before the build starts, as the blocks set in place are.
+            String start = System.getenv("DONUT_SCHEMATIC_START");
+            if (start != null && !start.isBlank()) server.runCommand("tp @a " + start.strip().replace(',', ' '));
             context.waitTicks(10);
             context.runOnClient(client -> builder.setEnabled(true));
             // It starts on its next tick.
