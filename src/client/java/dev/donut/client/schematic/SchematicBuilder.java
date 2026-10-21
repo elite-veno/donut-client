@@ -8569,6 +8569,11 @@ public final class SchematicBuilder {
      * isn't opened over and over. True when one is begun.
      */
     private boolean fetchBeforeWalk(Minecraft client, LocalPlayer player, List<Integer> candidates, Materials materials, boolean lift) {
+        // With the inventory full, a fetch swaps a stack out for what it fetches. Once one was swapped in and no few blocks
+        // went in since, the next fetch would swap out a stack just fetched for another walk: the walk goes on with what is
+        // carried instead. In v4-full11 (11:19..11:24) gates, blue ice and dispensers were swapped round box after box, 33
+        // boxes, each for a block of the 48 with no place to stand.
+        if (materials.freeSlots() <= 2 && swappedRecently()) return false;
         long started = System.nanoTime();
         int tried = 0;
         for (int i : candidates) {
@@ -8595,6 +8600,13 @@ public final class SchematicBuilder {
             startRestock(client, player, item, materials);
             return restock != Restock.NONE || swapFrom >= 0 || walker.active();
         }
+        return false;
+    }
+
+    /** Whether a stack was swapped in by {@link #swapForRoom} fewer than {@link #SWAP_BACK_AFTER} blocks ago. */
+    private boolean swappedRecently() {
+        int done = plan.count(BuildPlan.Status.DONE);
+        for (int in : swappedIn.values()) if (done - in < SWAP_BACK_AFTER) return true;
         return false;
     }
 
