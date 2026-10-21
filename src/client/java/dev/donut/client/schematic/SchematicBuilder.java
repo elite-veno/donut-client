@@ -7252,11 +7252,31 @@ public final class SchematicBuilder {
                     if (path != null && debug()) LOGGER.info("No room for a shulker box up here: jumping down off the build to {} {} {}",
                             path.end().x(), path.end().feet(), path.end().z());
                 }
+                // Shut in where only a climb through the build's own cells gets out, as a climb out does (see climbOut): down
+                // in a kelp channel under the layer over it, v4-fresh3 stood 16 minutes at 4 70 28 with 70 dirt carried, no
+                // box spot beside it and no other way out. Those helper blocks come away once the player is out.
+                boolean escape = false;
+                if (path == null && helperItem(player) != null) {
+                    boolean was = escaping;
+                    escaping = true;
+                    try {
+                        path = navigator(player, true).find(start, roomy);
+                        if (path == null && down > 0) path = navigator(player, true).dropsOff(down, plan.bounds).find(start, roomy);
+                    } finally {
+                        escaping = was;
+                    }
+                    escape = path != null;
+                    if (escape && debug()) LOGGER.info("No room for a shulker box down here: climbing out over cells the build fills later to {} {} {}",
+                            path.end().x(), path.end().feet(), path.end().z());
+                }
+                if (path == null && debug()) LOGGER.info("No walk to room for a shulker box from {}: {} helper blocks carried, a drop of {} at most",
+                        start, helpersLoose(player), down);
                 if (path != null && dropsIntoTrap(player, path)) path = null;
                 if (path != null && path.nodes().size() > 1 && restockWalks < 3) {
                     if (!climbReady(client, player, path)) return;
                     releaseKeys(client);
                     walker.start(path.nodes());
+                    if (escape) escapeWalk = true;
                     restockAfterWalk = item;
                     restockWalks++;
                     show("Walking to open ground to empty a shulker box", false);
