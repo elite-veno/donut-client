@@ -841,6 +841,7 @@ public final class SchematicBuilder {
         guardWalks.clear();
         guardMemoCleared.clear();
         lookUpStandFor.clear();
+        coverSince.clear();
         upFace.clear();
         upFaceFailed.clear();
         noFaceLogged.clear();
@@ -1190,6 +1191,7 @@ public final class SchematicBuilder {
         guardWalks.clear();
         guardMemoCleared.clear();
         lookUpStandFor.clear();
+        coverSince.clear();
         upFace.clear();
         upFaceFailed.clear();
         noFaceLogged.clear();
@@ -2289,7 +2291,7 @@ public final class SchematicBuilder {
         chooseUpFaces(player, i, System.nanoTime());
         return upWaitHolds(player.level(), i)
                 || !sealsLifted && plan.kind(i) == BlockRules.Kind.FLUID && floodsLevelLook(player, i, false)
-                || fillsLookUpStand(player, i);
+                || fillsLookUpStand(player, i) || coversPour(player.level(), i);
     }
 
     /**
@@ -2754,6 +2756,50 @@ public final class SchematicBuilder {
     }
 
     /** Whether block {@code i} is still to go in: a layer or two up, not looked at yet, it may still be UNLOADED. */
+    /** When each block {@link #coversPour} holds back first waited, by block. */
+    private final Map<Integer, Long> coverSince = new HashMap<>();
+    /** How long a block waits at most for the source under it to be poured (see {@link #coversPour}). */
+    private static final long COVER_TICKS = 6000;
+
+    /**
+     * Whether block {@code i} waits, across layers, for the water or lava source right under it still to be poured: in
+     * first, it takes the looks that come down past its cell at the faces round the source the bucket is aimed at.
+     * ikea_v4's glass 7,73,32 went in over the source 7,72,32 while layer 8's sources waited, layer 9 built with the order
+     * lifted, and no place reached had a look at the source after (v4-full11r, 13:42). Not a block placed looking up, which
+     * the source may wait for in turn (see {@link #fillsLookUpStand}); over once the source is in or given up, or after
+     * {@link #COVER_TICKS}.
+     */
+    private boolean coversPour(Level level, int i) {
+        if (plan.kind(i) != BlockRules.Kind.PLACE || BlockRules.placedLookingUp(plan.target(i))) return false;
+        BlockPos pos = plan.pos(i);
+        int j = plan.indexOf(pos.below());
+        boolean waits = j >= 0 && plan.kind(j) == BlockRules.Kind.FLUID && plan.target(j).getFluidState().isSource()
+                && stillToGo(plan, j) && level.getBlockState(pos).canBeReplaced() && lookUpStandFor.getOrDefault(j, -1) != i;
+        Long since = coverSince.get(i);
+        if (!waits) {
+            if (since != null && since >= 0) {
+                coverSince.remove(i);
+                if (debug()) LOGGER.info("{} at {} waits no more for the source under it: {}", plan.target(i).getBlock().getName().getString(),
+                        pos.toShortString(), j >= 0 && stillToGo(plan, j) ? "in itself" : "poured or given up");
+            }
+            return false;
+        }
+        if (since == null) {
+            coverSince.put(i, tick);
+            if (debug()) LOGGER.info("{} at {} waits: it would cover {} at {}, still to be poured, from the looks down past it",
+                    plan.target(i).getBlock().getName().getString(), pos.toShortString(), plan.target(j).getBlock().getName().getString(),
+                    plan.pos(j).toShortString());
+            return true;
+        }
+        if (since < 0) return false;
+        if (tick - since <= COVER_TICKS) return true;
+        // Timed out: it goes in after all, and waits no more for this source.
+        coverSince.put(i, -1L);
+        if (debug()) LOGGER.info("{} at {} waited {} s for the source under it to be poured: it goes in after all",
+                plan.target(i).getBlock().getName().getString(), pos.toShortString(), COVER_TICKS / 20);
+        return false;
+    }
+
     private static boolean stillToGo(BuildPlan plan, int i) {
         return plan.status(i) == BuildPlan.Status.PENDING || plan.status(i) == BuildPlan.Status.UNLOADED;
     }
@@ -2843,7 +2889,7 @@ public final class SchematicBuilder {
         // up, outside the cells the stamp reads, and once it went in the wait stayed as kept. A chest waiting on the level
         // look at an observer two cells off waited for good, and the lone half beside it with it (slab farm west cut).
         chooseUpFaces(player, i, started);
-        if (waitsForUpFacing(level, i) || waitsForChannel(level, i) || fillsLookUpStand(player, i)) return 1;
+        if (waitsForUpFacing(level, i) || waitsForChannel(level, i) || fillsLookUpStand(player, i) || coversPour(level, i)) return 1;
         long stamp = BuildPlan.stamp(level, pos);
         if (sealStamp[i] == stamp) return seal[i];
         if (System.nanoTime() - started > PLAN_NANOS) return 0;
