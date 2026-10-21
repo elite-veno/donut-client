@@ -3552,6 +3552,10 @@ public final class SchematicBuilder {
      */
     private boolean breakOutOfBuild(LocalPlayer player) {
         if (helperItem(player) == null || tick - breakOutChecked < (brokeOut.isEmpty() ? 100 : 10)) return false;
+        // Carried along by a current, the searches start from a place the player is already leaving: none of the build is
+        // broken until they come to rest (v4-full19, 23:07:57, a glass and a gate broken in two seconds while the channel
+        // water carried the player west from 17 66 29, a channel they had walked into).
+        if (player.getDeltaMovement().horizontalDistanceSqr() > 1e-4) return false;
         breakOutChecked = tick;
         Level level = player.level();
         Navigator.Node start = Navigator.standingAt(level, player);
