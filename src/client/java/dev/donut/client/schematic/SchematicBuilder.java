@@ -6852,8 +6852,11 @@ public final class SchematicBuilder {
                 BlockRules.Kind kind = BlockRules.kind(target);
                 if (kind == BlockRules.Kind.FLUID) counts.merge(BlockRules.item(target), 1, Integer::sum);
                 else if (kind == BlockRules.Kind.PLACE) counts.merge(BlockRules.item(target), BlockRules.itemsNeeded(air, target), Integer::sum);
-                // A block full of water takes a bucket of it besides.
-                if (kind == BlockRules.Kind.PLACE && BlockRules.soaked(target)) counts.merge(Items.WATER_BUCKET, 1, Integer::sum);
+                // A block full of water takes a bucket of it besides; and kelp or seagrass may, poured into its spot first
+                // where no water reaches it yet (da-45): at most one each, as the running count (BuildPlan.needs) has it.
+                if (kind == BlockRules.Kind.PLACE && (BlockRules.soaked(target) || BlockRules.wet(target))) {
+                    counts.merge(Items.WATER_BUCKET, 1, Integer::sum);
+                }
             }
             Map<Item, Integer> sorted = new LinkedHashMap<>();
             counts.entrySet().stream().sorted(Map.Entry.<Item, Integer>comparingByValue().reversed())

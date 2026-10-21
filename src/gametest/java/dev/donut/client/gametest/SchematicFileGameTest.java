@@ -154,7 +154,7 @@ public final class SchematicFileGameTest implements FabricClientGameTest {
                         s.overworld().setBlock(pos, asSet(schematic, target, pos, preplace, fromY, resumed), Block.UPDATE_CLIENTS);
                         Item item = BlockRules.item(target);
                         if (item != null) taken.merge(item, kind == BlockRules.Kind.FLUID ? 1 : BlockRules.itemsNeeded(air, target), Integer::sum);
-                        if (kind == BlockRules.Kind.PLACE && BlockRules.soaked(target)) taken.merge(Items.WATER_BUCKET, 1, Integer::sum);
+                        if (kind == BlockRules.Kind.PLACE && (BlockRules.soaked(target) || BlockRules.wet(target))) taken.merge(Items.WATER_BUCKET, 1, Integer::sum);
                         n++;
                     }
                     return n;
