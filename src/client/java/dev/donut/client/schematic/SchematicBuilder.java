@@ -358,10 +358,13 @@ public final class SchematicBuilder {
     private static final double CHANGE_MARGIN = 24;
     /**
      * What the last walk searches that found nothing were made with, and when, see {@link #walkSearchKey}: one for walks on
-     * the ground, one for walks that climb through the build's cells ({@link #escaping}), as both are tried each time.
+     * the ground, one for walks that climb through the build's cells ({@link #escaping}), as both are tried each time,
+     * and one for walks to carried blocks only ({@link #carriedWalk}), tried before a box trip with the inventory full.
      * And the same for the last pit search.
      */
-    private final long[] failedWalkKey = new long[2], failedWalkAt = {Long.MIN_VALUE, Long.MIN_VALUE};
+    private final long[] failedWalkKey = new long[3], failedWalkAt = {Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE};
+    /** While {@link #planWalk} looks only for blocks the player carries loose (see {@link #carriedFirst}). */
+    private boolean carriedWalk;
     private long failedPitKey, failedPitAt = Long.MIN_VALUE;
     /** However little changed, a search that found nothing is made again after this long. */
     private static final long FAILED_SEARCH_NANOS = 5_000_000_000L;
@@ -1652,6 +1655,7 @@ public final class SchematicBuilder {
         boolean stayLifted = !liftedFor.isEmpty() && walkEnd != null && player.position().distanceToSqr(walkEnd.standing()) < 2.25;
         Aim held = null;
         int place = -1;
+        Item boxTrip = null;
         for (int i : candidates) {
             place++;
             BlockPos pos = plan.pos(i);
@@ -1977,6 +1981,16 @@ public final class SchematicBuilder {
                 continue;
             }
             if (!creative && materials.loose(item) == 0) {
+                if (boxTrip == null && settings().walk && settings().useShulkers && materials.freeSlots() <= 2
+                        && boxSpots(player, Navigator.standingAt(level, player).floor().above(), player.position()).isEmpty()) {
+                    // Only in a box, the inventory full and no room for one here: a walk to open ground, a stack swapped out
+                    // and the walk back, for what may be a block or two. What is carried goes in first, here or a walk off;
+                    // the trip comes once none of it does (see carriedFirst).
+                    boxTrip = item;
+                    continue;
+                }
+                // Others only in a box wait for the same trip.
+                if (boxTrip != null) continue;
                 if (waitsForRoom(item, materials)) {
                     passedOver(i, "none carried, and no room for it in the inventory a moment ago (" + materials.freeSlots() + " slots free)");
                     continue;
@@ -2046,6 +2060,11 @@ public final class SchematicBuilder {
         if (settings().walk && pickUpHelpers(client, player)) return;
         if (settings().walk && walkOut(client, player)) return;
         if (settings().walk && walkToRepair(client, player)) return;
+        if (boxTrip != null) {
+            if (carriedFirst(client, player, candidates, materials, layerNumber, lift)) return;
+            startRestock(client, player, boxTrip, materials);
+            return;
+        }
         if (settings().walk && settings().redstoneLast && !orderLifted && walksSinceClick >= WALKS_WITHOUT_CLICK) {
             // Walk after walk for the blocks whose turn it is, and none of them goes in: each look counted from where a
             // walk was to end fails from where it does end. Those after them may go in first, as when none can be placed
@@ -2074,6 +2093,8 @@ public final class SchematicBuilder {
         // From where the walk ends there may be no room for one, a channel or the top of the build, and the walk is for
         // nothing (v4-full9, 21:26: down into the kelp channel for dispenser 3,70,9, none carried, "no room for a box").
         if (settings().walk && !creative && settings().useShulkers && fetchBeforeWalk(client, player, candidates, materials, lift)) return;
+        if (settings().walk && !creative && settings().useShulkers && materials.freeSlots() <= 2
+                && carriedFirst(client, player, candidates, materials, layerNumber, lift)) return;
         if (settings().walk && planWalk(client, player, candidates, materials, layerNumber, lift)) return;
         // Twice in a row no place reached had a block in reach, with blocks left that wait for nothing (planWalk only
         // weighs those): shut in, as after a fall under the build. Climbing out through cells the build fills later is
@@ -6370,7 +6391,7 @@ public final class SchematicBuilder {
         // The same search found nothing a moment ago, and nothing it goes by has changed since: it would find nothing again,
         // and a search over some 20,000 places four times a second holds up the game.
         long searchKey = walkSearchKey(player, near, lift);
-        int kind = escaping ? 1 : 0;
+        int kind = escaping ? 1 : carriedWalk ? 2 : 0;
         if (searchKey == failedWalkKey[kind] && System.nanoTime() - failedWalkAt[kind] < FAILED_SEARCH_NANOS) return false;
         // Blocks left that a block placed from the same place could hold, by position, whether or not they can go in yet.
         Map<Long, Integer> pool = new HashMap<>();
@@ -6603,7 +6624,8 @@ public final class SchematicBuilder {
         // space under the build. So too a search that ran out of places long before its limit with blocks in reach but no
         // look at any: a few tops between two channels say, every look from them shut off.
         boolean shutIn = seen[1] == 0 || seen[2] == 0 && seen[0] < SHUT_IN_PLACES;
-        noneInReach = path == null && shutIn ? noneInReach + 1 : 0;
+        // Only some of the blocks looked for: no place for them says nothing about being shut in.
+        if (!carriedWalk) noneInReach = path == null && shutIn ? noneInReach + 1 : 0;
         if (path == null) {
             long now = System.nanoTime();
             failedWalkKey[kind] = searchKey;
@@ -8765,6 +8787,29 @@ public final class SchematicBuilder {
             return restock != Restock.NONE || swapFrom >= 0 || walker.active();
         }
         return false;
+    }
+
+    /**
+     * With the inventory full, a walk to blocks whose item is carried loose, before one to a block whose item is only in a
+     * box: that one costs a box trip, often down to open ground, to swap a stack in, and the stack swapped out is one the
+     * layer takes too. A player with full pockets builds what they hold first. v4-full14r (20:25..20:52) went to a box 48
+     * times in 27 minutes for 100 blocks, each trip for the next block in reach, a stack of something else in hand.
+     */
+    private boolean carriedFirst(Minecraft client, LocalPlayer player, List<Integer> candidates, Materials materials,
+                                 int layerNumber, boolean lift) {
+        if (!settings().walk) return false;
+        List<Integer> carried = new ArrayList<>();
+        for (int i : candidates) {
+            Item item = plan.item(i);
+            if (item != null && materials.loose(item) > 0) carried.add(i);
+        }
+        if (carried.isEmpty()) return false;
+        carriedWalk = true;
+        try {
+            return planWalk(client, player, carried, materials, layerNumber, lift);
+        } finally {
+            carriedWalk = false;
+        }
     }
 
     /** Whether a stack was swapped in by {@link #swapForRoom} fewer than {@link #SWAP_BACK_AFTER} blocks ago. */
