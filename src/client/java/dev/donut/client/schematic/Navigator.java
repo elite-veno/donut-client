@@ -416,7 +416,10 @@ public final class Navigator {
         // In water too deep to jump from, as run out of a build onto the ground under it, a jump only swims up and the
         // pillar never gets its block: a block set on the ground beside instead, into the water there, and a step up onto
         // it, the swim up carrying the player over its edge. From on top the climb goes on as on dry ground.
-        if (deepWater(cell) && Math.abs(from.feet() - cell.getY()) < 0.01 && from.feet() + 1 <= climbCeiling
+        // Not in a current, nor over ice: standing still to aim at the ground beside, the player drifts off, out of reach
+        // of the spot (v1-full7, the kelp channel at x 6 over packed ice carried them from z 9..11 to 14, six times over).
+        if (deepWater(cell) && !drifts(from)
+                && Math.abs(from.feet() - cell.getY()) < 0.01 && from.feet() + 1 <= climbCeiling
                 && clear(from.x(), from.z(), from.feet(), from.feet() + 1 + BODY, from.y())) {
             for (int[] d : DIRECTIONS) {
                 if (d[0] != 0 && d[1] != 0) continue;
@@ -440,7 +443,7 @@ public final class Navigator {
         // One block across, not a way on through the air: a bridge goes on from solid ground only, which also keeps a
         // search from spreading over every empty spot at that height.
         if (bridges && from.move() != Move.BRIDGE && Math.abs(from.feet() - (from.y() + 1)) < 0.01
-                && level.getBlockState(under).isCollisionShapeFullBlock(level, under)) {
+                && level.getBlockState(under).isCollisionShapeFullBlock(level, under) && !drifts(from)) {
             for (int[] d : DIRECTIONS) {
                 if (d[0] != 0 && d[1] != 0) continue;
                 int nx = from.x() + d[0], nz = from.z() + d[1];
@@ -482,6 +485,19 @@ public final class Navigator {
      */
     /** How deep water may be, from the bottom of the feet's cell, for a jump from it: deeper, the player swims instead. */
     static final double SWIM_DEPTH = 0.4;
+
+    /**
+     * Whether a player standing still at {@code node} drifts off it: in running water, or on ice, slippery past
+     * {@link #SLIPPERY}. A block put down from there by a look held a few ticks, a bridge's or a step's, goes amiss.
+     */
+    private boolean drifts(Node node) {
+        BlockPos feet = node.feetCell();
+        if (level.getFluidState(feet).getFlow(level, feet).lengthSqr() > 1e-6) return true;
+        return level.getBlockState(node.floor()).getBlock().getFriction() > SLIPPERY;
+    }
+
+    /** Friction past which a floor is slippery, as ice is: 0.6 is the usual. */
+    private static final float SLIPPERY = 0.6f;
 
     /** Whether the feet's cell holds water deeper than {@link #SWIM_DEPTH}, where a jump only swims up. */
     private boolean deepWater(BlockPos cell) {
