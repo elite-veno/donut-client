@@ -518,6 +518,12 @@ public final class SchematicBuilder {
     private boolean escapeWalk;
     /** Walks made to bring each of those into view, by position. */
     private final Map<Long, Integer> escapeWalks = new HashMap<>();
+    /**
+     * Helper blocks a walk put down in a spot the build shuts in, by position, each with the block of the build over it that
+     * closes the spot (see {@link #noteShutIn}); and the walks made to bring each into view.
+     */
+    private final Map<Long, Long> shutInHelpers = new HashMap<>();
+    private final Map<Long, Integer> shutInWalks = new HashMap<>();
     /** Walks made to take back a helper block of an earlier walk, out of them (see {@link #walkToSpareHelper}), by position. */
     private final Map<Long, Integer> reclaimWalks = new HashMap<>();
     /** When each of those was last checked with a search for a way on without it (see {@link #reclaimable}). */
@@ -1171,6 +1177,8 @@ public final class SchematicBuilder {
         escapeHelpers.clear();
         escapeWalk = false;
         escapeWalks.clear();
+        shutInHelpers.clear();
+        shutInWalks.clear();
         reclaimWalks.clear();
         reclaimChecked.clear();
         holdSince = -1;
@@ -1383,6 +1391,7 @@ public final class SchematicBuilder {
                 // Two minutes and still not taken away: the layers go on, and the helper waits for the cleanup.
                 if (debug()) LOGGER.info("Helper blocks in the build's water not taken away in time: the layers above go on");
                 plan.releaseHolds();
+                shutInHelpers.clear();
                 heldY = Integer.MAX_VALUE;
             }
         } else {
@@ -1502,7 +1511,8 @@ public final class SchematicBuilder {
             return;
         }
         Vec3 eye = player.getEyePosition();
-        if (plan.holding() && layerY == plan.heldLayerY() && settings().walk && walkToEscapeHelper(client, player)) return;
+        if (plan.holding() && layerY == plan.heldLayerY() && settings().walk
+                && (walkToEscapeHelper(client, player) || walkToShutInHelper(client, player))) return;
         if (!brokeOut.isEmpty()) {
             // Out: on top of the layer or off the build, or anywhere the pocket didn't reach with a way on from there. A way
             // out found from inside, as soon as the block is gone, is no reason yet to put it back.
@@ -1528,6 +1538,8 @@ public final class SchematicBuilder {
             // Broken to get out of where the player was shut in: back in once they are out, not to shut them in again.
             // Broken to open a look at a block beside: back in once that one is.
             if (brokeOut.contains(i) || unblocking.containsKey(i)) continue;
+            // Over a helper block a walk put down in a spot the build shuts in: in once that one is gone (see noteShutIn).
+            if (shutInHelpers.containsValue(plan.pos(i).asLong())) continue;
             // Water, lava and kelp wait until the other blocks of their layer, and of those below, that hold them in are.
             if (wetHeld(level, i)) continue;
             if (byGroup && !inOrder(player, i, group, lift, started)) continue;
@@ -3606,10 +3618,82 @@ public final class SchematicBuilder {
         }
     }
 
-    /** Forgets a helper block of a way out, gone or left for the cleanup, and the hold it had. */
+    /** Forgets a helper block of a way out, gone or left for the cleanup, and the hold it had; so too one shut in. */
     private void dropEscapeHelper(long key) {
         escapeHelpers.remove(key);
         plan.hold(BlockPos.of(key), false);
+        Long closer = shutInHelpers.remove(key);
+        if (closer != null) releaseCloser(closer);
+    }
+
+    /**
+     * Notes a helper block a walk put down in a spot the build shuts in ({@link BuildPlan#enclosed}), or in the build's
+     * water right under one. Such a one came back only when the player happened to pass in reach of it, and the build
+     * closed over the rest: crafter-clean9 left 4,67,18, 4,67,26 and 4,66..67,6 in the aisle under the hoppers at x 4,
+     * whose only way in is a shut door, once the glass over it went in, the one at 4,66,6 in the water's way. The block of
+     * the build over it that closes the spot waits and holds its layer (see BuildPlan#hold), and walkToShutInHelper goes
+     * to take the helper back first. None is noted under a block already in: that spot is shut already.
+     */
+    private void noteShutIn(BlockPos cell) {
+        int i = plan.indexOf(cell);
+        boolean water = i >= 0 && plan.target(i).getBlock() instanceof LiquidBlock;
+        if (!plan.enclosed(cell) && !(water && plan.enclosed(cell.above()))) return;
+        for (BlockPos up = cell.above(); up.getY() < plan.bounds.maxY; up = up.above()) {
+            int j = plan.indexOf(up);
+            if (j < 0 || plan.target(j).isAir() || plan.target(j).getBlock() instanceof LiquidBlock) continue;
+            if (plan.status(j) != BuildPlan.Status.PENDING && plan.status(j) != BuildPlan.Status.UNLOADED) return;
+            shutInHelpers.put(cell.asLong(), up.asLong());
+            plan.hold(up, true);
+            return;
+        }
+    }
+
+    /** Takes the hold off a block that closes a spot over a helper block, once no helper block it closes over is left. */
+    private void releaseCloser(long closer) {
+        if (!shutInHelpers.containsValue(closer)) plan.hold(BlockPos.of(closer), false);
+    }
+
+    /**
+     * Helper blocks a walk put down in a spot the build shuts in still standing, and the layer of the block that closes the
+     * spot up next: a walk to where the top one of a column is in view, for removeUsedHelper to take it back, at most three
+     * times each; never to inside a shut-in spot, which a walk on foot may drop into and not get out of. False when one is
+     * in view already, or none is left to go to.
+     */
+    private boolean walkToShutInHelper(Minecraft client, LocalPlayer player) {
+        Level level = player.level();
+        double reach = player.blockInteractionRange() - 0.25;
+        Navigator.Node start = Navigator.standingAt(level, player);
+        for (Iterator<Map.Entry<Long, Long>> it = shutInHelpers.entrySet().iterator(); it.hasNext(); ) {
+            Map.Entry<Long, Long> entry = it.next();
+            long key = entry.getKey();
+            BlockPos at = BlockPos.of(key);
+            Helper helper = helpers.get(key);
+            if (helper == null || level.getBlockState(at).getBlock() != helper.block()) {
+                it.remove();
+                releaseCloser(entry.getValue());
+                continue;
+            }
+            if (helpers.containsKey(at.above().asLong())) continue;
+            if (inView(player, player.getEyePosition(), at, reach) && safeToBreak(player, at) && !start.floor().equals(at)) return false;
+            Navigator.Path path = shutInWalks.getOrDefault(key, 0) >= 3 ? null : navigator(player, false).limit(20_000).find(start, node ->
+                    node.key() == start.key() || plan.enclosed(node.feetCell())
+                    || node.x() == at.getX() && node.z() == at.getZ() && node.feet() >= at.getY() ? 0 : viewScore(player, node.eye(), at, reach));
+            if (path == null || path.nodes().size() < 2 || dropsIntoTrap(player, path)) {
+                // Left for the cleanup: the block over it goes in.
+                if (debug()) LOGGER.info("No walk to take back the helper block at {}, which the build shuts in: left", at.toShortString());
+                it.remove();
+                releaseCloser(entry.getValue());
+                continue;
+            }
+            shutInWalks.merge(key, 1, Integer::sum);
+            releaseKeys(client);
+            walker.start(path.nodes(), Vec3.atCenterOf(at));
+            show("Walking to a helper block the build shuts in, to take it away", false);
+            if (debug()) LOGGER.info("Walking {} steps to take back the helper block at {} before the build shuts it in", path.nodes().size() - 1,
+                    at.toShortString());
+            return true;
+        }
+        return false;
     }
 
     /** Roughly how many ticks breaking the block takes with the best tool carried, for picking the quickest. */
@@ -6825,6 +6909,7 @@ public final class SchematicBuilder {
             helpers.put(cell.asLong(), new Helper(-1, Block.byItem(item)));
             if (debug()) LOGGER.info("Climbing: a helper block at {}, {} helper blocks standing", cell.toShortString(), helpers.size());
             if (escapeWalk || !brokeOut.isEmpty()) addEscapeHelper(cell);
+            else noteShutIn(cell);
         }
         return true;
     }
@@ -6862,6 +6947,7 @@ public final class SchematicBuilder {
         if (success.swingSource() == InteractionResult.SwingSource.CLIENT) player.swing(InteractionHand.MAIN_HAND);
         helpers.put(support.relative(face).asLong(), new Helper(-1, Block.byItem(item)));
         if (escapeWalk || !brokeOut.isEmpty()) addEscapeHelper(support.relative(face));
+        else noteShutIn(support.relative(face));
         if (debug()) LOGGER.info("Bridging: a helper block against the {} side of {}", face, support.toShortString());
         return true;
     }
