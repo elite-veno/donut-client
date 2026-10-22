@@ -2278,7 +2278,8 @@ public final class SchematicBuilder {
                 BlockPos at = pos.relative(side).above(up);
                 int j = plan.indexOf(at);
                 if (j < 0 || plan.status(j) != BuildPlan.Status.PENDING || !BlockRules.placedLookingUp(plan.target(j))) continue;
-                if (!level.getBlockState(at).canBeReplaced()) continue;
+                // Taken by one of the player's own helper blocks: still to come, as in fillsLookUpStand.
+                if (!level.getBlockState(at).canBeReplaced() && !helpers.containsKey(at.asLong())) continue;
                 // The face the one beside is clicked onto, with no other to be had: it goes in first (see chooseUpFaces),
                 // and those stacked over that one, which can't go in before it, don't hold it either.
                 int beside = plan.indexOf(pos.relative(side));
@@ -2726,7 +2727,9 @@ public final class SchematicBuilder {
         Integer known = lookUpStandFor.get(i);
         if (known != null) {
             if (known < 0) return false;
-            boolean open = level.getBlockState(plan.pos(known)).canBeReplaced();
+            // A helper block of the player's own in its cell is no block in: it comes away again, and the wait goes on.
+            // v4-full22 (03:32:27) climbed on one at 17,73,9, read the observer as in, and the iron bars under it went in.
+            boolean open = level.getBlockState(plan.pos(known)).canBeReplaced() || helpers.containsKey(plan.pos(known).asLong());
             if (stillToGo(plan, known) && open) return true;
             lookUpStandFor.remove(i);
             if (debug()) LOGGER.info("{} at {} waits no more for the look up at {} at {}: {}", plan.target(i).getBlock().getName().getString(),
