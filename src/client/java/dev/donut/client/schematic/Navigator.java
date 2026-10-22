@@ -416,6 +416,10 @@ public final class Navigator {
                 // Coming down onto it at all, by a drop or a jump that lands lower, out of a bowl say.
                 if (rise < -STEP && unsteady(new BlockPos(nx, ny, nz), Blocks.SLIME_BLOCK)) continue;
                 Node next = new Node(nx, ny, nz, feet, move);
+                // From one narrow top to another, a stride over the gap between them: only where their tops meet along the
+                // way, a fence or gates side by side; else the body comes down beside them (v4-full36, 15:54:13: off the
+                // gate tops at 3..4 71.5 6 into the channel under them, with no way out).
+                if (move == Move.WALK && narrow(nx, ny, nz) && narrow(from.x(), from.y(), from.z()) && !supportedAlong(level, from, next)) continue;
                 if (!badSteps.isEmpty() && badSteps.contains(stepKey(from, next))) continue;
                 out.add(next);
             }
