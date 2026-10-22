@@ -4076,6 +4076,11 @@ public final class SchematicBuilder {
                 && level.getBlockState(under.below()).getCollisionShape(level, under.below()).isEmpty();
     }
 
+    /** Whether the player stands in water whose current runs into a fall beside them. */
+    private static boolean inCurrentIntoFall(LocalPlayer player) {
+        return player.onGround() && player.isInWater() && currentIntoFall(player.level(), Navigator.standingAt(player.level(), player).feetCell());
+    }
+
     private static boolean onNarrowEdge(LocalPlayer player) {
         return player.onGround() && Navigator.narrowOverDrop(player.level(), Navigator.standingAt(player.level(), player));
     }
@@ -6985,7 +6990,7 @@ public final class SchematicBuilder {
 
     private void walk(Minecraft client, LocalPlayer player) {
         walker.careful(carefulSteps);
-        if (player.isShiftKeyDown() && !walker.holdsCrouch() && !climbCrouch && !overDrop(player)) setCrouch(client, false);
+        if (player.isShiftKeyDown() && !walker.holdsCrouch() && !climbCrouch && !overDrop(player) && !inCurrentIntoFall(player)) setCrouch(client, false);
         Walker.State state = walker.tick(client, player, new Walker.Climb() {
             @Override
             public boolean ready(BlockPos cell) {
@@ -7031,7 +7036,11 @@ public final class SchematicBuilder {
             // Nor with the middle of the body out over a drop, held only by the edge of the block beside, as a bridge leans
             // out: v4-full14r stood up so at 12.30 74 19.7 over the shaft at 12 73 19, slid off with what was left of the
             // lean and fell eight blocks into the space under the channels, shut in there.
-            if (crouchHeld && !onNarrowEdge(player) && !overDrop(player)) setCrouch(client, false);
+            if (crouchHeld && !onNarrowEdge(player) && !overDrop(player) && !inCurrentIntoFall(player)) setCrouch(client, false);
+            // Left standing short of where the walk was for, in water running into a fall: crouched, so the edge holds the
+            // player while the next walk is worked out and set off on. v4-full23 and v4-full24 (02:13, 02:57) both stood
+            // so beside the open gate over a channel after a walk failed, and the current took them down into it.
+            if (!crouchHeld && inCurrentIntoFall(player)) setCrouch(client, true);
             // The same step would fail the same way: the next walk goes around it.
             Navigator.Node[] step = walker.failedStep();
             if (step != null) {
