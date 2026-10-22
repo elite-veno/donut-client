@@ -6708,6 +6708,9 @@ public final class SchematicBuilder {
         // none in reach, and says nothing of the places round the build. v4-full14r fell off a bridge at 12 74 19 into the
         // space under the channels and gave up on 54 blocks in a minute, most of them well in reach from the top.
         boolean searchedRound = seen[1] > 0;
+        // Nor with too few helper blocks left to climb: the search had no climb to try, and nothing went in for want of
+        // dirt, not of a look. v4-full29 (10:21:08) gave up the source at 5,72,20 so, out of helper blocks for minutes.
+        if (!player.hasInfiniteMaterials() && helpersLoose(player) < HELPERS_LOW) searchedRound = false;
         if (path == null && searchedRound && seen[2] == 0 && seen[0] < Navigator.MAX_NODES && tick - lastProgress > UP_GIVE_UP_TICKS) {
             // Every place a walk reaches searched, well short of the limit, and not one with a look at any of these: the
             // blocks placed with a look up among them have none anywhere, as a row of up-facing observers over a solid
