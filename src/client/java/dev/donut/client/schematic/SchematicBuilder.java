@@ -2823,6 +2823,38 @@ public final class SchematicBuilder {
      * the source may wait for in turn (see {@link #fillsLookUpStand}); over once the source is in or given up, or after
      * {@link #COVER_TICKS}.
      */
+    /** When each kelp spot began to wait under {@link #gapWaterFirst}, by block. */
+    private final Map<Integer, Long> gapWaitSince = new HashMap<>();
+    private static final long GAP_WAIT_TICKS = 2400;
+
+    /**
+     * Whether a kelp or seagrass spot still to be poured waits for a water source beside it whose cell has nothing under
+     * it, a source over an open gate say: poured first, the spot's water runs into that cell as a current toward the
+     * gap, and the player standing in the row is carried through the gate. With the source in, the water stands still.
+     * v4-full38 and v4-full40 (19:06, 19:42) poured the kelp row z 16 / z 20 before the source row over the gates at
+     * z 17 / z 19, and each was carried down into the channel under it. At most {@link #GAP_WAIT_TICKS}, so nothing
+     * waits on a source that waits in turn.
+     */
+    private boolean gapWaterFirst(Level level, int i) {
+        if (!plan.plant(i) || !plan.needsPour(i)) return false;
+        BlockPos pos = plan.pos(i);
+        boolean waits = false;
+        for (Direction side : Direction.Plane.HORIZONTAL) {
+            BlockPos at = pos.relative(side);
+            int j = plan.indexOf(at);
+            if (j < 0 || plan.kind(j) != BlockRules.Kind.FLUID || !plan.target(j).getFluidState().isSource() || !stillToGo(plan, j)) continue;
+            if (!level.getBlockState(at).canBeReplaced() || !level.getBlockState(at.below()).getCollisionShape(level, at.below()).isEmpty()) continue;
+            waits = true;
+            break;
+        }
+        if (!waits) {
+            gapWaitSince.remove(i);
+            return false;
+        }
+        long since = gapWaitSince.computeIfAbsent(i, k -> tick);
+        return tick - since < GAP_WAIT_TICKS;
+    }
+
     private boolean coversPour(Level level, int i) {
         if (plan.kind(i) != BlockRules.Kind.PLACE || BlockRules.placedLookingUp(plan.target(i))) return false;
         BlockPos pos = plan.pos(i);
@@ -2959,7 +2991,8 @@ public final class SchematicBuilder {
         // up, outside the cells the stamp reads, and once it went in the wait stayed as kept. A chest waiting on the level
         // look at an observer two cells off waited for good, and the lone half beside it with it (slab farm west cut).
         chooseUpFaces(player, i, started);
-        if (waitsForUpFacing(level, i) || waitsForChannel(level, i) || fillsLookUpStand(player, i) || coversPour(level, i)) return 1;
+        if (waitsForUpFacing(level, i) || waitsForChannel(level, i) || fillsLookUpStand(player, i) || coversPour(level, i)
+                || gapWaterFirst(level, i)) return 1;
         long stamp = BuildPlan.stamp(level, pos);
         if (sealStamp[i] == stamp) return seal[i];
         if (System.nanoTime() - started > PLAN_NANOS) return 0;
