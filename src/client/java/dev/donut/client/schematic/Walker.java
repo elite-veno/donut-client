@@ -337,7 +337,12 @@ final class Walker {
         // beside water over an open gate needs it most (v4-full9, 21:26: not crouched, the drop to 3 69 8 carried on to
         // z 7.70 and down through the gate). c6-26 had left water out for the steps held at z 4.30 in the kelp channel, but
         // they were held there upright too (v4-full8), so the crouch wasn't it.
-        boolean crouchHere = rail || wary || last && onTop && narrow && within(at, to) || easing || fallLanding;
+        // Wading beside a fall, a gap over an open gate into a channel say, the current carries an upright player over the
+        // edge; crouched, the edge holds them (v4-full34, 15:02:50: along the kelp row at z 4, pushed into the gap at 11 68 5
+        // and down into the channel, where nothing let them out).
+        boolean wetEdge = player.onGround() && player.isInWater() && to.move() == Navigator.Move.WALK
+                && (Navigator.besideFall(player.level(), to) || Navigator.besideFall(player.level(), from));
+        boolean crouchHere = rail || wary || last && onTop && narrow && within(at, to) || easing || fallLanding || wetEdge;
         if (!bridgeCrouch && crouchHere != edgeCrouch && (crouchHere || player.onGround())) {
             climb.crouch(crouchHere);
             edgeCrouch = crouchHere;
