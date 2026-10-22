@@ -2812,8 +2812,8 @@ public final class SchematicBuilder {
     /** Whether block {@code i} is still to go in: a layer or two up, not looked at yet, it may still be UNLOADED. */
     /** When each block {@link #coversPour} holds back first waited, by block. */
     private final Map<Integer, Long> coverSince = new HashMap<>();
-    /** How long a block waits at most for the source under it to be poured (see {@link #coversPour}). */
-    private static final long COVER_TICKS = 6000;
+    /** How long a block waits for the source under it to be poured with nothing going in (see {@link #coversPour}). */
+    private static final long COVER_TICKS = 2400;
 
     /**
      * Whether block {@code i} waits, across layers, for the water or lava source right under it still to be poured: in
@@ -2821,7 +2821,7 @@ public final class SchematicBuilder {
      * ikea_v4's glass 7,73,32 went in over the source 7,72,32 while layer 8's sources waited, layer 9 built with the order
      * lifted, and no place reached had a look at the source after (v4-full11r, 13:42). Not a block placed looking up, which
      * the source may wait for in turn (see {@link #fillsLookUpStand}); over once the source is in or given up, or after
-     * {@link #COVER_TICKS}.
+     * {@link #COVER_TICKS} with nothing going in.
      */
     /** When each kelp spot began to wait under {@link #gapWaterFirst}, by block. */
     private final Map<Integer, Long> gapWaitSince = new HashMap<>();
@@ -2878,11 +2878,15 @@ public final class SchematicBuilder {
             return true;
         }
         if (since < 0) return false;
-        if (tick - since <= COVER_TICKS) return true;
+        // Counted while nothing goes in, not from the first wait: while the rest of the build goes on, the source is still
+        // to come, poured once its turn comes round. v4-full41 (22:40) put glass 12,73,28 in over the source 12,72,28
+        // after five minutes of box trips and observers elsewhere, never having tried the source; no place had a look
+        // at it after, and it was given up.
+        if (tick - Math.max(since, lastProgress) <= COVER_TICKS) return true;
         // Timed out: it goes in after all, and waits no more for this source.
         coverSince.put(i, -1L);
-        if (debug()) LOGGER.info("{} at {} waited {} s for the source under it to be poured: it goes in after all",
-                plan.target(i).getBlock().getName().getString(), pos.toShortString(), COVER_TICKS / 20);
+        if (debug()) LOGGER.info("{} at {} waited {} s for the source under it to be poured, {} s with nothing going in: it goes in after all",
+                plan.target(i).getBlock().getName().getString(), pos.toShortString(), (tick - since) / 20, COVER_TICKS / 20);
         return false;
     }
 
