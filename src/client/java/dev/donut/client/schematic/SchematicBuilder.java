@@ -5089,6 +5089,8 @@ public final class SchematicBuilder {
      */
     /** Walks for dropped helper blocks by the cell they lay in: how many and since when (see {@link #pickUpHelpers}). */
     private final Map<Long, long[]> pickupCells = new HashMap<>();
+    /** Whether a pickup walk led off the last walk's end, arrived at, before anything was tried there (see planWalk). */
+    private boolean walkedOffEnd;
     private static final long PICKUP_CELL_TICKS = 6000;
 
     private boolean pickUpHelpers(Minecraft client, LocalPlayer player) {
@@ -5148,6 +5150,7 @@ public final class SchematicBuilder {
             // A drop the build needs back: a try for each walk made to it, none for one there is no way to yet.
             if (needed) pickupTried.merge(drop.getId(), 1, Integer::sum);
             releaseKeys(client);
+            if (lastWalkEnd != null && !clickedSinceWalk && lastWalkEnd.standing().distanceToSqr(player.position()) < 1) walkedOffEnd = true;
             walker.start(path.nodes());
             show("Picking up " + name(drop.getItem().getItem()) + " dropped nearby", false);
             if (debug()) LOGGER.info("Walking {} steps to pick up {} at {}", path.nodes().size() - 1, drop.getItem(), drop.position());
@@ -6546,13 +6549,20 @@ public final class SchematicBuilder {
         // The last walk's place didn't do: nothing went in from there, though looks were counted from it. Left out until a
         // block goes in, so two such places close by can't send the player to and fro between them, and the search goes
         // on to places further off, round the build or into it.
-        if (lastWalkEnd != null && !clickedSinceWalk) {
+        // Only from there: led off it first, for a dropped block picked up or a helper taken away, nothing was tried from it.
+        // v4-full43 (00:04) arrived in the hopper bowl 16,70.69,34, the one stand for the look up at observer 17,73,33,
+        // walked off at once for a dropped dirt block, and the bowl was left out for good; the observer was given up.
+        if (lastWalkEnd != null && !clickedSinceWalk && walkedOffEnd) {
+            if (debug()) LOGGER.info("Walked off {} {} {} before anything was tried there: it may be walked to again", lastWalkEnd.x(),
+                    lastWalkEnd.feet(), lastWalkEnd.z());
+        } else if (lastWalkEnd != null && !clickedSinceWalk) {
             if (uselessSpots.add(lastWalkEnd.key()) && debug()) {
                 LOGGER.info("Nothing went in from {} {} {}: no more walks there until a block does", lastWalkEnd.x(), lastWalkEnd.feet(),
                         lastWalkEnd.z());
             }
         }
         lastWalkEnd = null;
+        walkedOffEnd = false;
         // The same search found nothing a moment ago, and nothing it goes by has changed since: it would find nothing again,
         // and a search over some 20,000 places four times a second holds up the game.
         long searchKey = walkSearchKey(player, near, lift);
@@ -6879,6 +6889,7 @@ public final class SchematicBuilder {
         walker.precise(!firm.contains(end.key()));
         walksSinceClick++;
         lastWalkEnd = end;
+        walkedOffEnd = false;
         clickedSinceWalk = false;
         show("Layer " + layerNumber + " of " + plan.layers().size() + ": walking to " + end.x() + " " + Math.round(end.feet()) + " " + end.z(), false);
         if (debug()) {
