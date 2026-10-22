@@ -12,6 +12,7 @@ import net.minecraft.util.Mth;
 import java.util.concurrent.ThreadLocalRandom;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import net.minecraft.world.level.block.state.BlockState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -359,7 +360,13 @@ final class Walker {
         boolean settle = last || onIce && (turnsAfter(index) || !open(player, to)) || narrowTurn;
         // The last step ends standing; one on the way also counts passed over mid-hop, close above where it stands. On a
         // narrow top over a drop, one on the way is passed only close to its middle, so the next step starts on the line.
-        boolean there = last ? player.onGround() && Math.abs(at.y - to.feet()) < 0.6
+        // The end in a bowl, a hopper's or a composter's: there only once down in it, not up on its rim, where the look the
+        // walk was for doesn't work (v4-full35, 17:36:42: came to rest on the rim of 11 70.69 26, 0.53 off, "no look" at
+        // the observer 10 73 27, and that row waited half an hour).
+        BlockPos endFloor = to.floor();
+        VoxelShape endShape = player.level().getBlockState(endFloor).getCollisionShape(player.level(), endFloor);
+        boolean bowl = last && !endShape.isEmpty() && endFloor.getY() + endShape.max(Direction.Axis.Y) > to.feet() + 0.05;
+        boolean there = last ? player.onGround() && Math.abs(at.y - to.feet()) < (bowl ? 0.1 : 0.6)
                 : (player.onGround() ? Math.abs(at.y - to.feet()) < 0.6 : at.y >= to.feet() - 0.05 && at.y - to.feet() < 0.45);
         if (!last && settle && slide(player) > (narrowTurn ? 0.1 : 0.3)) there = false;
         if (there && distance < (last ? (onIce ? 0.4 : precise ? 0.13 : 0.25) : narrowTurn ? 0.2 : settle ? 0.4 : narrow ? 0.2 : 0.45)) {
