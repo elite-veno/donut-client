@@ -420,6 +420,12 @@ public final class SchematicBuilder {
      */
     private boolean cleanupDrop;
     /**
+     * Times every round of the cleanup came to nothing and was begun again once the player came to rest, since the
+     * number of helper blocks standing last changed ({@link #cleanupSettleCount}).
+     */
+    private int cleanupSettles, cleanupSettleCount = -1;
+    private static final int CLEANUP_SETTLES = 3;
+    /**
      * Spots the cleanup has taken a helper block away from: no climb puts one there again, or two columns are taken down
      * and put up again in turn, each climb for one going up where the other stood.
      */
@@ -855,6 +861,8 @@ public final class SchematicBuilder {
         cleanupWide = false;
         cleanupDrop = false;
         cleanupEscapes = 0;
+        cleanupSettles = 0;
+        cleanupSettleCount = -1;
         cleared.clear();
         pitWalks.clear();
         pitFill = null;
@@ -1206,6 +1214,8 @@ public final class SchematicBuilder {
         cleanupWide = false;
         cleanupDrop = false;
         cleanupEscapes = 0;
+        cleanupSettles = 0;
+        cleanupSettleCount = -1;
         cleared.clear();
         pitWalks.clear();
         pitFill = null;
@@ -5635,6 +5645,24 @@ public final class SchematicBuilder {
                         helpers.size(), out.nodes().size() - 1);
                 return true;
             }
+        }
+        // Every round came to nothing from here: begun again in a moment, once the player is at rest, a few times before any
+        // is left. crafter-clean15 (02:55:40) took the helper block under its feet, and all three rounds for the 656 left
+        // failed from where it was coming down, in the same second; every one of them was left standing.
+        if (helpers.size() != cleanupSettleCount) {
+            cleanupSettleCount = helpers.size();
+            cleanupSettles = 0;
+        }
+        if (cleanupSettles < CLEANUP_SETTLES) {
+            cleanupSettles++;
+            cleanupWide = false;
+            cleanupDrop = false;
+            cleanupSkipped.clear();
+            nearWalks.clear();
+            nextAction = System.nanoTime() + 3_000_000_000L;
+            if (debug()) LOGGER.info("Cleanup: no way to any of {} helper blocks from {}: trying again in a moment ({} of {})", helpers.size(),
+                    here, cleanupSettles, CLEANUP_SETTLES);
+            return true;
         }
         for (long key : helpers.keySet()) {
             BlockPos pos = BlockPos.of(key);
