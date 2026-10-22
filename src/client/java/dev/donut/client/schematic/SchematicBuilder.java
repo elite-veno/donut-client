@@ -1619,7 +1619,15 @@ public final class SchematicBuilder {
         }
         candidates.clear();
         candidates.addAll(backToFront);
-        if (settings().walk && wetSoon(player.level(), player.blockPosition(), recentPours(), new HashMap<>())
+        // In water running into a fall beside, nothing is aimed from there, a pour stand or not: crouched, and off it first.
+        // A walk ending short left the player so beside the open gate over each kelp channel of v4 (z 6, 18, 30), and
+        // while they lined up the pour the current took them down into the channel, three runs in a row.
+        boolean intoFall = settings().walk && inCurrentIntoFall(player);
+        if (intoFall && !player.isShiftKeyDown()) {
+            stance(client, true);
+            return;
+        }
+        if (intoFall || settings().walk && wetSoon(player.level(), player.blockPosition(), recentPours(), new HashMap<>())
                 && !wetPourStand(player.level(), Navigator.standingAt(player.level(), player).feetCell(), null)
                 && !stillWater(player.level(), Navigator.standingAt(player.level(), player))) {
             // Water running past pushes the player about and spoils every look: out of it first, onto dry ground.
