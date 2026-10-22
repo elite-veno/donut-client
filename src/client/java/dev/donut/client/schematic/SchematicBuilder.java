@@ -5302,6 +5302,9 @@ public final class SchematicBuilder {
         if (player.hasInfiniteMaterials()) return false;
         helperItem(player);
         if (helperItems.isEmpty() || helpersLoose(player) >= 64) return false;
+        // Down to a handful, those in reach come back whatever the boxes hold: a box opened for more needs room for a box
+        // and a slot, and v4-full22 opened 80 for dirt with 291 helper blocks standing about it, getting none.
+        if (helpersLoose(player) < HELPERS_LOW) return true;
         Materials materials = Materials.of(player.getInventory());
         Map<Item, Integer> needs = plan.needs();
         for (Item item : helperItems) if (!needs.containsKey(item) && materials.boxed(item) > 0) return false;
