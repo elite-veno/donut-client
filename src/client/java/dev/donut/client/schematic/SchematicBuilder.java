@@ -2743,7 +2743,7 @@ public final class SchematicBuilder {
             cells = List.of(pos);
         } else if (plan.kind(i) == BlockRules.Kind.FLUID && plan.target(i).getFluidState().isSource()) {
             fill = null;
-            cells = waterRun(plan, i);
+            cells = waterRun(plan, level, i);
         } else {
             return false;
         }
@@ -2905,7 +2905,15 @@ public final class SchematicBuilder {
     }
 
     /** The cells of running water the build has joined to water source {@code i}, beside it and down, a few dozen at most. */
-    static List<BlockPos> waterRun(BuildPlan plan, int i) {
+    static List<BlockPos> waterRun(BuildPlan plan, int i) { return waterRun(plan, null, i); }
+
+    /**
+     * As {@link #waterRun(BuildPlan, int)}, with the level: water also runs into cells where the plan has a block still
+     * to go in that is open now, as far as water runs from a source, since that is where it goes once poured. v4-full29
+     * and v4-full32 poured 11,71,22 with the iron bars 12..17,71,22 still held for the looks up at the observers over
+     * them; the stream ran along under the observers instead, and not one of 13..17,73,21 went in.
+     */
+    static List<BlockPos> waterRun(BuildPlan plan, BlockGetter level, int i) {
         BlockPos source = plan.pos(i);
         List<BlockPos> run = new ArrayList<>(List.of(source));
         Set<Long> seen = new HashSet<>(Set.of(source.asLong()));
@@ -2915,6 +2923,14 @@ public final class SchematicBuilder {
                 BlockPos next = run.get(k).relative(side);
                 if (!seen.add(next.asLong())) continue;
                 int j = plan.indexOf(next);
+                if (level != null && j >= 0 && plan.kind(j) == BlockRules.Kind.PLACE && stillToGo(plan, j) && side != Direction.DOWN
+                        && level.getBlockState(next).canBeReplaced() && level.getFluidState(next).isEmpty()
+                        && Math.abs(next.getX() - source.getX()) + Math.abs(next.getZ() - source.getZ()) <= 7
+                        && !level.getBlockState(next.below()).getCollisionShape(level, next.below()).isEmpty()) {
+                    run.add(next.immutable());
+                    if (run.size() >= RUN_CELLS) break;
+                    continue;
+                }
                 if (j < 0 || plan.kind(j) != BlockRules.Kind.AUTO) continue;
                 FluidState fluid = plan.target(j).getFluidState();
                 if (fluid.isEmpty() || fluid.isSource() || !fluid.getType().isSame(plan.target(i).getFluidState().getType())) continue;
