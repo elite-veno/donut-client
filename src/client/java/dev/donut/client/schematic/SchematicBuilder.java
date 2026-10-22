@@ -5027,6 +5027,10 @@ public final class SchematicBuilder {
      * Short of helper blocks, walks over dropped ones lying near, as those broken from a distance leave: a few steps
      * away, without climbing. False when there are plenty, or none to get to.
      */
+    /** Walks for dropped helper blocks by the cell they lay in: how many and since when (see {@link #pickUpHelpers}). */
+    private final Map<Long, long[]> pickupCells = new HashMap<>();
+    private static final long PICKUP_CELL_TICKS = 6000;
+
     private boolean pickUpHelpers(Minecraft client, LocalPlayer player) {
         if (player.hasInfiniteMaterials()) return pickupSweep = false;
         helperItem(player);
@@ -5073,6 +5077,14 @@ public final class SchematicBuilder {
                 pickupBelow.add(drop.getId());
                 continue;
             }
+            // The same spot walked to for a helper block over and over: one taken away there drops back in, and the walk
+            // in calls for a climb out with another. v4-full29 (08:37..08:38) went down into the observer column at 2 71 3
+            // for a dropped dirt block, climbed out on two more, took them away and went back down for what they dropped.
+            long cell = BlockPos.containing(drop.position()).asLong();
+            long[] walked = pickupCells.get(cell);
+            if (!needed && walked != null && tick - walked[1] < PICKUP_CELL_TICKS && walked[0] >= 2) continue;
+            if (walked == null || tick - walked[1] >= PICKUP_CELL_TICKS) pickupCells.put(cell, new long[] {1, tick});
+            else walked[0]++;
             // A drop the build needs back: a try for each walk made to it, none for one there is no way to yet.
             if (needed) pickupTried.merge(drop.getId(), 1, Integer::sum);
             releaseKeys(client);
