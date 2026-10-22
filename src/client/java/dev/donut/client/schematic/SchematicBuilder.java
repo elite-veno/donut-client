@@ -4396,6 +4396,10 @@ public final class SchematicBuilder {
                     planned.index() < 0 ? planned.at().toShortString() : plan.target(planned.index()));
             carriedFrom.add(aimFrom);
             aim = null;
+            // Crouched at once, standing in the current: the edge then holds the player while the next move is worked
+            // out, where upright the water carries them on over it. v4-full23 (02:13:07) was carried from 9.29 69 4.89 to
+            // 10.32 68.97 5.41 in a second, off into the open gate over the channel at 10 68 5 and down into it, shut in.
+            if (player.onGround() && player.isInWater() && !player.isShiftKeyDown()) setCrouch(client, true);
             return;
         }
         PlacementSolver.Click click = planned.click();
