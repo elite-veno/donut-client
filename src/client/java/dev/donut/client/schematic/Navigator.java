@@ -338,6 +338,10 @@ public final class Navigator {
         // dropped into or out of, unless that is the only way at all.
         boolean wetEdge = wetOverDrop(to) || wetOverDrop(from);
         if (wetEdge) cost += to.move() == Move.WALK ? WET_EDGE : WET_EDGE_LEAP;
+        // Water that runs toward a fall beside the step carries the player into it, a crouch or not: a way round on dry
+        // ground first, however long (v4-full38, 19:06:52: a step along a kelp row just poured, carried 3 blocks and off
+        // into the gap over an open gate down into the channel).
+        if (runsIntoFall(to)) cost += CURRENT_INTO_FALL;
         return cost;
     }
 
@@ -580,6 +584,31 @@ public final class Navigator {
         BlockPos feet = node.feetCell();
         if (level.getFluidState(feet).getFlow(level, feet).lengthSqr() > 1e-6) return true;
         return level.getBlockState(node.floor()).getBlock().getFriction() > SLIPPERY;
+    }
+
+    private static final double CURRENT_INTO_FALL = 80;
+    /** {@link #runsIntoFall} worked out in this search, by place. */
+    private final Map<Long, Boolean> currentFalls = new HashMap<>();
+
+    /** Whether water at the feet of {@code node} runs toward a side with nothing under it, as SchematicBuilder.currentIntoFall. */
+    private boolean runsIntoFall(Node node) {
+        return currentFalls.computeIfAbsent(node.key(), k -> {
+            BlockPos feet = node.feetCell();
+            for (int up = 0; up <= 1; up++) {
+                BlockPos cell = feet.above(up);
+                FluidState fluid = level.getFluidState(cell);
+                if (fluid.isEmpty()) continue;
+                Vec3 flow = fluid.getFlow(level, cell);
+                if (flow.horizontalDistanceSqr() < 1e-4) continue;
+                for (Direction side : Direction.Plane.HORIZONTAL) {
+                    if (flow.x * side.getStepX() + flow.z * side.getStepZ() < 0.5) continue;
+                    BlockPos beside = feet.relative(side);
+                    if (level.getBlockState(beside).getCollisionShape(level, beside).isEmpty()
+                            && level.getBlockState(beside.below()).getCollisionShape(level, beside.below()).isEmpty()) return true;
+                }
+            }
+            return false;
+        });
     }
 
     /** What a walk into or out of water with a drop beside costs more; and a jump or a drop. */
