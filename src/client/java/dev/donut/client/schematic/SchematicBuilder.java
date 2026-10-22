@@ -3598,7 +3598,8 @@ public final class SchematicBuilder {
             if (i < 0 || plan.status(i) != BuildPlan.Status.DONE || plan.kind(i) != BlockRules.Kind.PLACE || at.equals(start.floor())) continue;
             BlockState state = level.getBlockState(at);
             if (BlockRules.group(state) != 0 || BlockRules.wet(state) || !spares(player, state, BlockRules.item(plan.target(i)))
-                    || state.getDestroySpeed(level, at) < 0 || level.getBlockEntity(at) != null) continue;
+                    || state.getDestroySpeed(level, at) < 0
+                    || level.getBlockEntity(at) != null && !(level.getBlockEntity(at) instanceof net.minecraft.world.Container)) continue;
             // Shut in a flooded tunnel, every block round it has water beside it: the water runs into the opening, and
             // stops once the block goes in again.
             if (new AABB(at).distanceToSqr(eye) > reach * reach || !safeToBreak(level, at, 0, true)) continue;
@@ -3607,7 +3608,11 @@ public final class SchematicBuilder {
             if (bordersBuildWater(at)) continue;
             candidates.add(at.immutable());
         }
-        candidates.sort(Comparator.comparingDouble(at -> breakTicks(player, level, at) + new AABB(at).distanceToSqr(eye)));
+        // A container, a hopper or a chest of the build, only once no plain block does: what it holds drops with it, and
+        // it goes in again empty. crafter-clean16 (05:09) stood shut in on a row of chests under hoppers at head height,
+        // the only blocks round it with a way out behind them.
+        candidates.sort(Comparator.comparingDouble(at -> breakTicks(player, level, at) + new AABB(at).distanceToSqr(eye)
+                + (level.getBlockEntity(at) != null ? 1000 : 0)));
         // The second block of a way out through a wall goes before any other: else each round would start on another.
         if (pairNext != null && candidates.remove(pairNext)) candidates.addFirst(pairNext);
         pairNext = null;
