@@ -136,6 +136,18 @@ class NavigatorTest {
     }
 
     @Test
+    void noPillarFromAHopperRim() {
+        // Standing on a hopper's rim at 0,64,0: at rest the player slides into the bowl, and a jump from there doesn't clear
+        // the cell above. The climb goes up from the stone beside instead.
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        blocks.put(new BlockPos(0, 64, 0), Blocks.HOPPER.defaultBlockState());
+        Navigator.Node start = new Navigator.Node(0, 64, 0, 65, Navigator.Move.START);
+        Navigator.Path path = new Navigator(world(blocks), AREA, cell -> true, key -> false).find(start, node -> node.feet() >= 67 ? 1 : 0);
+        assertNotNull(path);
+        assertFalse(path.nodes().stream().anyMatch(node -> node.move() == Navigator.Move.PILLAR && node.x() == 0 && node.z() == 0 && node.feet() == 66));
+    }
+
+    @Test
     void walkingOnFlatGroundIsAWalk() {
         Navigator.Node start = new Navigator.Node(0, 64, 0, 65, Navigator.Move.START);
         Navigator.Path path = navigator(world(Map.of())).find(start, node -> node.x() == 1 && node.z() == 0 ? 1 : 0);

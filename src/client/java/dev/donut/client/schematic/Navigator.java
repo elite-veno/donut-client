@@ -427,7 +427,12 @@ public final class Navigator {
                 && clear(from.x(), from.z(), from.feet() + 1, from.feet() + 1 + BODY, Integer.MIN_VALUE)
                 && !crosses(placed, from.x(), from.z(), from.feet() + 1, from.feet() + 1 + BODY)
                 && seeThrough(from.x(), from.z(), cell.getY(), cell.getY() + 2)
-                && !unsteady(from.floor(), Blocks.HONEY_BLOCK)) {
+                && !unsteady(from.floor(), Blocks.HONEY_BLOCK)
+                // Not from a rim, a hopper's or a composter's: a player at rest there has slid down into the bowl, and a
+                // jump from the bowl never gets the feet over the cell above it (v4-full33, 13:59:39, shut in between iron
+                // bars at 14 70.69 2, every climb out "jumped without getting the block in").
+                && (from.move().placesBlock() || placed != null && placed.contains(from.floor().asLong())
+                        || level.getBlockState(from.floor()).isFaceSturdy(level, from.floor(), Direction.UP))) {
             Node next = new Node(cell.getX(), cell.getY(), cell.getZ(), from.feet() + 1, Move.PILLAR);
             if (badSteps.isEmpty() || !badSteps.contains(stepKey(from, next))) out.add(next);
         }
