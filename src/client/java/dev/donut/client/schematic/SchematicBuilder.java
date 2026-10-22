@@ -3577,6 +3577,9 @@ public final class SchematicBuilder {
         // broken until they come to rest (v4-full19, 23:07:57, a glass and a gate broken in two seconds while the channel
         // water carried the player west from 17 66 29, a channel they had walked into).
         if (player.getDeltaMovement().horizontalDistanceSqr() > 1e-4) return false;
+        // Nor from the air, a climb that failed say: the searches start from where the player will not be a moment later
+        // (v4-full29, 09:13:55, a glass broken a second after a climb at 19 71 29 gave up mid-jump).
+        if (!player.onGround() && !player.isInWater()) return false;
         breakOutChecked = tick;
         Level level = player.level();
         Navigator.Node start = Navigator.standingAt(level, player);
