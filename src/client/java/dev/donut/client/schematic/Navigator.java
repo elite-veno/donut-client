@@ -476,7 +476,9 @@ public final class Navigator {
             while (column && top + 1 < area.maxY && top - cell.getY() < SWIM_RISE) {
                 BlockPos up = new BlockPos(from.x(), top + 1, from.z());
                 FluidState water = level.getFluidState(up);
-                if (!water.getType().isSame(Fluids.WATER)) break;
+                // Thin running water over the column lifts nobody: the swim stops at the last cell near full (v4-full42,
+                // 21:21:49, held at 66.38 under a film of water at 8 67 31, short of the glass topped at 68).
+                if (!water.getType().isSame(Fluids.WATER) || water.getHeight(level, up) < 0.8f) break;
                 if (!level.getBlockState(up).getCollisionShape(level, up).isEmpty()) column = false;
                 else top++;
             }
