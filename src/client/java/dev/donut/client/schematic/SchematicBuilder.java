@@ -4834,6 +4834,10 @@ public final class SchematicBuilder {
                     // water it waits for, to be poured back (v1-clean6, 9,69,16, twice).
                     int j = plan.indexOf(at);
                     if (j >= 0 && (plan.status(j) == BuildPlan.Status.PENDING || plan.status(j) == BuildPlan.Status.UNLOADED)) continue;
+                    // Nor the build's own water roofed over: should it not come back, the only pour into it is through a gap
+                    // beside its roof. v4-full31 (10:39:35) filled from the channel at 9,67,30 under a closed gate; it stayed
+                    // dry, and the walks to pour it back from beside the gate ended down in the channel.
+                    if (j >= 0 && !level.getBlockState(at.above()).isAir()) continue;
                     int sources = 0;
                     for (Direction side : Direction.Plane.HORIZONTAL) {
                         BlockPos next = at.relative(side);
