@@ -4094,7 +4094,12 @@ public final class SchematicBuilder {
 
     /** Whether the player stands in water whose current runs into a fall beside them. */
     private static boolean inCurrentIntoFall(LocalPlayer player) {
-        return player.onGround() && player.isInWater() && currentIntoFall(player.level(), Navigator.standingAt(player.level(), player).feetCell());
+        if (!player.onGround() || !player.isInWater()) return false;
+        Navigator.Node here = Navigator.standingAt(player.level(), player);
+        if (currentIntoFall(player.level(), here.feetCell())) return true;
+        // Or carried along beside a fall by water the cell underfoot doesn't show: a kelp source reads still, and the
+        // stream beside it pushed v4-full28 (06:42:07) from 9.27 69 16.88 into the gate over the channel at 10 68 17.
+        return player.getDeltaMovement().horizontalDistanceSqr() > 1e-4 && Navigator.besideFall(player.level(), here);
     }
 
     private static boolean onNarrowEdge(LocalPlayer player) {
