@@ -383,7 +383,11 @@ public final class BuildPlan {
         if (!placed(i)) return set(i, Status.SKIPPED);
         if (!LoadedChunks.has(level, pos(i))) return set(i, Status.UNLOADED);
         BlockPos partner = BlockRules.chestPartner(pos(i), targets[i]);
-        return update(i, level.getBlockState(pos(i)), partner == null ? null : level.getBlockState(partner));
+        Status was = status[i];
+        Status now = update(i, level.getBlockState(pos(i)), partner == null ? null : level.getBlockState(partner));
+        // In, and cut since by the farm's own pistons: it grows back, and isn't placed again.
+        if (now != Status.DONE && was == Status.DONE && plant[i] && BlockRules.harvested(level, pos(i), targets[i])) return set(i, Status.DONE);
+        return now;
     }
 
     /** What block {@code i} needs with {@code current} in its spot, as read from the world. */

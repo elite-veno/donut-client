@@ -81,6 +81,8 @@ final class BuildCheck {
                 ok = BlockRules.satisfied(actual, target);
                 if (ok && target.getBlock() instanceof ChestBlock) ok = actual.getValue(ChestBlock.TYPE) == target.getValue(ChestBlock.TYPE);
             }
+            // Kelp cut by the farm's own pistons since, grown back from the kelp under it in time (see BlockRules.harvested).
+            if (!ok && BlockRules.harvested(level, pos, target)) ok = true;
             if (!ok) {
                 byKind.merge(target.getBlock().getName().getString(), 1, Integer::sum);
                 lines.add(pos.subtract(origin).toShortString() + ": " + actual + " instead of " + target);

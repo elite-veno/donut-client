@@ -19,6 +19,7 @@ import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.level.block.BasePressurePlateBlock;
 import net.minecraft.world.level.block.BaseRailBlock;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.BubbleColumnBlock;
 import net.minecraft.world.level.block.ButtonBlock;
@@ -487,6 +488,24 @@ public final class BlockRules {
     public static boolean holdsFluid(BlockState current, BlockState target) {
         FluidState fluid = current.getFluidState();
         return fluid.isSource() && fluid.getType().isSame(target.getFluidState().getType()) && wet(current);
+    }
+
+    /**
+     * Whether kelp the schematic has at {@code pos} was taken by the farm itself: water stands there, kelp under it to grow
+     * back up from, and a piston beside it pushes into the spot. ikea_v4's pistons fire as blocks go in over the observers
+     * a layer up, and cut the kelp of the rows under them (v4-full49, 09:3x, 13,71,4); it grows again by itself.
+     */
+    public static boolean harvested(BlockGetter level, BlockPos pos, BlockState target) {
+        if (!target.is(Blocks.KELP) && !target.is(Blocks.KELP_PLANT)) return false;
+        BlockState current = level.getBlockState(pos);
+        if (!(current.getBlock() instanceof LiquidBlock) || !current.getFluidState().isSourceOfType(Fluids.WATER)) return false;
+        BlockState under = level.getBlockState(pos.below());
+        if (!under.is(Blocks.KELP) && !under.is(Blocks.KELP_PLANT)) return false;
+        for (Direction side : Direction.values()) {
+            BlockState piston = level.getBlockState(pos.relative(side));
+            if (piston.getBlock() instanceof PistonBaseBlock && piston.getValue(PistonBaseBlock.FACING) == side.getOpposite()) return true;
+        }
+        return false;
     }
 
     /**
