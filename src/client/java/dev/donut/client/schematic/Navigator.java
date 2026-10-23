@@ -718,13 +718,17 @@ public final class Navigator {
 
     /**
      * Whether the place to stand is a narrow top, a closed gate's or a fence's, with a drop of two blocks or more right
-     * beside it: a few centimetres of drift off it and the player is down there.
+     * beside it, or water: a few centimetres of drift off it and the player is down there.
      */
     static boolean narrowOverDrop(BlockGetter level, Node node) {
         BlockPos floor = node.floor();
         if (!narrowTop(level.getBlockState(floor).getCollisionShape(level, floor))) return false;
         for (Direction side : Direction.Plane.HORIZONTAL) {
             BlockPos beside = floor.relative(side);
+            // Water beside it, at the top's own height: off the edge the player is in it, and a channel walled in on its
+            // sides holds them there. v4-full49 and v4-full52 slid off the iron bars 4..8,71,35 north into the stream
+            // along z 34 over the hoppers, a step down, and were shut in there for good.
+            if (!level.getFluidState(beside).isEmpty() && level.getBlockState(beside).getCollisionShape(level, beside).isEmpty()) return true;
             boolean ground = false;
             // Something beside at most a block and a half under the feet, or a wall: a step, not a drop.
             for (int dy = 1; dy >= -1 && !ground; dy--) {
