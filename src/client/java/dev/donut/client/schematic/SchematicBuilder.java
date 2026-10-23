@@ -3163,7 +3163,31 @@ public final class SchematicBuilder {
             BlockPos under = beside.below();
             if (level.getBlockState(under).getCollisionShape(level, under).isEmpty()) return false;
         }
-        return true;
+        return wadesOut(level, feet);
+    }
+
+    /** {@link #wadesOut} by feet cell, worked out once while the world stays as it is. */
+    private final Map<Long, Boolean> wadesOut = new HashMap<>();
+    private long wadesOutChanges = -1;
+
+    /**
+     * Whether there is a way out from the feet in {@code feet} without a climb, wading: once the water poured runs there,
+     * no helper block goes in under the feet, and a trench walled in on its sides with its only ways out up a shaft is a
+     * trap. v4-full43 (00:05) and v4-full44 (03:35) poured 19,71,4 / 19,71,28 from the dry trench beside it, under the
+     * crafters, found a climb out from its ice floor, and once the water came had none; each broke the build's glass out.
+     */
+    private boolean wadesOut(Level level, BlockPos feet) {
+        LocalPlayer player = Minecraft.getInstance().player;
+        if (player == null) return true;
+        if (wadesOutChanges != worldChanges) {
+            wadesOut.clear();
+            wadesOutChanges = worldChanges;
+        }
+        return wadesOut.computeIfAbsent(feet.asLong(), key -> {
+            Navigator.Node start = new Navigator.Node(feet.getX(), feet.getY() - 1, feet.getZ(), feet.getY(), Navigator.Move.START);
+            return navigator(player, level, false).limit(1500).find(start,
+                    node -> outAt(node.x(), node.feet(), node.z(), node.standing()) ? 1 : 0) != null;
+        });
     }
 
     /**
