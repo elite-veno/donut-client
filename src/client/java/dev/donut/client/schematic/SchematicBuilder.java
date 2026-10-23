@@ -3214,6 +3214,14 @@ public final class SchematicBuilder {
             if (pendingLookingUp(over)) return true;
             for (Direction side : Direction.Plane.HORIZONTAL) if (pendingLookingUp(over.relative(side))) return true;
         }
+        // Beside it, open underneath: the look comes up through there at a face round it, from a hopper bowl say.
+        // v4-full45 (05:2x) stood on a walk helper at 17,73,34, beside the observer 17,73,33, and it hid every look at the
+        // west face of 18,73,33 from the bowl 17,70.69,34; the observer was given up.
+        Level level = Minecraft.getInstance().level;
+        BlockPos under = cell.below();
+        if (level != null && level.getBlockState(under).getCollisionShape(level, under).isEmpty()) {
+            for (Direction side : Direction.Plane.HORIZONTAL) if (pendingLookingUp(cell.relative(side))) return true;
+        }
         return false;
     }
 
