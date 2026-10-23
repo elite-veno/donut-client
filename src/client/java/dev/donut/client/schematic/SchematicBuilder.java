@@ -2734,6 +2734,8 @@ public final class SchematicBuilder {
         // water runs from it as from a source.
         boolean soak = (plan.soaking(i) || plan.needsPour(i) && !plan.plant(i)) && plan.target(i).getFluidState().isSource();
         if (!soak && !level.getBlockState(pos).canBeReplaced()) return false;
+        // Not kept with the rest: the way out it takes goes as the cells round the stand fill, a stream running say.
+        if (!soak && plan.kind(i) == BlockRules.Kind.PLACE && shutsLookUpStand(level, pos, plan.target(i))) return true;
         Integer known = lookUpStandFor.get(i);
         if (known != null) {
             if (known < 0) return false;
@@ -2794,6 +2796,35 @@ public final class SchematicBuilder {
                 plan.target(i).getBlock().getName().getString(), pos.toShortString(), at.toShortString(),
                 plan.target(found).getBlock().getName().getString(), plan.pos(found).toShortString(), lookUpChecks, lookUpNanos / 1_000_000);
         return true;
+    }
+
+    /**
+     * Whether {@code fill} going in at {@code pos} takes the last dry way out of a place to stand beside it for the look
+     * up at a block still to go in: a hopper bowl between two others, say, the iron bars in on its other side, a piston
+     * behind it and running water in front. Walled in so, the bowl can be dropped into but not left, and no walk goes
+     * there. v4-full50 (08:4x) put in the bars 14,71,10 after its own observer, with 12,71,10 in and the stream along
+     * z 11 running; the observer 13,73,9 had its one stand in the bowl between, and it and two more were given up.
+     */
+    private boolean shutsLookUpStand(Level level, BlockPos pos, BlockState fill) {
+        if (fill.getCollisionShape(level, pos).isEmpty()) return false;
+        for (Direction side : Direction.Plane.HORIZONTAL) {
+            BlockPos stand = pos.relative(side);
+            if (lookUpCandidates(plan, level, stand).isEmpty()) continue;
+            boolean out = false;
+            for (Direction way : Direction.Plane.HORIZONTAL) {
+                BlockPos next = stand.relative(way);
+                if (next.equals(pos)) continue;
+                FluidState water = level.getFluidState(next);
+                if (level.getBlockState(next).getCollisionShape(level, next).isEmpty()
+                        && level.getBlockState(next.above()).getCollisionShape(level, next.above()).isEmpty()
+                        && (water.isEmpty() || water.isSource())) {
+                    out = true;
+                    break;
+                }
+            }
+            if (!out) return true;
+        }
+        return false;
     }
 
     /**
