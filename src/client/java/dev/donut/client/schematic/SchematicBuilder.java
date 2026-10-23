@@ -527,6 +527,12 @@ public final class SchematicBuilder {
      */
     private final Set<Long> escapeHelpers = new HashSet<>();
     private boolean escapeWalk;
+    /**
+     * Whether the walk under way goes to a helper block of a climb out, to take it away (see walkToEscapeHelper). Those it
+     * climbs on in turn are no climb out: counted as one, each called for another walk, and v4-full44 (03:37..03:40)
+     * climbed a stair of them 12 blocks over the build, taking each away and putting down the next.
+     */
+    private boolean escapeHelperWalk;
     /** Walks made to bring each of those into view, by position. */
     private final Map<Long, Integer> escapeWalks = new HashMap<>();
     /**
@@ -1191,6 +1197,7 @@ public final class SchematicBuilder {
         standSearched.clear();
         escapeHelpers.clear();
         escapeWalk = false;
+        escapeHelperWalk = false;
         escapeWalks.clear();
         shutInHelpers.clear();
         shutInWalks.clear();
@@ -3759,6 +3766,7 @@ public final class SchematicBuilder {
             if (!climbReady(client, player, path)) return true;
             releaseKeys(client);
             walker.start(path.nodes(), Vec3.atCenterOf(at));
+            escapeHelperWalk = true;
             show("Walking to the helper blocks climbed out on, to take them away", false);
             if (debug()) LOGGER.info("Walking {} steps to take away the helper block climbed out on at {}", path.nodes().size() - 1, at.toShortString());
             return true;
@@ -7127,6 +7135,7 @@ public final class SchematicBuilder {
         if (state != Walker.State.WALKING) {
             climbCrouch = false;
             escapeWalk = false;
+            escapeHelperWalk = false;
         }
         if (state == Walker.State.ARRIVED) {
             if (debug()) {
@@ -7206,7 +7215,7 @@ public final class SchematicBuilder {
         } else {
             helpers.put(cell.asLong(), new Helper(-1, Block.byItem(item)));
             if (debug()) LOGGER.info("Climbing: a helper block at {}, {} helper blocks standing", cell.toShortString(), helpers.size());
-            if (escapeWalk || !brokeOut.isEmpty()) addEscapeHelper(cell);
+            if (escapeWalk || !brokeOut.isEmpty() && !escapeHelperWalk) addEscapeHelper(cell);
             else noteShutIn(cell);
         }
         return true;
@@ -7244,7 +7253,7 @@ public final class SchematicBuilder {
         }
         if (success.swingSource() == InteractionResult.SwingSource.CLIENT) player.swing(InteractionHand.MAIN_HAND);
         helpers.put(support.relative(face).asLong(), new Helper(-1, Block.byItem(item)));
-        if (escapeWalk || !brokeOut.isEmpty()) addEscapeHelper(support.relative(face));
+        if (escapeWalk || !brokeOut.isEmpty() && !escapeHelperWalk) addEscapeHelper(support.relative(face));
         else noteShutIn(support.relative(face));
         if (debug()) LOGGER.info("Bridging: a helper block against the {} side of {}", face, support.toShortString());
         return true;
