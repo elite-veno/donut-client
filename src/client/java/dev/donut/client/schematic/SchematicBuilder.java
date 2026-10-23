@@ -2730,7 +2730,10 @@ public final class SchematicBuilder {
     private boolean fillsLookUpStand(LocalPlayer player, int i) {
         Level level = player.level();
         BlockPos pos = plan.pos(i);
-        if (!level.getBlockState(pos).canBeReplaced()) return false;
+        // A waterlogged block whose water is still to be poured, into its spot first or into it once in, a chest say: the
+        // water runs from it as from a source.
+        boolean soak = (plan.soaking(i) || plan.needsPour(i) && !plan.plant(i)) && plan.target(i).getFluidState().isSource();
+        if (!soak && !level.getBlockState(pos).canBeReplaced()) return false;
         Integer known = lookUpStandFor.get(i);
         if (known != null) {
             if (known < 0) return false;
@@ -2745,7 +2748,13 @@ public final class SchematicBuilder {
         }
         BlockState fill;
         List<BlockPos> cells;
-        if (plan.kind(i) == BlockRules.Kind.PLACE) {
+        if (soak) {
+            // v4-full44 (02:26) poured the spot of the waterlogged chest 1,71,13 while the iron bars 2..8,71,14 were held;
+            // the stream along z 13 ran into the hopper bowls under them, the only places with a look up at the observers
+            // 2..8,73,15, and 7,73,15 had none left.
+            fill = null;
+            cells = waterRun(plan, level, i);
+        } else if (plan.kind(i) == BlockRules.Kind.PLACE) {
             fill = plan.target(i);
             cells = List.of(pos);
         } else if (plan.kind(i) == BlockRules.Kind.FLUID && plan.target(i).getFluidState().isSource()) {
@@ -2995,6 +3004,10 @@ public final class SchematicBuilder {
                     ? (byte) 1 : 2;
         }
         if (plan.kind(i) != BlockRules.Kind.PLACE) return 2;
+        if (plan.soaking(i) || plan.needsPour(i) && !plan.plant(i)) {
+            if (fillsLookUpStand(player, i)) return 1;
+            if (plan.soaking(i)) return 2;
+        }
         Level level = player.level();
         BlockPos pos = plan.pos(i);
         if (!level.getBlockState(pos).canBeReplaced()) return 2;
