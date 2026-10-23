@@ -2735,7 +2735,7 @@ public final class SchematicBuilder {
         boolean soak = (plan.soaking(i) || plan.needsPour(i) && !plan.plant(i)) && plan.target(i).getFluidState().isSource();
         if (!soak && !level.getBlockState(pos).canBeReplaced()) return false;
         // Not kept with the rest: the way out it takes goes as the cells round the stand fill, a stream running say.
-        if (!soak && plan.kind(i) == BlockRules.Kind.PLACE && shutsLookUpStand(level, pos, plan.target(i))) return true;
+        if (!soak && plan.kind(i) == BlockRules.Kind.PLACE && shutsLookUpStand(player, pos, plan.target(i))) return true;
         Integer known = lookUpStandFor.get(i);
         if (known != null) {
             if (known < 0) return false;
@@ -2803,29 +2803,43 @@ public final class SchematicBuilder {
      * up at a block still to go in: a hopper bowl between two others, say, the iron bars in on its other side, a piston
      * behind it and running water in front. Walled in so, the bowl can be dropped into but not left, and no walk goes
      * there. v4-full50 (08:4x) put in the bars 14,71,10 after its own observer, with 12,71,10 in and the stream along
-     * z 11 running; the observer 13,73,9 had its one stand in the bowl between, and it and two more were given up.
+     * z 11 running; the observer 13,73,9 had its one stand in the bowl between, and it and two more were given up. The
+     * way out is searched for, not only looked for beside the stand: in v4-full53 (14:0x) the bars 3,71,10 closed the
+     * west end of the row of bowls 4..9,70,10, whose other ways out were the stream, and 4,73,9 was given up.
      */
-    private boolean shutsLookUpStand(Level level, BlockPos pos, BlockState fill) {
+    private boolean shutsLookUpStand(LocalPlayer player, BlockPos pos, BlockState fill) {
+        Level level = player.level();
         if (fill.getCollisionShape(level, pos).isEmpty()) return false;
+        if (shutsStandChanges != worldChanges) {
+            shutsStand.clear();
+            shutsStandChanges = worldChanges;
+        }
+        Boolean known = shutsStand.get(pos.asLong());
+        if (known != null) return known;
+        boolean shuts = false;
+        Overlay with = null;
         for (Direction side : Direction.Plane.HORIZONTAL) {
             BlockPos stand = pos.relative(side);
             if (lookUpCandidates(plan, level, stand).isEmpty()) continue;
-            boolean out = false;
-            for (Direction way : Direction.Plane.HORIZONTAL) {
-                BlockPos next = stand.relative(way);
-                if (next.equals(pos)) continue;
-                FluidState water = level.getFluidState(next);
-                if (level.getBlockState(next).getCollisionShape(level, next).isEmpty()
-                        && level.getBlockState(next.above()).getCollisionShape(level, next.above()).isEmpty()
-                        && (water.isEmpty() || water.isSource())) {
-                    out = true;
-                    break;
-                }
+            BlockPos floor = stand.below();
+            double top = Navigator.topUnderFeet(level.getBlockState(floor).getCollisionShape(level, floor));
+            if (Double.isNaN(top)) continue;
+            Navigator.Node start = new Navigator.Node(stand.getX(), floor.getY(), stand.getZ(), floor.getY() + top, Navigator.Move.START);
+            // Only a stand there is a way out of now: one walled in already isn't this block's doing.
+            if (exitFrom(player, level, start, null) == null) continue;
+            if (with == null) with = new Overlay(level, Map.of(pos.asLong(), fill));
+            if (exitFrom(player, with, start, null) == null) {
+                shuts = true;
+                break;
             }
-            if (!out) return true;
         }
-        return false;
+        shutsStand.put(pos.asLong(), shuts);
+        return shuts;
     }
+
+    /** {@link #shutsLookUpStand} by cell, worked out once while the world stays as it is. */
+    private final Map<Long, Boolean> shutsStand = new HashMap<>();
+    private long shutsStandChanges = -1;
 
     /**
      * Blocks placed looking up, still to go in, one or two over {@code cell} or beside those cells, with a place to stand in
