@@ -1,0 +1,16 @@
+package dev.donut.client.config;
+
+public final class FreecamSettings {
+    /** Freecam always starts off when joining a new session. */
+    public transient boolean enabled = false;
+    public boolean favorite = false;
+    public double speed = 1.0;
+    public double boostMultiplier = 3.0;
+    /** Freecam ends when the body takes damage, so it can't be killed unseen while the camera is away. */
+    public boolean exitWhenHurt = true;
+
+    public void sanitize() {
+        speed = Double.isFinite(speed) ? Math.clamp(speed, 0.1, 5.0) : 1.0;
+        boostMultiplier = Double.isFinite(boostMultiplier) ? Math.clamp(boostMultiplier, 1.0, 10.0) : 3.0;
+    }
+}

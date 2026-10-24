@@ -1,0 +1,128 @@
+package dev.donut.client.finder;
+
+import java.util.ArrayList;
+import java.util.List;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
+import net.minecraft.world.level.levelgen.WorldgenRandom;
+import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
+
+/**
+ * Tests whether a server places Nether features from its world seed, using ore blobs anti-xray never hides: magma,
+ * gravel and blackstone. It predicts where each blob centers in the loaded chunks and counts the centers that hold
+ * the blob's block. Features placed from the seed match far more often than a wrong seed, run alongside as a control;
+ * a server that gives its features their own seeds matches no better than the control. Each ore is also tried at
+ * every feature index, so a server whose datapacks reorder the Nether's features shows where they moved.
+ */
+public final class FeatureProbe {
+    private static final int MAX_INDEX = 30;
+
+    /** One ore's matches at its own index, under a wrong seed, and at the index that matched best. */
+    public record OreResult(String name, int index, int checked, int matched, int controlMatched, int bestIndex, int bestMatched) {
+        public String describe() {
+            return "%s %d of %d at index %d (wrong seed %d; best index %d with %d)"
+                    .formatted(name, matched, checked, index, controlMatched, bestIndex, bestMatched);
+        }
+
+        /** Far more blobs where the seed puts them than where a wrong seed does. */
+        public boolean matches() { return matched >= 20 && matched >= 4 * Math.max(1, controlMatched); }
+    }
+
+    public record Result(List<OreResult> ores) {
+        public String describe() { return String.join("; ", ores.stream().map(OreResult::describe).toList()); }
+
+        /** Magma, the densest, decides whether this server places Nether features from the seed. */
+        public boolean seedPlacesFeatures() { return !ores.isEmpty() && ores.getFirst().matches(); }
+    }
+
+    private FeatureProbe() { }
+
+    /** Anti-xray leaves a block as it is once any neighbor lets light or redstone through. */
+    private static boolean exposed(Level level, BlockPos pos) {
+        for (Direction direction : Direction.values()) {
+            BlockPos neighbor = pos.relative(direction);
+            // An unloaded neighbor reads as void air, which proves nothing.
+            if (!LoadedChunks.has(level, neighbor)) continue;
+            if (!level.getBlockState(neighbor).isRedstoneConductor(level, neighbor)) return true;
+        }
+        return false;
+    }
+
+    /** Probes magma, then gravel and blackstone; a result without ores if this game's features can't be replayed. */
+    public static Result run(ClientLevel level, ChunkPos center, int radius, long seed) {
+        NetherFeatures features = NetherFeatures.get().orElse(null);
+        if (features == null) return new Result(List.of());
+        List<LevelChunk> chunks = new ArrayList<>();
+        for (int x = center.x() - radius; x <= center.x() + radius; x++) {
+            for (int z = center.z() - radius; z <= center.z() + radius; z++) {
+                LevelChunk chunk = level.getChunkSource().getChunk(x, z, ChunkStatus.FULL, false);
+                if (chunk != null) chunks.add(chunk);
+            }
+        }
+        WorldgenRandom random = new WorldgenRandom(new XoroshiroRandomSource(0));
+        List<OreResult> results = new ArrayList<>();
+        for (NetherFeatures.Ore ore : List.of(features.magma, features.gravel, features.blackstone)) {
+            int[] own = count(level, chunks, random, seed, ore, ore.index());
+            int control = count(level, chunks, random, seed + 1, ore, ore.index())[1];
+            int bestIndex = ore.index(), bestMatched = own[1];
+            for (int index = 0; index <= MAX_INDEX; index++) {
+                int matched = count(level, chunks, random, seed, ore, index)[1];
+                if (matched > bestMatched) { bestIndex = index; bestMatched = matched; }
+            }
+            results.add(new OreResult(ore.name(), ore.index(), own[0], own[1], control, bestIndex, bestMatched));
+        }
+        return new Result(List.copyOf(results));
+    }
+
+    /**
+     * Gravel and blackstone blob centers predicted in one chunk, and how many hold their block. Anti-xray leaves both
+     * alone, so they show whether this part of a server's world placed its ores from the seed.
+     */
+    static int[] verify(Level level, LevelChunk chunk, WorldgenRandom random, long seed, boolean exposedOnly) {
+        NetherFeatures features = NetherFeatures.get().orElse(null);
+        if (features == null) return new int[2];
+        int[] gravel = count(level, List.of(chunk), random, seed, features.gravel, features.gravel.index(), exposedOnly);
+        int[] blackstone = count(level, List.of(chunk), random, seed, features.blackstone, features.blackstone.index(), exposedOnly);
+        return new int[] {gravel[0] + blackstone[0], gravel[1] + blackstone[1]};
+    }
+
+    private static int[] count(Level level, List<LevelChunk> chunks, WorldgenRandom random, long seed, NetherFeatures.Ore ore, int index) {
+        return count(level, chunks, random, seed, ore, index, false);
+    }
+
+    /** Predicted blob centers in these chunks and how many hold the ore, with the feature at this index. */
+    private static int[] count(Level level, List<LevelChunk> chunks, WorldgenRandom random, long seed, NetherFeatures.Ore ore, int index,
+                               boolean exposedOnly) {
+        int[] counts = new int[2];
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        for (LevelChunk chunk : chunks) {
+            int minX = chunk.getPos().getMinBlockX(), minZ = chunk.getPos().getMinBlockZ();
+            random.setFeatureSeed(random.setDecorationSeed(seed, minX, minZ), index, NetherFeatures.STEP);
+            for (int placements = ore.count().sample(random); placements > 0; placements--) {
+                int x = minX + random.nextInt(16);
+                int z = minZ + random.nextInt(16);
+                int y = ore.y(random);
+                // A filtered blob draws nothing more.
+                if (!ore.placesIn(level.getBiome(pos.set(x, y, z)))) continue;
+                // OreFeature draws the same numbers wherever it lands: an angle, two heights, a radius per sphere.
+                random.nextFloat();
+                int low = random.nextInt(3) - 2, high = random.nextInt(3) - 2;
+                for (int sphere = 0; sphere < ore.size(); sphere++) random.nextDouble();
+                // The blob centers on the start's column, up to two blocks below it. A center dug out or flooded
+                // since says nothing either way; servers whose players mine heavily are full of them.
+                BlockState center = chunk.getBlockState(pos.set(x, y + Math.floorDiv(low + high, 2), z));
+                if (center.isAir() || !center.getFluidState().isEmpty()) continue;
+                if (exposedOnly && !exposed(level, pos)) continue;
+                counts[0]++;
+                if (center.is(ore.block())) counts[1]++;
+            }
+        }
+        return counts;
+    }
+}

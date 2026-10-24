@@ -1,0 +1,88 @@
+plugins {
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+base { archivesName = project.archives_base_name }
+
+repositories { mavenCentral() }
+
+loom {
+    splitEnvironmentSourceSets()
+    mods {
+        'donut' {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
+}
+
+sourceSets.test {
+    compileClasspath += sourceSets.client.output + sourceSets.client.compileClasspath
+    runtimeClasspath += sourceSets.client.output + sourceSets.client.runtimeClasspath
+}
+
+test { useJUnitPlatform() }
+
+fabricApi {
+    configureTests {
+        createSourceSet = true
+        modId = 'donut-gametest'
+        enableGameTests = false
+        enableClientGameTests = true
+        // DebrisSeedGameTest runs a dedicated server, which needs the Minecraft EULA accepted.
+        eula = true
+    }
+}
+
+// Builds a schematic in a normal game window to watch: gradlew runWatch -PwatchFile=C:/path/to/file.litematic
+// (-PwatchDelay=0.2,0.5 for a quicker build than the 0.65 to 2.3 s a real one waits between blocks).
+// Game tests and the watch window open at a player's window size, 1920x1080 (-PgameSize=2560x1440 for another):
+// a client game test draws at the size it was opened with, whatever the window is resized to.
+def gameSize = (project.findProperty('gameSize') ?: '1920x1080').toString().split('x')
+loom {
+    runs {
+        watch {
+            client()
+            name = 'Watch Schematic Build'
+            source sourceSets.gametest
+            vmArg "-Ddonut.watch=${project.findProperty('watchFile') ?: ''}"
+            vmArg "-Ddonut.watch.delay=${project.findProperty('watchDelay') ?: ''}"
+            vmArg "-Ddonut.schematic.debug=true"
+            programArgs '--width', gameSize[0], '--height', gameSize[1]
+        }
+        clientGameTest {
+            programArgs '--width', gameSize[0], '--height', gameSize[1]
+        }
+    }
+}
+
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('fabric.mod.json') { expand 'version': project.version }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 25
+    options.encoding = 'UTF-8'
+}
+
+// Minecraft 26.2 runs on Java 25.
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(25) }
+    withSourcesJar()
+}
+
+jar {
+    from('LICENSE') { rename { "${it}_${project.base.archivesName.get()}" } }
+}
